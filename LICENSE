@@ -1,7 +1,3 @@
-Scope: this MIT license covers only original ValMAX code and original project
-assets. It does not relicense upstream-derived MAX QML, configuration, icons,
-MAX/Qt binaries, or third-party dependencies. See THIRD_PARTY_NOTICES.md.
-
 MIT License
 
 Copyright (c) 2026 govpodi
