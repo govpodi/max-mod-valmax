@@ -1,0 +1,115 @@
+{
+  "schema": 1,
+  "grid": 24,
+  "stroke_width": 2,
+  "color": "currentColor",
+  "background": "transparent",
+  "geometry_sha256": "9a6207d75b0848d9bf2bb5af95b26776d92d8b49877b7d739489cae99645854f",
+  "icons": [
+    {
+      "id": "privacy",
+      "label": "Приватность",
+      "meaning": "Щит с подтверждением защиты",
+      "file": "icons/privacy.svg",
+      "resource": ":/valmax/icons/privacy.svg",
+      "sha256": "244acd8fbda5f2aecfb6bd5e684737eb466845ce6e7cd0a72f38dac64aa5f73c",
+      "bytes": 1365,
+      "bounds": [
+        3.5,
+        2.0,
+        20.5,
+        22.0
+      ]
+    },
+    {
+      "id": "ghost",
+      "label": "Режим призрака",
+      "meaning": "Призрак с мягким контуром",
+      "file": "icons/ghost.svg",
+      "resource": ":/valmax/icons/ghost.svg",
+      "sha256": "4eba29e580a423e6e743afa9c4ecc494d11f2c609062f2780b52cca708bf3ae5",
+      "bytes": 1426,
+      "bounds": [
+        4.0,
+        2.0,
+        20.0,
+        21.0
+      ]
+    },
+    {
+      "id": "mdata",
+      "label": "MData",
+      "meaning": "Файл с ключом доступа",
+      "file": "icons/mdata.svg",
+      "resource": ":/valmax/icons/mdata.svg",
+      "sha256": "4bd239926a4a87f08701164518a1ecc3db60fdd4bb53281112c0da82256e907a",
+      "bytes": 1404,
+      "bounds": [
+        4.0,
+        2.0,
+        20.0,
+        22.0
+      ]
+    },
+    {
+      "id": "quick-replies",
+      "label": "Быстрые ответы",
+      "meaning": "Диалог с молнией",
+      "file": "icons/quick-replies.svg",
+      "resource": ":/valmax/icons/quick-replies.svg",
+      "sha256": "149a3664d82fe7528a0f115f4429df66deb9e08a1e910dc53cd489be4f7ea6eb",
+      "bytes": 597,
+      "bounds": [
+        3.0,
+        3.0,
+        21.0,
+        21.0
+      ]
+    },
+    {
+      "id": "accounts",
+      "label": "Аккаунты",
+      "meaning": "Основной и дополнительный пользователь",
+      "file": "icons/accounts.svg",
+      "resource": ":/valmax/icons/accounts.svg",
+      "sha256": "55fcc0996e75aa483ca2e74c3fcf45cd022e6d748c158c02b62d9f91758b1003",
+      "bytes": 1190,
+      "bounds": [
+        2.0,
+        3.5,
+        22.0,
+        21.0
+      ]
+    },
+    {
+      "id": "chat-export",
+      "label": "Экспорт чата",
+      "meaning": "Диалог со стрелкой сохранения",
+      "file": "icons/chat-export.svg",
+      "resource": ":/valmax/icons/chat-export.svg",
+      "sha256": "3251bb7ee36fe6d1a464760ba2474d8b1ecdfdce7579fbccdd889f3a89aeef5d",
+      "bytes": 1096,
+      "bounds": [
+        3.0,
+        3.0,
+        21.5,
+        22.0
+      ]
+    },
+    {
+      "id": "business",
+      "label": "Бизнес",
+      "meaning": "Рабочий портфель",
+      "file": "icons/business.svg",
+      "resource": ":/valmax/icons/business.svg",
+      "sha256": "799d6feff6787c74a9afb55e82e1026ce26c51f5bcb13a2c5ebadf8033dfa8e5",
+      "bytes": 1646,
+      "bounds": [
+        1.9997,
+        2.0,
+        22.0003,
+        22.0
+      ]
+    }
+  ]
+}

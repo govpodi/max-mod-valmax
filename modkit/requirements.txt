@@ -1,0 +1,5 @@
+capstone==5.0.9
+pefile==2024.8.26
+zstandard==0.25.0
+frida==17.23.3
+cryptography==50.0.2

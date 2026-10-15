@@ -1,0 +1,23 @@
+name: Предложение / Feature request
+description: Опишите задачу и ожидаемый результат.
+title: "[Feature] "
+body:
+  - type: markdown
+    attributes:
+      value: Используйте вымышленные примеры. Не добавляйте личные данные или секреты. / Use synthetic examples and no sensitive data.
+  - type: textarea
+    id: problem
+    attributes:
+      label: Какую задачу нужно решить? / Problem
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Предлагаемое поведение / Proposed behavior
+    validations:
+      required: true
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Рассмотренные варианты / Alternatives

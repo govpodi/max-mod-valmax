@@ -1,0 +1,91 @@
+{
+  "version": "26.35.1.80662",
+  "entries": [
+    {
+      "relative_path": "tracer_crash_reporter.dll",
+      "sha256": "33119f3a0a97157cb0bcbe72e8ac47e1362192ed6c08123b7388952b9e4ae785",
+      "callsites": []
+    },
+    {
+      "relative_path": "max-service/max-service.exe",
+      "sha256": "7f46031f81f9745adbee21aa0df44b7799698cc48cf60b30dffd9be24b9de0d8",
+      "callsites": [
+        {
+          "rva": 11715540,
+          "symbol": "tracer_enable_logging_to_callable",
+          "expected": "ff1536f1ae06"
+        },
+        {
+          "rva": 11715585,
+          "symbol": "tracer_init",
+          "expected": "ff1501f1ae06"
+        },
+        {
+          "rva": 11715680,
+          "symbol": "tracer_set_proxy_info",
+          "expected": "ff156af0ae06"
+        },
+        {
+          "rva": 11715699,
+          "symbol": "tracer_set_environment",
+          "expected": "ff156ff0ae06"
+        },
+        {
+          "rva": 11715764,
+          "symbol": "tracer_set_platform_info",
+          "expected": "ff1546f0ae06"
+        },
+        {
+          "rva": 11715790,
+          "symbol": "tracer_set_key",
+          "expected": "ff1524f0ae06"
+        },
+        {
+          "rva": 11715796,
+          "symbol": "tracer_install_crash_handler",
+          "expected": "ff15feefae06"
+        },
+        {
+          "rva": 11715812,
+          "symbol": "tracer_hardfix_crashclient",
+          "expected": "ff1536f0ae06"
+        },
+        {
+          "rva": 11715818,
+          "symbol": "tracer_upload_async",
+          "expected": "ff15f0efae06"
+        },
+        {
+          "rva": 11719020,
+          "symbol": "tracer_set_user_sample_custom_property",
+          "expected": "ff157ee3ae06"
+        },
+        {
+          "rva": 11719154,
+          "symbol": "tracer_collect_user_sample",
+          "expected": "ff15d0e2ae06"
+        },
+        {
+          "rva": 11719160,
+          "symbol": "tracer_upload_async",
+          "expected": "ff15e2e2ae06"
+        },
+        {
+          "rva": 11719972,
+          "symbol": "tracer_set_key",
+          "expected": "ff15cedfae06"
+        },
+        {
+          "rva": 11719981,
+          "symbol": "tracer_set_userid",
+          "expected": "ff15f5dfae06"
+        },
+        {
+          "rva": 11720973,
+          "symbol": "tracer_log",
+          "expected": "ff1505dcae06"
+        }
+      ]
+    }
+  ]
+}

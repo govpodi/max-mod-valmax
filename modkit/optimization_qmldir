@@ -1,0 +1,2 @@
+module ValMAXOptimization
+singleton OptimizationConfig 1.0 OptimizationConfig.qml

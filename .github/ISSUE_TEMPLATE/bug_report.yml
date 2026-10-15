@@ -1,0 +1,49 @@
+name: Ошибка / Bug report
+description: Воспроизводимая проблема ValMAX без личных данных.
+title: "[Bug] "
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Не прикладывайте токены, SMS-коды, пароли, MData/MAXSession, базы профиля, переписку, защищённые ссылки и необработанные логи. Для уязвимостей используйте SECURITY.md и приватный канал.
+        Do not include credentials, archives, messages, protected URLs, or raw logs. Use synthetic data.
+  - type: input
+    id: version
+    attributes:
+      label: Версия ValMAX / ValMAX version
+      placeholder: "8.8.1"
+    validations:
+      required: true
+  - type: input
+    id: windows
+    attributes:
+      label: Версия Windows / Windows version
+      placeholder: "Windows 11, build ..."
+    validations:
+      required: true
+  - type: textarea
+    id: reproduce
+    attributes:
+      label: Шаги воспроизведения / Reproduction
+      description: Краткий пример с вымышленными данными.
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: Ожидаемый результат / Expected behavior
+    validations:
+      required: true
+  - type: textarea
+    id: actual
+    attributes:
+      label: Фактический результат / Actual behavior
+    validations:
+      required: true
+  - type: checkboxes
+    id: privacy
+    attributes:
+      label: Проверка данных / Data check
+      options:
+        - label: "Я проверил текст и вложения: личных данных, секретов и архивов профиля нет."
+          required: true

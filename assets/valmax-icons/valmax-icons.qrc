@@ -1,0 +1,11 @@
+<RCC version="1.0">
+  <qresource prefix="/valmax/icons">
+    <file alias="privacy.svg">icons/privacy.svg</file>
+    <file alias="ghost.svg">icons/ghost.svg</file>
+    <file alias="mdata.svg">icons/mdata.svg</file>
+    <file alias="quick-replies.svg">icons/quick-replies.svg</file>
+    <file alias="accounts.svg">icons/accounts.svg</file>
+    <file alias="chat-export.svg">icons/chat-export.svg</file>
+    <file alias="business.svg">icons/business.svg</file>
+  </qresource>
+</RCC>

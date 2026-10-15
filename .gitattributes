@@ -1,0 +1,6 @@
+* text=auto
+*.py text eol=lf
+*.qml text eol=lf
+*.md text eol=lf
+modkit/ui_privacy.py linguist-generated=true
+modkit/config.defaults.json linguist-vendored=true
