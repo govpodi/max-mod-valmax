@@ -6,6 +6,7 @@ import shutil
 import subprocess
 import unittest
 import ghost_native
+import ghost_unread_native
 
 
 HARNESS = r"""
@@ -35,6 +36,16 @@ function setup(options = {}) {
   }
   const base = new Ptr(baseValue), spec = JSON.parse(JSON.stringify(fixture));
   spec.modulePath = 'D:\\synthetic\\core.dll';
+  spec.unread.modulePath = 'D:\\synthetic\\max.exe';
+  spec.unread.moduleSha256 = 'f'.repeat(64); spec.unread.moduleSize = 70000000; spec.unread.imageSize = 0x5000000;
+  const mainBase = new Ptr(0x140000000n);
+  for(const item of spec.unread.guards) rawBytes.set(mainBase.add(item.rva).toString(),Buffer.from(item.expected,'hex'));
+  pointers.set(mainBase.add(spec.unread.vtableRva).toString(),mainBase.add(spec.unread.destructorRva));
+  pointers.set(mainBase.add(spec.unread.vtableRva+8).toString(),mainBase.add(spec.unread.readRva));
+  const selfInfo = spec.unread.selfInfo;
+  for(const item of selfInfo.guards) rawBytes.set(base.add(item.rva).toString(),Buffer.from(item.expected,'hex'));
+  pointers.set(base.add(selfInfo.readerVtableRva+selfInfo.readerSlot).toString(),base.add(selfInfo.readerThunkRva));
+  pointers.set(base.add(selfInfo.modelVtableRva+selfInfo.modelSlot).toString(),base.add(selfInfo.modelThunkRva));
   for (const item of spec.wrappers) {
     rawBytes.set(base.add(item.rva).toString(), Buffer.from(item.expected,'hex'));
     rawBytes.set(base.add(item.thunkRva).toString(), Buffer.from(item.thunkExpected,'hex'));
@@ -61,15 +72,16 @@ function setup(options = {}) {
   const initial = options.initial || {revision:'a'.repeat(64),settings:{enabled:false,hideTyping:false,hideRead:false}};
   const context = {
     MONITOR:{ghost: options.noSpec ? null : spec,ghostSettings:initial},
-    Memory:{alloc:count=>{assert.strictEqual(count,1);return new Ptr(0x70000000n);}},
+    Memory:{alloc:count=>{assert([1,4096].includes(count));return new Ptr(count===1?0x70000000n:0x71000000n);}},
     Process:{platform:options.platform||'windows',arch:options.arch||'x64',pointerSize:8,
       findRangeByAddress:()=>options.nonexec ? {base,size:spec.imageSize,protection:'r--'} : {base,size:spec.imageSize,protection:'r-x'},
       attachModuleObserver: observer=>{moduleObserver=observer;return {detach(){}};}},
     NativeFunction:function(address,result,args,opts) {
-      assert.strictEqual(result,'void'); assert.strictEqual(opts.abi,'win64');
+      assert(['void','pointer'].includes(result)); assert.strictEqual(opts.abi,'win64');
       assert.strictEqual(opts.scheduling,'cooperative'); assert.strictEqual(opts.exceptions,'propagate');
       const item=spec.wrappers.find(i=>base.add(i.rva).equals(address));
       assert.deepStrictEqual(Array.from(args),item ? item.arguments : ['pointer','pointer']);
+      if(result==='pointer')return()=>{throw Error('unexpected model call');};
       return (...values)=>originals.get(address.toString())(...values);
     },
     NativeCallback:function(callback,result,args,abi) {
@@ -86,6 +98,8 @@ function setup(options = {}) {
   vm.runInNewContext(source,context,{timeout:1000});
   const module = {name:'core.dll',path:options.foreignPath?'D:\\foreign\\core.dll':spec.modulePath,
       base,size:options.badImageSize?1:spec.imageSize};
+  const mainModule={name:'max.exe',path:spec.unread.modulePath,base:mainBase,size:spec.unread.imageSize};
+  if(moduleObserver)moduleObserver.onAdded(mainModule);
   if (!options.delayed && moduleObserver) moduleObserver.onAdded(module);
   function hit(feature,...args) {
     const pin=spec.wrappers.find(item=>feature==='chatRead' ? item.selectorExcept===1 : item.feature===feature);
@@ -113,7 +127,7 @@ function delegation() {
   assert.strictEqual(value.calls[0].args[0],poisoned); assert.strictEqual(value.calls[0].args[1],id);
   assert.strictEqual(value.calls[1].args[2],poisoned);
   assert.deepStrictEqual(value.snapshot().blocked,{typing:0,read:0,presence:0,stories:0});
-  assert.strictEqual(value.replacements.size,5); assert.strictEqual(value.attached.size,1); assert.strictEqual(value.flushes(),1);
+  assert.strictEqual(value.replacements.size,5); assert.strictEqual(value.attached.size,7); assert.strictEqual(value.flushes(),2);
   return 9;
 }
 function controls() {
@@ -226,6 +240,7 @@ class GhostMonitorJavascriptTests(unittest.TestCase):
         spec = {'schema': 1, 'moduleSha256': ghost_native.CORE_SHA256,
                 'moduleSize': ghost_native.CORE_FILE_SIZE, 'imageSize': ghost_native.CORE_IMAGE_SIZE,
                 'wrappers': list(ghost_native.WRAPPERS), 'online': ghost_native.ONLINE}
+        spec['unread'] = ghost_unread_native.PIN
         result = subprocess.run([shutil.which('node'), '-e', HARNESS,
                                  str(Path(__file__).with_name('ghost_monitor.js')),
                                  json.dumps(spec), name], capture_output=True, text=True,

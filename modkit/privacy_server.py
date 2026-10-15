@@ -723,7 +723,7 @@ class Monitor:
                     self.observation.detach(pid)
 
 
-def handler_factory(status, identity=None, quick_replies=None, session_transfer=None, mdata=None, account_settings=None, ghost_settings=None, ghost_runtime=None, chat_export=None, message_retention=None, chat_locks=None, inline_media=None, notification_privacy=None, optimization_settings=None):
+def handler_factory(status, identity=None, quick_replies=None, session_transfer=None, mdata=None, account_settings=None, ghost_settings=None, ghost_runtime=None, chat_export=None, message_retention=None, chat_locks=None, inline_media=None, notification_privacy=None, optimization_settings=None, support_diagnostics=None):
     preview_lock = threading.BoundedSemaphore(1)
     class Handler(BaseHTTPRequestHandler):
         protocol_version = "HTTP/1.1"
@@ -745,6 +745,42 @@ def handler_factory(status, identity=None, quick_replies=None, session_transfer=
             types = self.headers.get_all("Content-Type", [])
             return (len(types) == 1 and types[0].split(";", 1)[0].strip().lower() == "application/json"
                     and self.headers.get_content_charset("utf-8") == "utf-8")
+
+        def discard_rejected_body(self, max_body):
+            """Avoid a Windows reset for a bounded, unambiguous rejected POST.
+
+            Bytes are discarded without parsing, logging or storage. Ambiguous
+            lengths and transfer encodings are never consumed; slow/incomplete
+            bodies get one short total deadline, not a fresh timeout per chunk.
+            """
+            lengths = self.headers.get_all("Content-Length", [])
+            if (self.headers.get_all("Transfer-Encoding", []) or len(lengths) != 1
+                    or not 1 <= len(lengths[0]) <= 7 or not lengths[0].isascii()
+                    or not lengths[0].isdigit()):
+                return
+            remaining = int(lengths[0])
+            if not 0 < remaining <= max_body:
+                return
+            previous = self.connection.gettimeout()
+            deadline = time.monotonic() + 0.25
+            try:
+                while remaining:
+                    timeout = deadline - time.monotonic()
+                    if timeout <= 0:
+                        break
+                    self.connection.settimeout(timeout)
+                    chunk = self.rfile.read1(min(remaining, 65536))
+                    if not chunk:
+                        break
+                    remaining -= len(chunk)
+                    chunk = None
+            except (TimeoutError, OSError):
+                pass
+            finally:
+                try:
+                    self.connection.settimeout(previous)
+                except OSError:
+                    pass
 
         def reply(self, code, value):
             data = json.dumps(value, ensure_ascii=False).encode("utf-8")
@@ -779,6 +815,8 @@ def handler_factory(status, identity=None, quick_replies=None, session_transfer=
                 return
             if self.path == "/status":
                 self.reply(200, status())
+            elif self.path == "/support-diagnostics" and support_diagnostics is not None:
+                self.reply(200, support_diagnostics.preview())
             elif self.path == "/identity" and identity is not None:
                 self.reply(200, identity())
             elif self.path == "/quick-replies" and quick_replies is not None:
@@ -856,6 +894,7 @@ def handler_factory(status, identity=None, quick_replies=None, session_transfer=
             is_transfer = self.path == "/session-transfer" and session_transfer is not None
             is_accounts = self.path == "/account-settings" and account_settings is not None
             is_optimization = self.path == "/optimization-settings" and optimization_settings is not None
+            is_support = self.path == "/support-diagnostics" and support_diagnostics is not None
             is_ghost = self.path == "/ghost-settings" and ghost_settings is not None and ghost_runtime is not None
             is_retention = self.path in ("/message-retention/lookup", "/message-retention/settings") and message_retention is not None
             from chat_lock_service import KEYS as CHAT_LOCK_KEYS
@@ -865,16 +904,18 @@ def handler_factory(status, identity=None, quick_replies=None, session_transfer=
             is_inline_media = inline_media is not None and media_action in ("search", "select")
             export_action = self.path[len("/chat-export/"):] if self.path.startswith("/chat-export/") else None
             is_chat_export = chat_export is not None and export_action in ("start", "page", "media", "media-start", "media-chunk", "finish", "status", "history", "cancel")
-            if not is_inline_media and not is_chat_lock and not is_retention and not is_chat_export and not is_mdata_request and not is_transfer and not is_accounts and not is_optimization and not is_ghost and (self.path != "/quick-replies" or quick_replies is None):
+            max_body = 2 * 1024 * 1024 if is_chat_export else 32768 if is_retention else 256 * 1024
+            if not is_support and not is_inline_media and not is_chat_lock and not is_retention and not is_chat_export and not is_mdata_request and not is_transfer and not is_accounts and not is_optimization and not is_ghost and (self.path != "/quick-replies" or quick_replies is None):
                 self.send_error(405)
                 return
             # Native QML XHR sends no Origin. Web pages cannot send this custom
             # header + JSON without a CORS preflight; OPTIONS never grants it.
             if (not self.local_headers() or self.headers.get_all("Origin", [])
-                    or self.headers.get_all("X-Max-Mod-Local-Write", []) != ["optimization-settings-v1" if is_optimization else "inline-media-v1" if is_inline_media else "chat-locks-v1" if is_chat_lock else "message-retention-v1" if is_retention else "chat-export-v1" if is_chat_export else "mdata-v1" if is_mdata_request else "session-transfer-v1" if is_transfer else "account-settings-v1" if is_accounts else "ghost-settings-v1" if is_ghost else "quick-replies-v1"]
+                    or self.headers.get_all("X-Max-Mod-Local-Write", []) != ["support-diagnostics-v1" if is_support else "optimization-settings-v1" if is_optimization else "inline-media-v1" if is_inline_media else "chat-locks-v1" if is_chat_lock else "message-retention-v1" if is_retention else "chat-export-v1" if is_chat_export else "mdata-v1" if is_mdata_request else "session-transfer-v1" if is_transfer else "account-settings-v1" if is_accounts else "ghost-settings-v1" if is_ghost else "quick-replies-v1"]
                     or not self.json_content_type()
                     or self.headers.get_all("Transfer-Encoding", [])
                     or self.headers.get_all("Expect", [])):
+                self.discard_rejected_body(max_body)
                 self.reply(403, {"schema": 1, "error": "local_write_required"})
                 return
             lengths = self.headers.get_all("Content-Length", [])
@@ -883,7 +924,7 @@ def handler_factory(status, identity=None, quick_replies=None, session_transfer=
                 self.reply(400, {"schema": 1, "error": "invalid_request"})
                 return
             length = int(lengths[0])
-            if not 1 <= length <= (2 * 1024 * 1024 if is_chat_export else 32768 if is_retention else 256 * 1024):
+            if not 1 <= length <= max_body:
                 self.reply(413, {"schema": 1, "error": "request_too_large"})
                 return
             try:
@@ -901,6 +942,8 @@ def handler_factory(status, identity=None, quick_replies=None, session_transfer=
                     expected_keys = {"schema", "file", "password", "fingerprint"}
                 elif is_ghost or is_optimization:
                     expected_keys = {"schema", "revision", "settings"}
+                elif is_support:
+                    expected_keys = {"schema", "file"}
                 elif is_inline_media:
                     expected_keys = {"mode", "query"} if media_action == "search" else {"id"}
                 elif is_chat_lock:
@@ -915,6 +958,17 @@ def handler_factory(status, identity=None, quick_replies=None, session_transfer=
                     raise ValueError("schema")
             except (UnicodeDecodeError, ValueError, RecursionError, TimeoutError, OSError):
                 self.reply(400, {"schema": 1, "error": "invalid_request"})
+                return
+            if is_support:
+                from support_diagnostics import SupportDiagnosticsError
+                try:
+                    self.reply(200, support_diagnostics.export(value["file"]))
+                except SupportDiagnosticsError as error:
+                    self.reply(409 if error.code == "file_exists" else 400 if error.code == "unsafe_path" else 503,
+                               {"schema": 1, "error": error.code})
+                finally:
+                    value.clear()
+                    raw = None
                 return
             if is_optimization:
                 from optimization_store import OptimizationSettingsError
@@ -1154,8 +1208,16 @@ def _run_observer(args):
         inline_media = InlineMediaService(args.manifest.resolve().parent.parent / ".mxmod-helper-temp" / "inline-media")
         from optimization_store import OptimizationSettingsStore, native_client_running
         optimization_settings = OptimizationSettingsStore(config_path.parent / "optimization-settings.json")
+        from support_diagnostics import SupportDiagnosticsService
+        def current_startup():
+            receipt = startup_status.current()
+            return None if receipt is None else receipt.try_read()
+        support_diagnostics = SupportDiagnosticsService(valmax_version="8.8.2", max_version=manifest.get("max_version"),
+            privacy=status, startup=current_startup,
+            ghost=None if ghost_settings is None else ghost_settings.snapshot,
+            optimization=optimization_settings.snapshot)
     with _startup_step("bind", "port_busy"):
-        server = LoopbackServer(("127.0.0.1", PORT), handler_factory(status, identity, quick_replies, session_transfer, mdata, account_settings, ghost_settings, ghost_runtime, chat_export, message_retention, chat_locks, inline_media, monitor.notification_status, optimization_settings))
+        server = LoopbackServer(("127.0.0.1", PORT), handler_factory(status, identity, quick_replies, session_transfer, mdata, account_settings, ghost_settings, ghost_runtime, chat_export, message_retention, chat_locks, inline_media, monitor.notification_status, optimization_settings, support_diagnostics))
     try:
         with _startup_step("optimization", "optimization_prepare_failed"):
             # The exclusive port is owned before writing the launch snapshot. A

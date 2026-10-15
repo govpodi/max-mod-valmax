@@ -1,5 +1,19 @@
 # Изменения / Changelog
 
+## 8.8.2 Beta — 2026-10-15
+
+- Исправлена геометрия результатов `@pic`/`@vid`: выбор фото и прокрутка списка доступны в маленьком окне.
+- Добавлен локальный учёт просмотренных сообщений для счётчика режима призрака. Поправка действует в текущем запуске; при неоднозначной синхронизации возвращается серверный счётчик. Полная повторная синхронизация ещё требует проверки.
+- Исправлен фильтр ручной отметки прочтения: действие «Сделать непрочитанным» больше не принимается за отправку прочтения.
+- Добавлена страница «Помощь и диагностика»: просмотр и сохранение разрешённых технических сведений в новый JSON-файл, без автоматической отправки.
+- Упрощены инструкция участия и форма ошибки; обновлены русский и английский README, расшифровка ВАЛ, контакты Telegram и скриншот со скрытыми личными данными.
+
+Fixes media-result layout and selection, adds a session-local ghost unread-counter
+adjustment and corrects the manual read filter. Adds opt-in local diagnostic
+export and clearer bug reporting; updates bilingual project documentation.
+The counter adjustment remains beta, with conservative server-count fallback;
+full resynchronization still needs validation.
+
 ## 8.8.1 Beta — 2026-10-15
 
 Первый публичный выпуск.

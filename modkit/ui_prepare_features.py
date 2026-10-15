@@ -80,6 +80,8 @@ def prepare(binary: bytes, *, icon_bundle: bytes) -> tuple[dict[str, bytes], dic
     transformed = optimization_gates_transform(transformed)
     from optimization_ui import transform_sources as optimization_settings_transform
     transformed = optimization_settings_transform(transformed)
+    from support_ui import transform_leading as support_transform
+    transformed["LeadingSettingsBar.qml"] = support_transform(transformed["LeadingSettingsBar.qml"])
     if set(transformed) != set(originals) or any(type(value) is not str for value in transformed.values()):
         raise ValueError("Unexpected source transform contract")
     sources = {path: transformed[path.rsplit("/", 1)[1]].replace("\r\n", "\n").encode("utf8")
@@ -134,11 +136,12 @@ def main():
     evidence["features"].extend(["frame_bounded_row_admission", "retained_ready_viewport_cache", "visual_viewport_observer_gating", "identity_scoped_pending_input", "owned_popup_lifetime"])
     evidence["features"].extend(["bounded_history_and_profile_wheel_admission", "stable_profile_detail_rows"])
     evidence["features"].extend(["restart_scoped_optimization_switches", "native_beta_badges"])
+    evidence["features"].append("explicit_local_support_report")
     evidence["templateEndpoints"] = {"GET": "/quick-replies", "POST": "/quick-replies"}
     evidence["sendSemantics"] = "Selection inserts a draft and stages attachments immediately; native Send remains manual; native cleared closes the final-part hint."
     evidence["panelSha256"] = {
         name: hashlib.sha256(Path(__file__).with_name(name).read_bytes()).hexdigest()
-        for name in ("ui_privacy_panel.qml", "quick_replies_panel.qml", "quick_replies_composer.qml", "inline_media_composer.qml", "chat_lock_controller.qml", "mdata_panel.qml", "account_preferences_panel.qml", "business_panel.qml", "profile_details_panel.qml", "ghost_panel.qml", "chat_export_panel.qml", "message_retention_controller.qml", "message_retention_settings_panel.qml", "ValMAXAsyncListRow.qml", "ValMAXListWorkQueue.qml", "ValMAXWheelAdmission.qml", "optimization_panel.qml", "OptimizationConfig.qml")}
+        for name in ("ui_privacy_panel.qml", "quick_replies_panel.qml", "quick_replies_composer.qml", "inline_media_composer.qml", "chat_lock_controller.qml", "mdata_panel.qml", "account_preferences_panel.qml", "business_panel.qml", "profile_details_panel.qml", "ghost_panel.qml", "chat_export_panel.qml", "message_retention_controller.qml", "message_retention_settings_panel.qml", "ValMAXAsyncListRow.qml", "ValMAXListWorkQueue.qml", "ValMAXWheelAdmission.qml", "optimization_panel.qml", "OptimizationConfig.qml", "support_panel.qml")}
     (args.output / "feature-resources.json").write_text(
         json.dumps(evidence, ensure_ascii=False, indent=2) + "\n", encoding="utf8")
     print(json.dumps(evidence, ensure_ascii=False, indent=2))

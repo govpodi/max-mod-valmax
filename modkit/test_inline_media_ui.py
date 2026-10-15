@@ -36,6 +36,16 @@ class NativeTransformTests(unittest.TestCase):
         self.assertNotIn('triggeredOnStart: true; running: root.modInline',base)
         self.assertIn('Внешний поиск только по кнопке',base)
         self.assertIn('Wikimedia Commons',base)
+    def test_native_height_cap_can_shrink_results_above_editor(self):
+        base = inline_media_ui.transform_sources(self.quick)["BaseSendPanel.qml"]
+        loader = base.split('objectName: "inlineMediaLoader"', 1)[1].split('activeAndVisible:', 1)[0]
+        self.assertIn('Layout.fillHeight: true',loader)
+        self.assertIn('Layout.minimumHeight: 0',loader)
+        rows = base.split('objectName: "inlineMediaResults"', 1)[1].split('model: root.modInlineRows', 1)[0]
+        self.assertIn('Layout.fillHeight: true',rows)
+        self.assertIn('Layout.minimumHeight: 0',rows)
+        self.assertIn('ScrollBar.vertical:',rows)
+        self.assertIn('objectName: "inlineMediaResult_" + index',base)
     def test_transform_fails_if_unpinned_or_repeated(self):
         with self.assertRaises(ValueError):
             inline_media_ui.transform_sources(self.sources)

@@ -1,49 +1,70 @@
-name: Ошибка / Bug report
-description: Воспроизводимая проблема ValMAX без личных данных.
-title: "[Bug] "
+name: Сообщить об ошибке
+description: Расскажите, что не получилось. Навыки программирования и отчёт не обязательны.
+title: "[Ошибка] "
 body:
   - type: markdown
     attributes:
       value: |
-        Не прикладывайте токены, SMS-коды, пароли, MData/MAXSession, базы профиля, переписку, защищённые ссылки и необработанные логи. Для уязвимостей используйте SECURITY.md и приватный канал.
-        Do not include credentials, archives, messages, protected URLs, or raw logs. Use synthetic data.
+        Спасибо, что помогаете улучшать ValMAX. Опишите проблему своими словами.
+        Здесь всё видно другим людям. Не прикладывайте переписку, номера телефонов, ID, коды входа, пароли, токены, папки профиля, MData/MAXSession, сырые логи или дампы.
+        Если нашли уязвимость, используйте [закрытый канал](https://github.com/govpodi/max-mod-valmax/blob/main/SECURITY.md).
   - type: input
     id: version
     attributes:
-      label: Версия ValMAX / ValMAX version
-      placeholder: "8.8.1"
+      label: Какая версия ValMAX?
+      description: Укажите версию установленной сборки. Если не знаете — так и напишите.
+      placeholder: "Например: 8.8.2 Beta"
     validations:
       required: true
   - type: input
     id: windows
     attributes:
-      label: Версия Windows / Windows version
-      placeholder: "Windows 11, build ..."
+      label: Какая Windows?
+      description: В меню «Пуск» наберите winver. Перепишите название и номер сборки, без имени пользователя.
+      placeholder: "Например: Windows 11, сборка 26100"
     validations:
       required: true
   - type: textarea
     id: reproduce
     attributes:
-      label: Шаги воспроизведения / Reproduction
-      description: Краткий пример с вымышленными данными.
+      label: Что вы делали?
+      description: Напишите по шагам, как получить ошибку. Используйте вымышленные имена и сообщения.
+      placeholder: |
+        1. Открыл…
+        2. Нажал…
+        3. Увидел…
     validations:
       required: true
   - type: textarea
-    id: expected
+    id: result
     attributes:
-      label: Ожидаемый результат / Expected behavior
+      label: Что ожидали и что получилось?
+      description: Если был код ошибки, перепишите его. Уберите личные данные и пути с именем пользователя.
+      placeholder: |
+        Ожидал: …
+        Получилось: …
+    validations:
+      required: true
+  - type: dropdown
+    id: frequency
+    attributes:
+      label: Как часто повторяется ошибка?
+      options:
+        - Каждый раз
+        - Иногда
+        - Случилась один раз
+        - Пока не проверял
     validations:
       required: true
   - type: textarea
-    id: actual
+    id: attachments
     attributes:
-      label: Фактический результат / Actual behavior
-    validations:
-      required: true
+      label: Отчёт или скриншот — по желанию
+      description: В ValMAX откройте «Настройки → Помощь и диагностика → Сохранить отчёт…». Просмотрите полученный JSON и прикрепите его вручную. Если ValMAX не запускается, этот шаг можно пропустить. На скриншоте оставьте только саму ошибку.
   - type: checkboxes
     id: privacy
     attributes:
-      label: Проверка данных / Data check
+      label: Перед отправкой
       options:
-        - label: "Я проверил текст и вложения: личных данных, секретов и архивов профиля нет."
+        - label: "Я проверил текст и вложения: в них нет личных данных, секретов, переписки и архивов профиля."
           required: true

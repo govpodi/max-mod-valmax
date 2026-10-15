@@ -149,8 +149,8 @@ def main() -> int:
             header = stream.read(24)
         valid_header = (len(header) == 24 and header[:8] == b'\x89PNG\r\n\x1a\n'
                         and header[8:16] == b'\0\0\0\rIHDR')
-        if not valid_header or struct.unpack('>II', header[16:24]) != (1980, 1080):
-            errors.append(f'{SCREENSHOT.as_posix()}: expected-1980x1080-png')
+        if not valid_header or struct.unpack('>II', header[16:24]) != (1704, 923):
+            errors.append(f'{SCREENSHOT.as_posix()}: expected-1704x923-redacted-png')
     else:
         errors.append(f'{SCREENSHOT.as_posix()}: required-screenshot-missing')
 
@@ -160,7 +160,7 @@ def main() -> int:
         print(f'FAILED: {len(set(errors))} repository checks')
         return 1
     print(f'OK: {python_count} Python files, {markdown_count} Markdown files, relative links, '
-          'public artifact checks, README slogans and 1980x1080 screenshot; no native client launched.')
+          'public artifact checks, README slogans and redacted screenshot dimensions; no native client launched.')
     return 0
 
 

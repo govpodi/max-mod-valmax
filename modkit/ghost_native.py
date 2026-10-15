@@ -29,11 +29,11 @@ WRAPPERS = (
      "arguments": ["pointer", "int64", "pointer"],
      "vtableRva": 0x18CD300, "slot": 8, "thunkRva": 0x979B,
      "thunkExpected": "e9f0099c00"},
-    {"feature": "hideRead", "counter": "read", "rva": 0xA94050,
-     "expected": "4883ec28458bc84c8bc2488d542448e829a35aff4883c428c3",
+    {"feature": "hideRead", "counter": "read", "rva": 0xA940C0,
+     "expected": "4883ec28458bc84c8bc2488d542448e8befe62ff4883c428c3",
      "arguments": ["pointer", "int64", "int"], "selectorExcept": 1,
-     "vtableRva": 0x18D4478, "slot": 0x20, "thunkRva": 0xD1BC9,
-     "thunkExpected": "e982249c00"},
+     "vtableRva": 0x18D4478, "slot": 8, "thunkRva": 0x365C,
+     "thunkExpected": "e95f0aa900"},
     {"feature": "hideStories", "counter": "stories", "rva": 0x1241F70,
      "expected": "4883ec380f10024d8bc8488d5424484c8d4424200f29442420e82a90defe4883c438c3",
      "arguments": ["pointer", "pointer", "int64"],
@@ -65,7 +65,10 @@ def specification(root: Path) -> dict:
     """
     path = payload_file(root, "core.dll")
     data = path.read_bytes()
-    return specification_from_bytes(data, module_path=path)
+    import ghost_unread_native
+    value = specification_from_bytes(data, module_path=path)
+    value['unread'] = ghost_unread_native.specification(root)
+    return value
 
 
 def specification_from_bytes(data: bytes, *, module_path: Path) -> dict:

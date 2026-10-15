@@ -531,6 +531,9 @@ const valmaxMessageRetention = (() => {
         stack.pop(); if (stack.length === 0) scopes.delete(scope.thread);
     }
     function processorEnter(args) {
+        // A delete plus new messages can leave the raw unread total unchanged.
+        // Invalidate the session-only ghost offset even while retention is off.
+        if (typeof invalidateUnreadCredits === 'function') invalidateUnreadCredits();
         if (!filtering()) return;
         const stack = scopes.get(this.threadId), scope = stack && stack[stack.length - 1];
         if (!scope || !scope.eligible) return;

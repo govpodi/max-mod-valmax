@@ -24,3 +24,5 @@ jobs:
         run: python -B -X utf8 .github/scripts/check_repository.py
       - name: Run mocked activation tests
         run: python -B -X utf8 -m unittest discover -s modkit -p test_client_activation.py -v
+      - name: Check local diagnostic report allowlist
+        run: python -B -X utf8 -m unittest discover -s modkit -p test_support_diagnostics.py -v

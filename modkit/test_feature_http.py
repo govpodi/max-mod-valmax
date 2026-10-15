@@ -1,10 +1,13 @@
 """Synthetic local HTTP boundaries; no accounts, messenger or external calls."""
 import http.client
+from email.message import Message
 from http.server import ThreadingHTTPServer
 import json
 import threading
+import time
+from types import SimpleNamespace
 import unittest
-from unittest.mock import Mock
+from unittest.mock import Mock, patch
 
 from privacy_server import PORT, handler_factory
 from chat_lock_service import ChatLockError
@@ -20,8 +23,17 @@ class FeatureHTTPTests(unittest.TestCase):
         self.media.search.return_value = {"schema": 1, "results": []}
         self.media.select.return_value = {"schema": 1, "url": "file:///synthetic.jpg"}
         self.media.preview.return_value = (b"OWN-IMAGE-FIXTURE", "image/jpeg")
-        self.server = ThreadingHTTPServer(("127.0.0.1", 0), handler_factory(
-            lambda: {"schema": 1}, chat_locks=self.locks, inline_media=self.media))
+        handler = handler_factory(lambda: {"schema": 1}, chat_locks=self.locks, inline_media=self.media)
+        class ObservedHandler(handler):
+            def discard_rejected_body(self, max_body):
+                self.server.discard_started.set()
+                try:
+                    super().discard_rejected_body(max_body)
+                finally:
+                    self.server.discard_finished.set()
+        self.server = ThreadingHTTPServer(("127.0.0.1", 0), ObservedHandler)
+        self.server.discard_started = threading.Event()
+        self.server.discard_finished = threading.Event()
         self.server.daemon_threads = True
         self.thread = threading.Thread(target=self.server.serve_forever, daemon=True)
         self.thread.start()
@@ -80,6 +92,65 @@ class FeatureHTTPTests(unittest.TestCase):
             self.assertEqual(self.request(path, method="OPTIONS")[0], 405)
         self.locks.execute.assert_not_called()
         self.media.search.assert_not_called()
+
+    def rejected_headers(self, connection, length):
+        connection.putrequest("POST", "/inline-media/search", skip_host=True)
+        for name, value in {"Host": f"127.0.0.1:{PORT}", "Content-Type": "application/json",
+                            "X-Max-Mod-Local-Write": "inline-media-v1", "Origin": "https://example.invalid",
+                            "Content-Length": str(length)}.items():
+            connection.putheader(name, value)
+        connection.endheaders()
+
+    def test_delayed_rejected_body_returns_403_without_parsing_or_store(self):
+        body = b"PRIVATE-SENTINEL\x00\xff" + b"x" * 32768
+        connection = http.client.HTTPConnection(*self.server.server_address, timeout=2)
+        try:
+            with patch("privacy_server.json.loads", side_effect=AssertionError("rejected body parsed")):
+                self.rejected_headers(connection, len(body))
+                self.assertTrue(self.server.discard_started.wait(1))
+                connection.send(body[:17])
+                threading.Event().wait(0.03)
+                connection.send(body[17:])
+                response = connection.getresponse()
+                self.assertEqual(response.status, 403)
+                result = response.read()
+            self.assertTrue(self.server.discard_finished.wait(1))
+            self.assertEqual(json.loads(result), {"schema": 1, "error": "local_write_required"})
+            self.assertNotIn(b"PRIVATE-SENTINEL", result)
+        finally:
+            connection.close()
+        self.locks.execute.assert_not_called()
+        self.media.search.assert_not_called()
+
+    def test_incomplete_rejected_body_has_a_short_total_deadline(self):
+        connection = http.client.HTTPConnection(*self.server.server_address, timeout=2)
+        try:
+            started = time.monotonic()
+            self.rejected_headers(connection, 65536)
+            self.assertTrue(self.server.discard_started.wait(1))
+            connection.send(b"x")
+            response = connection.getresponse()
+            self.assertEqual(response.status, 403)
+            response.read()
+            self.assertTrue(self.server.discard_finished.wait(1))
+            self.assertLess(time.monotonic() - started, 1)
+        finally:
+            connection.close()
+        self.media.search.assert_not_called()
+
+    def test_rejection_never_consumes_ambiguous_chunked_or_oversized_body(self):
+        handler = handler_factory(lambda: {})
+        for fields in ([], [("Content-Length", "1"), ("Content-Length", "1")],
+                       [("Content-Length", "1"), ("Transfer-Encoding", "chunked")],
+                       [("Content-Length", "32769")], [("Content-Length", "-1")],
+                       [("Content-Length", "999999999999999999999999")]):
+            headers = Message()
+            for key, value in fields: headers[key] = value
+            fixture = SimpleNamespace(headers=headers, connection=Mock(), rfile=Mock())
+            fixture.rfile.read1.side_effect = AssertionError("unsafe rejected framing consumed")
+            handler.discard_rejected_body(fixture, 32768)
+            fixture.rfile.read1.assert_not_called()
+            fixture.connection.gettimeout.assert_not_called()
 
     def test_strict_schema_and_duplicate_keys(self):
         requests = (("/chat-locks/lock-all", b'{"schema":true}'),

@@ -38,10 +38,11 @@ class GhostSpecificationTests(unittest.TestCase):
         self.assertEqual(len(bytes.fromhex(native.WRAPPERS[0]['expected'])), 25)
         self.assertEqual(len(bytes.fromhex(native.WRAPPERS[1]['expected'])), 42)
         self.assertEqual(native.WRAPPERS[1]['slot'], 8)
-        self.assertEqual(native.WRAPPERS[2]['rva'], 0xA94050)
+        self.assertEqual(native.WRAPPERS[2]['rva'], 0xA940C0)
         self.assertEqual(native.WRAPPERS[2]['selectorExcept'], 1)
-        self.assertEqual(native.WRAPPERS[2]['slot'], 0x20)
+        self.assertEqual(native.WRAPPERS[2]['slot'], 8)
         self.assertEqual(len(bytes.fromhex(native.WRAPPERS[2]['expected'])), 25)
+        self.assertNotIn(0xA94050, [v['rva'] for v in native.WRAPPERS])
         self.assertNotIn(0x9CA4C0, [v['rva'] for v in native.WRAPPERS])
         self.assertEqual(native.WRAPPERS[3]['rva'], 0x1241F70)
         self.assertEqual(native.WRAPPERS[3]['arguments'], ['pointer', 'pointer', 'int64'])
@@ -78,7 +79,8 @@ class GhostSpecificationTests(unittest.TestCase):
             data = self.image()
             (root / 'core.dll').write_bytes(data)
             with patch.object(native, 'CORE_FILE_SIZE', len(data)), patch.object(
-                    native, 'CORE_SHA256', hashlib.sha256(data).hexdigest()):
+                    native, 'CORE_SHA256', hashlib.sha256(data).hexdigest()), patch(
+                    'ghost_unread_native.specification', return_value={'synthetic': True}):
                 spec = native.specification(root)
                 self.assertEqual(Path(spec['modulePath']), (root / 'core.dll').resolve())
 

@@ -105,6 +105,10 @@ UiKit.MeLoader {
     id: modInlineLoader
     objectName: "inlineMediaLoader"
     Layout.fillWidth: true
+    // The native write bar is capped at 60% of the chat height. Let this
+    // loader and its results shrink within that allocation, above the editor.
+    Layout.fillHeight: true
+    Layout.minimumHeight: 0
     activeAndVisible: root.modInlineVisible
     sourceComponent: Control {
         id: inlineMediaMenu
@@ -116,6 +120,7 @@ UiKit.MeLoader {
         function completeSelected() {}
         padding: UiKit.DesignSystem.SpacingCommon._S
         implicitHeight: Math.min(440, inlineMediaContents.implicitHeight + 2 * padding)
+        clip: true
         background: Rectangle { color: root.chatAppearance.colorBackgroundCard; radius: UiKit.DesignSystem.BorderRadiusCommon._L }
         contentItem: ColumnLayout {
             id: inlineMediaContents
@@ -138,15 +143,20 @@ UiKit.MeLoader {
                 id: inlineMediaResults
                 objectName: "inlineMediaResults"
                 Layout.fillWidth: true
+                Layout.fillHeight: true
+                Layout.minimumHeight: 0
                 Layout.preferredHeight: Math.min(288, contentHeight)
                 visible: count > 0
                 clip: true
                 boundsBehavior: Flickable.StopAtBounds
+                ScrollBar.vertical: ScrollBar { policy: ScrollBar.AsNeeded }
                 model: root.modInlineRows
                 delegate: Button {
                     id: mediaRow
                     required property int index
                     required property var modelData
+                    objectName: "inlineMediaResult_" + index
+                    Accessible.name: modelData.title + ". Добавить в черновик"
                     width: inlineMediaResults.width
                     implicitHeight: Math.max(88, contentItem.implicitHeight + 16)
                     padding: 8
@@ -158,7 +168,7 @@ UiKit.MeLoader {
                         spacing: UiKit.DesignSystem.SpacingCommon._S
                         Item {
                             Layout.preferredWidth: 96; Layout.preferredHeight: 72
-                            Image { id: mediaPreview; anchors.fill: parent; source: modelData.preview ? "http://127.0.0.1:18973/inline-media/preview?id=" + modelData.id : ""; asynchronous: true; fillMode: Image.PreserveAspectFit; sourceSize: Qt.size(240, 180) }
+                            Image { id: mediaPreview; objectName: "inlineMediaPreview_" + mediaRow.index; anchors.fill: parent; source: modelData.preview ? "http://127.0.0.1:18973/inline-media/preview?id=" + modelData.id : ""; asynchronous: true; fillMode: Image.PreserveAspectFit; sourceSize: Qt.size(240, 180) }
                             Label { anchors.fill: parent; visible: mediaPreview.status !== Image.Ready; text: root.modInlineMode === "vid" ? "Видео" : "Фото"; horizontalAlignment: Text.AlignHCenter; verticalAlignment: Text.AlignVCenter; color: root.chatAppearance.colorTextSecondary; textFormat: Text.PlainText; background: Rectangle { color: root.chatAppearance.colorStatesBackgroundCardHover; radius: UiKit.DesignSystem.BorderRadiusCommon._S } }
                         }
                         ColumnLayout {
