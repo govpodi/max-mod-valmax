@@ -7,10 +7,13 @@ Returned files are staged for the native manual-send draft, never sent here.
 from __future__ import annotations
 
 from collections import OrderedDict
+from concurrent.futures import Future, TimeoutError as FutureTimeout
 from contextlib import ExitStack, contextmanager
 from dataclasses import dataclass
+from email.utils import parsedate_to_datetime
 from html.parser import HTMLParser
 import json
+import math
 import os
 from pathlib import Path
 import re
@@ -23,6 +26,8 @@ from urllib.request import HTTPRedirectHandler, Request, build_opener
 
 API = "https://commons.wikimedia.org/w/api.php"
 PROVIDER = "Wikimedia Commons"
+MEDIA_USER_AGENT = "ValMAX-MediaSearch/1.1 (https://github.com/govpodi/max-mod-valmax)"
+MAX_RETRY_SECONDS = 86400
 MAX_API_BYTES = 1_000_000
 MAX_FILE_BYTES = 25 * 1024 * 1024
 MAX_PREVIEW_BYTES = 2 * 1024 * 1024
@@ -41,12 +46,89 @@ MIMES = {"image/jpeg": ".jpg", "image/png": ".png", "image/gif": ".gif",
 
 class InlineMediaError(Exception):
     """Finite error code only: no request, query, remote response or file path."""
-    def __init__(self, code: str, status: int = 400):
+    def __init__(self, code: str, status: int = 400, *, retry_after_seconds: int | None = None):
         if not isinstance(code, str) or code not in CODES or type(status) is not int or status not in HTTP_STATUSES:
             raise ValueError("Invalid inline media error classification")
+        if retry_after_seconds is not None and (type(retry_after_seconds) is not int
+                or not 1 <= retry_after_seconds <= MAX_RETRY_SECONDS):
+            raise ValueError("Invalid inline media retry interval")
         super().__init__(code)
         self.code = code
         self.status = status
+        self.retry_after_seconds = retry_after_seconds
+
+
+def _retry_delay(header: object, now_wall: float) -> float:
+    """Keep the provider's full deadline; malformed values wait at least 5s."""
+    if not isinstance(header, str) or len(header) > 128:
+        return 5.
+    header = header.strip()
+    if re.fullmatch(r"[0-9]{1,12}", header):
+        return max(5., float(header))
+    try:
+        value = parsedate_to_datetime(header)
+        if value.tzinfo is None:
+            from datetime import timezone
+            value = value.replace(tzinfo=timezone.utc)
+        delay = value.timestamp() - now_wall
+        return max(5., delay) if math.isfinite(delay) else 5.
+    except (TypeError, ValueError, OverflowError):
+        return 5.
+
+
+class _ProviderGate:
+    """One bounded queue and cooldown for Wikimedia API, previews and originals."""
+    def __init__(self, *, clock=time.monotonic, wall_clock=time.time, max_parallel=2, queue_seconds=5):
+        self.clock, self.wall_clock = clock, wall_clock
+        self.max_parallel, self.queue_seconds = max_parallel, queue_seconds
+        self._condition = threading.Condition()
+        self._active = 0
+        self._foreground_waiting = 0
+        self._retry_until = 0.
+
+    def busy_error(self):
+        with self._condition:
+            remaining = max(1, math.ceil(self._retry_until - self.clock()))
+        # Do not advertise an earlier retry for a provider deadline over a day.
+        delay = remaining if remaining <= MAX_RETRY_SECONDS else None
+        return InlineMediaError("provider_busy", 503, retry_after_seconds=delay)
+
+    def defer(self, header):
+        delay = _retry_delay(header, self.wall_clock())
+        with self._condition:
+            self._retry_until = max(self._retry_until, self.clock() + delay)
+            self._condition.notify_all()
+
+    @contextmanager
+    def request(self, *, preview=False):
+        deadline = time.monotonic() + self.queue_seconds
+        with self._condition:
+            if not preview:
+                self._foreground_waiting += 1
+            try:
+                while True:
+                    if self.clock() < self._retry_until:
+                        raise self.busy_error()
+                    if self._active < self.max_parallel and (not preview or not self._foreground_waiting):
+                        self._active += 1
+                        break
+                    remaining = deadline - time.monotonic()
+                    if remaining <= 0:
+                        raise InlineMediaError("provider_unavailable", 503)
+                    self._condition.wait(remaining)
+            finally:
+                if not preview:
+                    self._foreground_waiting -= 1
+                    self._condition.notify_all()
+        try:
+            yield
+        finally:
+            with self._condition:
+                self._active -= 1
+                self._condition.notify_all()
+
+
+_PROVIDER_GATE = _ProviderGate()
 
 
 class _Text(HTMLParser):
@@ -116,27 +198,31 @@ class _Redirects(HTTPRedirectHandler):
 
 def fetch(url: str, limit: int, kind: str) -> tuple[bytes, str]:
     safe_url(url, kind)
-    request = Request(url, headers={"User-Agent": "ValMAX-MediaSearch/1.0 (Wikimedia Commons; explicit user search)",
+    request = Request(url, headers={"User-Agent": MEDIA_USER_AGENT,
                                     "Accept": "application/json" if kind == "api" else "image/*,video/webm,video/mp4",
                                     "Accept-Encoding": "identity"})
-    try:
-        with build_opener(_Redirects()).open(request, timeout=20) as response:
-            safe_url(response.geturl(), kind)
-            length = response.headers.get("Content-Length")
-            if length and (not length.isdecimal() or int(length) > limit):
-                raise InlineMediaError("file_too_large", 413)
-            if response.headers.get("Content-Encoding", "identity").lower() not in ("", "identity"):
-                raise InlineMediaError("unsupported_media", 422)
-            data = response.read(limit + 1)
-            mime = response.headers.get_content_type().lower()
-    except InlineMediaError:
-        raise
-    except HTTPError as error:
-        code = "provider_busy" if error.code == 429 else "provider_unavailable"
-        error.close()
-        raise InlineMediaError(code, 503) from None
-    except (URLError, OSError, TimeoutError, ValueError):
-        raise InlineMediaError("provider_unavailable", 503) from None
+    with _PROVIDER_GATE.request(preview=kind == "media" and limit <= MAX_PREVIEW_BYTES):
+        try:
+            with build_opener(_Redirects()).open(request, timeout=20) as response:
+                safe_url(response.geturl(), kind)
+                length = response.headers.get("Content-Length")
+                if length and (not length.isdecimal() or int(length) > limit):
+                    raise InlineMediaError("file_too_large", 413)
+                if response.headers.get("Content-Encoding", "identity").lower() not in ("", "identity"):
+                    raise InlineMediaError("unsupported_media", 422)
+                data = response.read(limit + 1)
+                mime = response.headers.get_content_type().lower()
+        except InlineMediaError:
+            raise
+        except HTTPError as error:
+            if error.code in (429, 503):
+                _PROVIDER_GATE.defer(error.headers.get("Retry-After"))
+                error.close()
+                raise _PROVIDER_GATE.busy_error() from None
+            error.close()
+            raise InlineMediaError("provider_unavailable", 503) from None
+        except (URLError, OSError, TimeoutError, ValueError):
+            raise InlineMediaError("provider_unavailable", 503) from None
     if len(data) > limit:
         raise InlineMediaError("file_too_large", 413)
     return data, mime
@@ -186,7 +272,9 @@ class InlineMediaService:
         self.transport = transport
         self.clock = clock
         self._entries: OrderedDict[str, _Entry] = OrderedDict()
-        self._previews: OrderedDict[str, tuple[bytes, str]] = OrderedDict()
+        self._previews: OrderedDict[str, tuple[bytes, str, float]] = OrderedDict()
+        self._preview_errors: OrderedDict[str, tuple[float, str, int, int | None]] = OrderedDict()
+        self._preview_pending: dict[str, Future] = {}
         self._lock = threading.RLock()
         self._download_lock = threading.Lock()
         self._last_search = -float("inf")
@@ -209,7 +297,6 @@ class InlineMediaService:
             entry = self._entries.get(result_id)
             if entry is None or entry.expires < self.clock():
                 self._entries.pop(result_id, None)
-                self._previews.pop(result_id, None)
                 raise InlineMediaError("result_expired", 410)
             return entry
 
@@ -289,25 +376,61 @@ class InlineMediaService:
             for result_id, entry in entries:
                 self._entries[result_id] = entry
             while len(self._entries) > 48:
-                result_id, _ = self._entries.popitem(last=False)
-                self._previews.pop(result_id, None)
+                self._entries.popitem(last=False)
         return {"schema": 1, "provider": PROVIDER, "mode": mode, "results": rows}
 
     def preview(self, result_id: object) -> tuple[bytes, str]:
         entry = self._entry(result_id)
         if not entry.preview_url:
             raise InlineMediaError("preview_unavailable", 404)
+        key = entry.preview_url
         with self._lock:
-            if result_id in self._previews:
-                return self._previews[result_id]
-        data, mime = self.transport(entry.preview_url, MAX_PREVIEW_BYTES, "media")
-        if len(data) > MAX_PREVIEW_BYTES or not mime.startswith("image/") or not valid_content(data, mime):
-            raise InlineMediaError("unsupported_media", 422)
-        with self._lock:
-            self._previews[result_id] = data, mime
-            while sum(len(value[0]) for value in self._previews.values()) > 12 * 1024 * 1024:
-                self._previews.popitem(last=False)
-        return data, mime
+            now = self.clock()
+            cached = self._previews.get(key)
+            if cached is not None:
+                if cached[2] > now:
+                    self._previews.move_to_end(key)
+                    return cached[0], cached[1]
+                self._previews.pop(key)
+            failed = self._preview_errors.get(key)
+            if failed is not None:
+                if failed[0] > now:
+                    delay = min(failed[3], max(1, math.ceil(failed[0] - now))) if failed[3] is not None else None
+                    raise InlineMediaError(failed[1], failed[2], retry_after_seconds=delay)
+                self._preview_errors.pop(key)
+            future = self._preview_pending.get(key)
+            producer = future is None
+            if producer:
+                future = Future()
+                self._preview_pending[key] = future
+        if not producer:
+            try:
+                return future.result(timeout=26)
+            except FutureTimeout:
+                raise InlineMediaError("preview_unavailable", 404) from None
+        try:
+            data, mime = self.transport(key, MAX_PREVIEW_BYTES, "media")
+            if len(data) > MAX_PREVIEW_BYTES or not mime.startswith("image/") or not valid_content(data, mime):
+                raise InlineMediaError("unsupported_media", 422)
+            with self._lock:
+                self._previews[key] = data, mime, self.clock() + RESULT_TTL_SECONDS
+                while (len(self._previews) > 48
+                        or sum(len(value[0]) for value in self._previews.values()) > 12 * 1024 * 1024):
+                    self._previews.popitem(last=False)
+            future.set_result((data, mime))
+            return data, mime
+        except Exception as error:
+            safe = error if isinstance(error, InlineMediaError) else InlineMediaError("provider_unavailable", 503)
+            with self._lock:
+                lifetime = min(30, safe.retry_after_seconds or 5)
+                self._preview_errors[key] = self.clock() + lifetime, safe.code, safe.status, safe.retry_after_seconds
+                while len(self._preview_errors) > 48:
+                    self._preview_errors.popitem(last=False)
+            future.set_exception(safe)
+            raise safe from None
+        finally:
+            with self._lock:
+                self._preview_pending.pop(key, None)
 
     def select(self, payload: object) -> dict:
         if not isinstance(payload, dict) or set(payload) != {"id"}:

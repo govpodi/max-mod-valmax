@@ -1,9 +1,14 @@
 // ValMAX explicit media search. Draft parsing is local; only a button sends a query.
 property var modInlineRows: []
 property var modInlineRequest: null
+property string modInlineRequestRoute: ""
 property int modInlineGeneration: 0
 property bool modInlineBusy: false
 property string modInlineStatus: ""
+property string modInlineRetryRoute: ""
+property string modInlineRetryError: ""
+property int modInlineRetrySeconds: 0
+property bool modInlineRetryStatusActive: false
 property string modInlineDismissedDraft: ""
 readonly property string modInlineDraftKey: /^@(pic|vid)(?:\s[^\r\n]{0,160})?$/i.test(chatInput.text) ? chatInput.text : ""
 readonly property bool modInlineVisible: textInputVisible && modInlineDraftKey.length > 0 && modInlineDismissedDraft !== modInlineDraftKey
@@ -14,11 +19,17 @@ function modInlineReset(accountOrChatChanged) {
     ++modInlineGeneration;
     var request = modInlineRequest;
     modInlineRequest = null;
+    modInlineRequestRoute = "";
     if (request !== null) { request.onreadystatechange = function() {}; request.abort(); }
     modInlineWatchdog.stop();
+    modInlineRetryTimer.stop();
     modInlineBusy = false;
     modInlineRows = [];
     modInlineStatus = "";
+    modInlineRetryRoute = "";
+    modInlineRetryError = "";
+    modInlineRetrySeconds = 0;
+    modInlineRetryStatusActive = false;
     if (accountOrChatChanged) modInlineDismissedDraft = "";
 }
 function modInlineClose() {
@@ -26,33 +37,50 @@ function modInlineClose() {
     modInlineReset(false);
     chatInput.forceActiveFocus();
 }
-function modInlineError(code) {
+function modInlineError(code, route, retrySeconds) {
+    if (code === "provider_busy") {
+        var busy = route === "select" ? "Wikimedia Commons временно ограничила загрузку выбранного файла." : "Wikimedia Commons временно ограничила поиск.";
+        return busy + (retrySeconds > 0 ? " Повтори через " + retrySeconds + " с." : " Попробуй позже.");
+    }
+    if (code === "provider_unavailable") return route === "select" ? "Не удалось загрузить выбранный файл из Wikimedia Commons. Выбери другой или попробуй ещё раз." : "Поиск в Wikimedia Commons недоступен. Попробуй ещё раз.";
     var messages = { invalid_input: "Введи от 2 до 160 символов после @pic или @vid.",
-        provider_unavailable: "Wikimedia Commons недоступна. Попробуй позже.", provider_busy: "Wikimedia Commons просит подождать. Попробуй позже.",
         search_too_fast: "Подожди две секунды перед новым поиском.", result_expired: "Результаты устарели. Нажми «Найти» ещё раз.",
         file_too_large: "Файл слишком большой: максимум 25 МБ.", unsupported_media: "Файл не прошёл проверку формата. Выбери другой.",
         cache_full: "Для поиска медиа заполнена временная папка. Файлы старше суток очищаются при следующем выборе.",
         storage_unavailable: "Не удалось сохранить временный файл рядом с ValMAX.", download_busy: "Дождись загрузки выбранного файла." };
     return messages[code] || "Поиск медиа недоступен. Запусти ValMAX обычным ярлыком.";
 }
+function modInlineFailure(code, route, retrySeconds) {
+    var errorCode = typeof code === "string" ? code : "unavailable";
+    modInlineRetryTimer.stop();
+    modInlineRetryRoute = route;
+    modInlineRetryError = errorCode;
+    modInlineRetrySeconds = typeof retrySeconds === "number" && isFinite(retrySeconds) && retrySeconds >= 1 && retrySeconds <= 86400 && Math.floor(retrySeconds) === retrySeconds ? retrySeconds : 0;
+    modInlineRetryStatusActive = true;
+    modInlineStatus = modInlineError(errorCode, route, modInlineRetrySeconds);
+    if (modInlineRetrySeconds > 0) modInlineRetryTimer.restart();
+}
 function modInlineRequestJson(route, payload, success) {
-    if (modInlineBusy) return;
+    if (modInlineBusy || (modInlineRetryRoute === route && modInlineRetrySeconds > 0)) return;
     var xhr = new XMLHttpRequest(), generation = modInlineGeneration, originalDraft = chatInput.text;
     modInlineBusy = true;
+    modInlineRetryStatusActive = false;
     modInlineRequest = xhr;
+    modInlineRequestRoute = route;
     modInlineWatchdog.restart();
     xhr.onreadystatechange = function() {
         if (xhr.readyState !== XMLHttpRequest.DONE || root.modInlineRequest !== xhr || generation !== root.modInlineGeneration) return;
         root.modInlineRequest = null;
+        root.modInlineRequestRoute = "";
         root.modInlineBusy = false;
         modInlineWatchdog.stop();
         if (chatInput.text !== originalDraft || !root.modInlineVisible) return;
         try {
             var value = JSON.parse(xhr.responseText);
-            if (xhr.status !== 200) { root.modInlineStatus = root.modInlineError(value && value.error); return; }
+            if (xhr.status !== 200) { root.modInlineFailure(value && value.error, route, value && value.retryAfterSeconds); return; }
             if (!value || value.schema !== 1 || value.provider !== "Wikimedia Commons") throw new Error("schema");
             success(value);
-        } catch (ignored) { root.modInlineStatus = root.modInlineError("unavailable"); }
+        } catch (ignored) { root.modInlineFailure("unavailable", route, 0); }
     };
     xhr.open("POST", "http://127.0.0.1:18973/inline-media/" + route);
     xhr.setRequestHeader("Content-Type", "application/json");
@@ -60,9 +88,8 @@ function modInlineRequestJson(route, payload, success) {
     xhr.send(JSON.stringify(payload));
 }
 function modInlineSearch() {
-    if (!modInlineVisible || modInlineBusy) return;
+    if (!modInlineVisible || modInlineBusy || (modInlineRetryRoute === "search" && modInlineRetrySeconds > 0)) return;
     if (modInlineQuery.length < 2 || modInlineQuery.length > 160) { modInlineStatus = modInlineError("invalid_input"); return; }
-    modInlineRows = [];
     modInlineStatus = "Ищем в Wikimedia Commons…";
     modInlineRequestJson("search", { mode: modInlineMode, query: modInlineQuery }, function(value) {
         if (!Array.isArray(value.results) || value.results.length > 6 || value.mode !== root.modInlineMode) throw new Error("rows");
@@ -75,7 +102,7 @@ function modInlineSearch() {
     });
 }
 function modInlineSelect(index) {
-    if (!modInlineVisible || modInlineBusy || index < 0 || index >= modInlineRows.length) return;
+    if (!modInlineVisible || modInlineBusy || (modInlineRetryRoute === "select" && modInlineRetrySeconds > 0) || index < 0 || index >= modInlineRows.length) return;
     if (!modQuickReplyAttachmentIntegration) { modInlineStatus = "Добавление медиа недоступно в этом поле сообщения."; return; }
     if (attachmentUploadModel && attachmentUploadModel.attachmentsCount >= 10) { modInlineStatus = "В черновике уже десять вложений. Сначала отправь или убери файлы."; return; }
     modInlineStatus = "Загружаем выбранный файл…";
@@ -90,14 +117,26 @@ function modInlineSelect(index) {
     });
 }
 Timer {
+    id: modInlineRetryTimer
+    interval: 1000
+    repeat: true
+    onTriggered: {
+        root.modInlineRetrySeconds = Math.max(0, root.modInlineRetrySeconds - 1);
+        if (root.modInlineRetryStatusActive && !root.modInlineBusy) root.modInlineStatus = root.modInlineRetrySeconds > 0 ? root.modInlineError(root.modInlineRetryError, root.modInlineRetryRoute, root.modInlineRetrySeconds) : (root.modInlineRetryRoute === "select" ? "Загрузку можно повторить. Выбери файл из списка." : "Поиск можно повторить. Нажми «Найти».");
+        if (root.modInlineRetrySeconds === 0) stop();
+    }
+}
+Timer {
     id: modInlineWatchdog
     interval: 30000
     onTriggered: {
         var request = root.modInlineRequest;
+        var route = root.modInlineRequestRoute;
         root.modInlineRequest = null;
+        root.modInlineRequestRoute = "";
         root.modInlineBusy = false;
         if (request !== null) { request.onreadystatechange = function() {}; request.abort(); }
-        root.modInlineStatus = "Wikimedia Commons не ответила. Попробуй ещё раз.";
+        root.modInlineFailure("provider_unavailable", route, 0);
     }
 }
 // BEGIN INLINE MEDIA MENU
@@ -128,7 +167,7 @@ UiKit.MeLoader {
             RowLayout {
                 Layout.fillWidth: true
                 Label { Layout.fillWidth: true; text: (root.modInlineMode === "vid" ? "Поиск видео" : "Поиск фото") + " · Wikimedia Commons"; color: root.chatAppearance.colorTextPrimary; font: Typography.FontUtil.getFont(Typography.FontUtil.Styles.BodyStrong, Typography.FontUtil.Sizes.Default); textFormat: Text.PlainText; wrapMode: Text.Wrap }
-                Button { objectName: "inlineMediaSearch"; focusPolicy: Qt.NoFocus; text: "Найти"; implicitHeight: 36; font: Typography.FontUtil.getFont(Typography.FontUtil.Styles.Description, Typography.FontUtil.Sizes.Default); enabled: !root.modInlineBusy && root.modInlineQuery.length >= 2; onClicked: root.modInlineSearch()
+                Button { objectName: "inlineMediaSearch"; focusPolicy: Qt.NoFocus; text: "Найти"; implicitHeight: 36; font: Typography.FontUtil.getFont(Typography.FontUtil.Styles.Description, Typography.FontUtil.Sizes.Default); enabled: !root.modInlineBusy && !(root.modInlineRetryRoute === "search" && root.modInlineRetrySeconds > 0) && root.modInlineQuery.length >= 2; onClicked: root.modInlineSearch()
                     contentItem: Label { text: parent.text; font: parent.font; color: parent.enabled ? root.chatAppearance.colorTextPrimary : root.chatAppearance.colorTextSecondary; horizontalAlignment: Text.AlignHCenter; verticalAlignment: Text.AlignVCenter; textFormat: Text.PlainText }
                     background: Rectangle { color: root.chatAppearance.colorStatesBackgroundCardHover; radius: UiKit.DesignSystem.BorderRadiusCommon._S }
                 }
@@ -161,7 +200,7 @@ UiKit.MeLoader {
                     implicitHeight: Math.max(88, contentItem.implicitHeight + 16)
                     padding: 8
                     focusPolicy: Qt.NoFocus
-                    enabled: !root.modInlineBusy
+                    enabled: !root.modInlineBusy && !(root.modInlineRetryRoute === "select" && root.modInlineRetrySeconds > 0)
                     onClicked: root.modInlineSelect(index)
                     background: Rectangle { color: mediaRow.hovered ? root.chatAppearance.colorStatesBackgroundCardHover : "transparent"; radius: UiKit.DesignSystem.BorderRadiusCommon._S }
                     contentItem: RowLayout {

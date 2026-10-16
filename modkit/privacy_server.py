@@ -782,7 +782,7 @@ def handler_factory(status, identity=None, quick_replies=None, session_transfer=
                 except OSError:
                     pass
 
-        def reply(self, code, value):
+        def reply(self, code, value, *, retry_after_seconds=None):
             data = json.dumps(value, ensure_ascii=False).encode("utf-8")
             self.send_response(code)
             self.send_header("Content-Type", "application/json; charset=utf-8")
@@ -790,6 +790,8 @@ def handler_factory(status, identity=None, quick_replies=None, session_transfer=
             self.send_header("X-Content-Type-Options", "nosniff")
             self.send_header("Content-Length", str(len(data)))
             self.send_header("Connection", "close")
+            if type(retry_after_seconds) is int and 1 <= retry_after_seconds <= 86400:
+                self.send_header("Retry-After", str(retry_after_seconds))
             self.end_headers()
             self.close_connection = True
             try:
@@ -808,6 +810,13 @@ def handler_factory(status, identity=None, quick_replies=None, session_transfer=
             status_code = 409 if code == "revision_conflict" else (
                 400 if code in ("invalid_replies", "invalid_accounts", "invalid_settings", "invalid_revision") else 503)
             self.reply(status_code, {"schema": 1, "error": code})
+
+        def inline_media_failure(self, error):
+            body = {"schema": 1, "error": error.code}
+            delay = error.retry_after_seconds
+            if delay is not None:
+                body["retryAfterSeconds"] = delay
+            self.reply(error.status, body, retry_after_seconds=delay)
 
         def do_GET(self):
             if not self.local_headers():
@@ -881,7 +890,7 @@ def handler_factory(status, identity=None, quick_replies=None, session_transfer=
                     except (BrokenPipeError, ConnectionResetError, ConnectionAbortedError, TimeoutError):
                         pass
                 except InlineMediaError as error:
-                    self.reply(error.status, {"schema": 1, "error": error.code})
+                    self.inline_media_failure(error)
             else:
                 self.send_error(404)
 
@@ -982,7 +991,7 @@ def handler_factory(status, identity=None, quick_replies=None, session_transfer=
                 try:
                     self.reply(200, inline_media.search(value) if media_action == "search" else inline_media.select(value))
                 except InlineMediaError as error:
-                    self.reply(error.status, {"schema": 1, "error": error.code})
+                    self.inline_media_failure(error)
                 finally:
                     value.clear()
                     raw = None

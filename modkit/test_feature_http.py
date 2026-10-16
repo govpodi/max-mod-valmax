@@ -179,6 +179,28 @@ class FeatureHTTPTests(unittest.TestCase):
             self.assertEqual(json.loads(body)["error"], code)
             self.assertNotIn(b"PRIVATE-SENTINEL", body)
 
+    def test_media_cooldown_metadata_is_finite_on_search_select_and_preview(self):
+        routes = (("/inline-media/search", "POST", {"mode": "pic", "query": "PRIVATE-SENTINEL"}, self.media.search),
+                  ("/inline-media/select", "POST", {"id": "a" * 32}, self.media.select),
+                  ("/inline-media/preview?id=" + "a" * 32, "GET", None, self.media.preview))
+        for path, method, payload, operation in routes:
+            for delay in (10, None):
+                with self.subTest(path=path, delay=delay):
+                    operation.side_effect = InlineMediaError("provider_busy", 503, retry_after_seconds=delay)
+                    status, headers, body = self.request(path, payload, method=method)
+                    self.assertEqual(503, status)
+                    expected = {"schema": 1, "error": "provider_busy"}
+                    if delay is not None:
+                        expected["retryAfterSeconds"] = delay
+                        self.assertEqual(str(delay), headers["Retry-After"])
+                    else:
+                        self.assertNotIn("Retry-After", headers)
+                    self.assertEqual(expected, json.loads(body))
+                    self.assertEqual("no-store", headers["Cache-Control"])
+                    self.assertNotIn(b"PRIVATE-SENTINEL", body)
+                    self.assertNotIn("Access-Control-Allow-Origin", headers)
+            operation.side_effect = None
+
     def test_binary_preview_allowlist_and_missing_service(self):
         path = "/inline-media/preview?id=" + "a" * 32
         code, headers, body = self.request(path, method="GET")

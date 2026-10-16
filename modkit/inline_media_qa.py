@@ -43,12 +43,14 @@ def main():
         def SpacingCommon(self):return {'_S':8}
         @Property('QVariantMap',constant=True)
         def BorderRadiusCommon(self):return {'_L':12,'_S':4}
-    requests=[];previews=[];mouse_clicks=[];flags={'stall':False};release=threading.Event()
+    requests=[];previews=[];mouse_clicks=[];flags={'stall':False,'error_route':None,'retry':0,'preview_error':False,'round':0};release=threading.Event()
     row={'id':'1'*32,'title':'Синтетический закат','author':'Тестовый автор','license':'CC BY 4.0','source':'https://commons.wikimedia.org/wiki/File:Synthetic.png','bytes':300,'preview':True}
     class Handler(BaseHTTPRequestHandler):
         def do_GET(self):
             assert self.path.startswith('/inline-media/preview?id=')
             previews.append(self.path)
+            if flags['preview_error']:
+                self.send_response(429);self.send_header('Content-Length','0');self.end_headers();return
             data=(output/'synthetic.png').read_bytes()
             self.send_response(200);self.send_header('Content-Type','image/png');self.send_header('Content-Length',str(len(data)));self.end_headers()
             try:self.wfile.write(data)
@@ -57,12 +59,16 @@ def main():
             body=json.loads(self.rfile.read(int(self.headers['Content-Length'])))
             requests.append({'path':self.path,'body':body,'write':self.headers.get('X-Max-Mod-Local-Write'),'origin':self.headers.get('Origin')})
             if flags['stall']:release.wait(6)
-            if self.path.endswith('/search'):
-                mode=body['mode'];value={'schema':1,'provider':'Wikimedia Commons','mode':mode,'results':[{**row,'id':str(index+1)*32,'title':row['title']+' '+str(index+1),'mime':'video/webm' if mode=='vid' else 'image/png'} for index in range(6)]}
+            route='search' if self.path.endswith('/search') else 'select'
+            status=200
+            if flags['error_route']==route:
+                status=503;value={'schema':1,'error':'provider_busy','retryAfterSeconds':flags['retry']}
+            elif route=='search':
+                mode=body['mode'];value={'schema':1,'provider':'Wikimedia Commons','mode':mode,'results':[{**row,'id':f'{index+1+flags["round"]*6:x}'*32,'title':row['title']+' '+str(index+1),'mime':'video/webm' if mode=='vid' else 'image/png'} for index in range(6)]}
             else:
                 value={'schema':1,'provider':'Wikimedia Commons','mime':'image/png','url':(output/'synthetic.png').as_uri(),'caption':'Источник: Wikimedia Commons\nТестовый автор · CC BY 4.0\n'+row['source']}
             data=json.dumps(value,ensure_ascii=False).encode()
-            self.send_response(200);self.send_header('Content-Type','application/json');self.send_header('Content-Length',str(len(data)));self.end_headers()
+            self.send_response(status);self.send_header('Content-Type','application/json');self.send_header('Content-Length',str(len(data)));self.end_headers()
             try:self.wfile.write(data)
             except (BrokenPipeError,ConnectionResetError,ConnectionAbortedError):pass
         def log_message(self,*args):pass
@@ -163,13 +169,14 @@ ApplicationWindow {
         assert menu_bottom <= draft_top+1, (menu_bottom,draft_top)
         assert draft_bottom <= window.height()-16+1, (draft_bottom,window.height())
         assert menu_bottom <= composer.mapToScene(QPointF(0,composer.height())).y()+1
-    def click_result(index,area='preview'):
+    def click_result(index,area='preview',preview_loaded=True):
         view=window.findChild(QQuickItem,'inlineMediaResults')
         content=view.property('contentItem')
         item=next(child for child in content.childItems() if child.property('index')==index and child.width()>0)
         if area=='preview':
             preview=item.findChild(QQuickItem,'inlineMediaPreview_'+str(index))
-            assert preview is not None and preview.property('implicitWidth')>0
+            assert preview is not None
+            if preview_loaded:assert preview.property('implicitWidth')>0
         point=item.mapToScene(QPointF(56 if area=='preview' else item.width()*0.65,item.height()/2)).toPoint()
         local=view.mapFromScene(QPointF(point))
         assert 0 < local.x() < view.width() and 0 < local.y() < view.height(), (point,local,view.height())
@@ -209,6 +216,49 @@ ApplicationWindow {
     assert window.property('attachmentCount')==2 and window.property('sentCount')==0
     checks.append('both aliases show provider-labelled results; narrow light/dark QML layouts compile and render')
     checks.append('six results remain inside native 60% composer cap; last row scrolls into view and receives an actual text-area mouse click')
+    # A failed preview must not make its result unclickable. Keep the draft and
+    # existing attachment untouched on a download 429, and respect Retry-After.
+    window.setProperty('text','@pic rate-limit synthetic');settle()
+    flags.update(preview_error=True,round=1)
+    method('modInlineSearch');settle(300)
+    preview_warnings=[warning for warning in warnings if '/inline-media/preview?id=' in warning and 'Too Many Requests' in warning]
+    assert preview_warnings, warnings
+    before_rows=variant(window.property('modInlineRows'))
+    before_draft=window.property('text');before_attachment_count=window.property('attachmentCount')
+    before_media=variant(window.property('attachedMedia'))
+    flags.update(stall=True,error_route='select',retry=2);release.clear()
+    before_requests=len(requests)
+    click_result(0,preview_loaded=False)
+    assert window.property('modInlineBusy') and len(requests)==before_requests+1
+    method('modInlineSelect',0);method('modInlineSearch')
+    assert len(requests)==before_requests+1
+    release.set();flags['stall']=False;settle(200)
+    assert 'загрузку выбранного файла' in window.property('modInlineStatus')
+    assert 'Повтори через' in window.property('modInlineStatus')
+    assert window.property('modInlineRetrySeconds')>0
+    assert variant(window.property('modInlineRows'))==before_rows
+    assert window.property('text')==before_draft
+    assert window.property('attachmentCount')==before_attachment_count
+    assert variant(window.property('attachedMedia'))==before_media
+    assert_bounds()
+    screenshot=output/'download-rate-limit-dark-390.png';assert window.grabWindow().save(str(screenshot));screens.append(str(screenshot))
+    method('modInlineSelect',0);assert len(requests)==before_requests+1
+    settle(2100)
+    assert window.property('modInlineRetrySeconds')==0 and len(requests)==before_requests+1
+    assert 'можно повторить' in window.property('modInlineStatus')
+    flags.update(error_route='search',retry=1)
+    method('modInlineSearch')
+    assert 'ограничила поиск' in window.property('modInlineStatus')
+    assert variant(window.property('modInlineRows'))==before_rows
+    assert window.property('text')==before_draft
+    before_requests=len(requests);method('modInlineSearch');assert len(requests)==before_requests
+    # Search cooldown does not block selecting an existing, still-valid result.
+    flags.update(error_route=None,preview_error=False)
+    click_result(0,area='text')
+    assert window.property('attachmentCount')==before_attachment_count+1
+    assert window.property('sentCount')==0 and not window.property('modInlineVisible')
+    checks.append('preview 429 leaves result clickable; download 429 preserves results, draft and existing attachment, and cooldown never retries automatically')
+    checks.append('pending operations reject duplicate clicks; failed search keeps prior results selectable during search-only cooldown')
     # Stop a search while switching chat, then allow the old response to finish.
     flags['stall']=True;release.clear()
     window.setProperty('text','@pic stale synthetic');settle();method('modInlineSearch')
@@ -220,14 +270,15 @@ ApplicationWindow {
     flags['stall']=True;release.clear();method('modInlineSelect',0)
     window.setProperty('modQuickReplyAccountId','synthetic-account-2');settle()
     release.set();flags['stall']=False;settle(300)
-    assert window.property('attachmentCount')==2
+    assert window.property('attachmentCount')==3
     checks.append('stale search and selected-download responses are discarded after chat/account switch')
     for item in requests:
         assert item['write']=='inline-media-v1' and item['origin'] is None
         assert set(item['body'])==({'mode','query'} if item['path'].endswith('/search') else {'id'})
     checks.append('native QML sends the local-write guard; body never includes chat/account/auth data')
-    assert not warnings, warnings
-    result={'schema':1,'qtVersion':qVersion(),'checks':checks,'screenshots':screens,'warnings':warnings,'httpRequests':len(requests),'previewRequests':len(previews),'mouseClicks':mouse_clicks,'sentMessages':window.property('sentCount'),'stagedAttachments':window.property('attachmentCount'),'liveClientStarted':False,'liveObserverStarted':False,'externalSearchPerformed':False}
+    unexpected_warnings=[warning for warning in warnings if warning not in preview_warnings]
+    assert not unexpected_warnings, unexpected_warnings
+    result={'schema':1,'qtVersion':qVersion(),'checks':checks,'screenshots':screens,'warnings':unexpected_warnings,'expectedPreview429Warnings':len(preview_warnings),'httpRequests':len(requests),'previewRequests':len(previews),'mouseClicks':mouse_clicks,'sentMessages':window.property('sentCount'),'stagedAttachments':window.property('attachmentCount'),'liveClientStarted':False,'liveObserverStarted':False,'externalSearchPerformed':False}
     (output/'proof.json').write_text(json.dumps(result,ensure_ascii=False,indent=2)+'\n',encoding='utf-8')
     print(json.dumps(result,ensure_ascii=False))
     window.close();window.deleteLater();settle(50)

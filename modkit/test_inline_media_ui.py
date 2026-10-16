@@ -46,6 +46,15 @@ class NativeTransformTests(unittest.TestCase):
         self.assertIn('Layout.minimumHeight: 0',rows)
         self.assertIn('ScrollBar.vertical:',rows)
         self.assertIn('objectName: "inlineMediaResult_" + index',base)
+    def test_provider_failure_keeps_results_and_describes_download_separately(self):
+        base = inline_media_ui.transform_sources(self.quick)["BaseSendPanel.qml"]
+        search = base.split('function modInlineSearch()',1)[1].split('function modInlineSelect(',1)[0]
+        self.assertNotIn('modInlineRows = []',search)
+        self.assertIn('value && value.retryAfterSeconds',base)
+        self.assertIn('Wikimedia Commons временно ограничила загрузку выбранного файла.',base)
+        self.assertIn('Wikimedia Commons временно ограничила поиск.',base)
+        self.assertIn('modInlineRetryRoute === "select" && root.modInlineRetrySeconds > 0',base)
+        self.assertIn('modInlineRetryRoute === "search" && root.modInlineRetrySeconds > 0',base)
     def test_transform_fails_if_unpinned_or_repeated(self):
         with self.assertRaises(ValueError):
             inline_media_ui.transform_sources(self.sources)

@@ -5,7 +5,7 @@
 
 # ValMAX — мод MAX для Windows
 
-Неофициальная модификация MAX (МАКС) для Windows x64 с дополнительными возможностями для общения и работы. **ValMAX 8.8.3 Beta**, база — **MAX 26.35.1.80662**.
+Неофициальная модификация MAX (МАКС) для Windows x64 с дополнительными возможностями для общения и работы. **ValMAX 8.8.4 Beta**, база — **MAX 26.35.1.80662**.
 
 **ВАЛ** — **В**озможности · **А**втоматизация · **Л**ичный контроль.
 
@@ -36,7 +36,7 @@
 
 ## Установка
 
-1. [Скачайте установщик ValMAX 8.8.3 Beta для Windows x64](https://github.com/govpodi/max-mod-valmax/releases/download/v8.8.3/ValMAX-26.35.1-Setup.exe) из GitHub Releases. [Контрольные суммы SHA-256](https://github.com/govpodi/max-mod-valmax/releases/download/v8.8.3/SHA256SUMS.txt).
+1. [Скачайте установщик ValMAX 8.8.4 Beta для Windows x64](https://github.com/govpodi/max-mod-valmax/releases/download/v8.8.4/ValMAX-26.35.1-Setup.exe) из GitHub Releases. [Контрольные суммы SHA-256](https://github.com/govpodi/max-mod-valmax/releases/download/v8.8.4/SHA256SUMS.txt).
 2. Если предыдущая версия работает, закройте её: значок в трее → «Выход».
 3. Запустите установщик, затем откройте ValMAX через созданный ярлык. Python отдельно не нужен. Первый запуск может занять до минуты.
 
