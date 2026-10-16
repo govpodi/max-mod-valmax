@@ -1212,7 +1212,7 @@ def _run_observer(args):
         def current_startup():
             receipt = startup_status.current()
             return None if receipt is None else receipt.try_read()
-        support_diagnostics = SupportDiagnosticsService(valmax_version="8.8.2", max_version=manifest.get("max_version"),
+        support_diagnostics = SupportDiagnosticsService(valmax_version=manifest.get("valmax_version"), max_version=manifest.get("max_version"),
             privacy=status, startup=current_startup,
             ghost=None if ghost_settings is None else ghost_settings.snapshot,
             optimization=optimization_settings.snapshot)

@@ -8,7 +8,7 @@
 [Setup]
 AppId={{419706B9-6FC7-46F8-B9FB-D7212FC91BAC}
 AppName=ValMAX
-AppVersion=26.35.1.80662-valmax8.8.2
+AppVersion=26.35.1.80662-valmax8.8.3
 AppPublisher=ValMAX
 DefaultDirName={localappdata}\Programs\ValMAX
 DefaultGroupName=ValMAX

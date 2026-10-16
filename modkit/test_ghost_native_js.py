@@ -40,8 +40,8 @@ function setup(options = {}) {
   spec.unread.moduleSha256 = 'f'.repeat(64); spec.unread.moduleSize = 70000000; spec.unread.imageSize = 0x5000000;
   const mainBase = new Ptr(0x140000000n);
   for(const item of spec.unread.guards) rawBytes.set(mainBase.add(item.rva).toString(),Buffer.from(item.expected,'hex'));
-  pointers.set(mainBase.add(spec.unread.vtableRva).toString(),mainBase.add(spec.unread.destructorRva));
-  pointers.set(mainBase.add(spec.unread.vtableRva+8).toString(),mainBase.add(spec.unread.readRva));
+  pointers.set(mainBase.add(spec.unread.vtableRva).toString(),mainBase.add(spec.unread.destructorThunkRva));
+  pointers.set(mainBase.add(spec.unread.vtableRva+8).toString(),mainBase.add(spec.unread.readThunkRva));
   const selfInfo = spec.unread.selfInfo;
   for(const item of selfInfo.guards) rawBytes.set(base.add(item.rva).toString(),Buffer.from(item.expected,'hex'));
   pointers.set(base.add(selfInfo.readerVtableRva+selfInfo.readerSlot).toString(),base.add(selfInfo.readerThunkRva));
@@ -64,6 +64,8 @@ function setup(options = {}) {
   if (options.badBytes) rawBytes.set(base.add(spec.wrappers[1].rva).toString(), Buffer.alloc(42));
   if (options.badThunk) rawBytes.set(base.add(spec.wrappers[0].thunkRva).toString(), Buffer.alloc(5));
   if (options.badVtable) pointers.set(base.add(spec.wrappers[1].vtableRva+8).toString(),base.add(17));
+  if (options.badMainThunk) rawBytes.set(mainBase.add(spec.unread.readThunkRva).toString(),Buffer.alloc(5));
+  if (options.bodyMainVtable) pointers.set(mainBase.add(spec.unread.vtableRva+8).toString(),mainBase.add(spec.unread.readRva));
   if (options.badSpec) spec.wrappers[0].rva++;
   if (options.badLogin) rawBytes.set(base.add(login.rva).toString(),Buffer.alloc(9));
   if (options.badEncoder) rawBytes.set(base.add(spec.online.encoder.rva).toString(),Buffer.alloc(41));
@@ -159,7 +161,7 @@ function validation() {
   return 10;
 }
 function guards() {
-  for(const option of ['badBytes','badThunk','badVtable','foreignPath','badImageSize','nonexec','badSpec','badLogin','badEncoder','badPing','badOnlineSpec']) {
+  for(const option of ['badBytes','badThunk','badVtable','badMainThunk','bodyMainVtable','foreignPath','badImageSize','nonexec','badSpec','badLogin','badEncoder','badPing','badOnlineSpec']) {
     const value=setup({[option]:true});
     assert.strictEqual(value.snapshot().ready,false,option); assert.strictEqual(value.replacements.size,0,option);
     assert(['module_mismatch','invalid_specification'].includes(value.snapshot().error));

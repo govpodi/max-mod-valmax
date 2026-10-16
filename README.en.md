@@ -5,7 +5,7 @@
 
 # ValMAX — a MAX mod for Windows
 
-An unofficial MAX modification for Windows x64, with added features for conversations and work. **ValMAX 8.8.2 Beta**, based on **MAX 26.35.1.80662**.
+An unofficial MAX modification for Windows x64, with added features for conversations and work. **ValMAX 8.8.3 Beta**, based on **MAX 26.35.1.80662**.
 
 **VAL** — **V**ersatility · **A**utomation · **L**ocal control.
 
@@ -38,7 +38,7 @@ In Russian, **ВАЛ** stands for «Возможности · Автоматиз
 
 ## Installation
 
-1. [Download the ValMAX 8.8.2 Beta installer for Windows x64](https://github.com/govpodi/max-mod-valmax/releases/download/v8.8.2/ValMAX-26.35.1-Setup.exe) from GitHub Releases. [SHA-256 checksums](https://github.com/govpodi/max-mod-valmax/releases/download/v8.8.2/SHA256SUMS.txt).
+1. [Download the ValMAX 8.8.3 Beta installer for Windows x64](https://github.com/govpodi/max-mod-valmax/releases/download/v8.8.3/ValMAX-26.35.1-Setup.exe) from GitHub Releases. [SHA-256 checksums](https://github.com/govpodi/max-mod-valmax/releases/download/v8.8.3/SHA256SUMS.txt).
 2. If an earlier version is running, close it: tray icon → Exit.
 3. Run the installer, then open ValMAX through its shortcut. No separate Python installation is needed. The first launch may take up to a minute.
 
