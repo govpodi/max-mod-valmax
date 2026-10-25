@@ -36,6 +36,10 @@ Item {
         if (!check(Native.Bridge.requests[1].value.context.privacy.verified === true && Native.Bridge.requests[1].value.operation === "support.export", "export collects fresh minimal context")) return;
         complete(post, {schema: 1, ok: false, error: "file_exists"});
         if (!check(post.status === 409 && JSON.parse(post.responseText).error === "file_exists", "existing destination error preserved")) return;
+        Native.Bridge.privacyReport.serviceProcessVerified = true;
+        const serviceProof = send("GET");
+        if (!check(Native.Bridge.requests[2].value.context.privacy.verified === true, "service proof keeps minimal privacy status")) return;
+        complete(serviceProof, {schema: 1, ok: true, result: {schema: 1, report: {schema: 2}}});
         for (const response of ["{", JSON.stringify({schema: 1, ok: true, result: {schema: 1, report: {schema: 1}}}), JSON.stringify({schema: 1, ok: false, error: "SYNTHETIC-PRIVATE"})]) {
             const bad = send("GET"); Native.Bridge.operationFinished(bad.requestId, response);
             if (!check(bad.status === 503 && bad.responseText.indexOf("SYNTHETIC-PRIVATE") < 0, "malformed response or unknown code cannot leak")) return;

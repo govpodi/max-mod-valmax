@@ -22,10 +22,10 @@ QString code(uint32_t value) {
 }
 #endif
 const char *const groupIds[] = {"tracer_main", "tracer_service", "ui_statistics", "mytracker", "log_masking", "error_logs"};
-QVariantList groups(bool verified) {
+QVariantList groups(bool verified, bool serviceVerified = false) {
     QVariantList result;
     for (unsigned index = 0; index < 6; ++index) {
-        const bool loaded = ((1u << index) & 53u) != 0;
+        const bool loaded = ((1u << index) & 53u) != 0 || (serviceVerified && (index == 1 || index == 3));
         result.append(QVariantMap{{QStringLiteral("id"), QString::fromLatin1(groupIds[index])},
             {QStringLiteral("state"), !verified ? QStringLiteral("unavailable") : loaded ? QStringLiteral("verified_loaded") : QStringLiteral("verified_package")}});
     }
@@ -84,10 +84,18 @@ QVariantMap PrivacyHost::refresh()
         verified_ = false; failure_ = status.error ? code(status.error) : QStringLiteral("invalid_status");
         return unavailable(failure_);
     }
+    const bool serviceVerified = valmax_privacy_verify_service() == VALMAX_PRIVACY_OK;
+    // The remote snapshot is separate from the main-process attestation. The
+    // main verifier may have revoked itself while the service was inspected.
+    status = {}; status.size = sizeof(status); status.version = 1;
+    if (valmax_privacy_status(&status) != VALMAX_PRIVACY_OK || !valid(status)) {
+        verified_ = false; failure_ = status.error ? code(status.error) : QStringLiteral("invalid_status");
+        return unavailable(failure_);
+    }
     return {{QStringLiteral("schema"), 1}, {QStringLiteral("state"), QStringLiteral("verified")},
         {QStringLiteral("error"), QString()}, {QStringLiteral("buildVerified"), true},
-        {QStringLiteral("currentProcessVerified"), true}, {QStringLiteral("serviceProcessVerified"), false},
-        {QStringLiteral("groups"), groups(true)}};
+        {QStringLiteral("currentProcessVerified"), true}, {QStringLiteral("serviceProcessVerified"), serviceVerified},
+        {QStringLiteral("groups"), groups(true, serviceVerified)}};
 }
 #endif
 }

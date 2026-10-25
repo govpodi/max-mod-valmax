@@ -10,8 +10,9 @@
 
 namespace {
 uint32_t verifyResult = 0;
+uint32_t serviceResult = VALMAX_PRIVACY_MODULE_NOT_LOADED;
 ValmaxPrivacyStatus native{};
-unsigned verifies = 0, statuses = 0, shutdowns = 0, checks = 0;
+unsigned verifies = 0, statuses = 0, shutdowns = 0, serviceChecks = 0, checks = 0;
 bool validPath = false;
 void good() { native = {}; native.size = sizeof(native); native.version = 1; native.ready = 1;
     native.role = 1; native.disk_rules = 63; native.loaded_rules = 53; native.files_verified = 6;
@@ -27,6 +28,7 @@ extern "C" uint32_t valmax_privacy_verify(const wchar_t *path, uint32_t role) {
     return verifyResult;
 }
 extern "C" uint32_t valmax_privacy_status(ValmaxPrivacyStatus *out) { ++statuses; *out = native; return 0; }
+extern "C" uint32_t valmax_privacy_verify_service() { ++serviceChecks; return serviceResult; }
 extern "C" uint32_t valmax_privacy_shutdown() { ++shutdowns; return 0; }
 int main(int argc, char **argv) {
     QCoreApplication app(argc, argv); good();
@@ -77,6 +79,16 @@ int main(int argc, char **argv) {
             loaded += state == QStringLiteral("verified_loaded"); packaged += state == QStringLiteral("verified_package");
         }
         CHECK(loaded == 4 && packaged == 2);
+        CHECK(serviceChecks > 0);
+        serviceResult = VALMAX_PRIVACY_OK;
+        const auto service = host.refresh(); CHECK(verified(service));
+        CHECK(service.value(QStringLiteral("serviceProcessVerified")).toBool());
+        unsigned serviceLoaded = 0;
+        for (const auto &row : service.value(QStringLiteral("groups")).toList())
+            serviceLoaded += row.toMap().value(QStringLiteral("state")).toString() == QStringLiteral("verified_loaded");
+        CHECK(serviceLoaded == 6);
+        serviceResult = VALMAX_PRIVACY_MODULE_NOT_LOADED;
+        CHECK(!host.refresh().value(QStringLiteral("serviceProcessVerified")).toBool());
         CHECK(!report.contains(QStringLiteral("observation")) && !report.contains(QStringLiteral("manifest_sha256")) && !report.contains(QStringLiteral("path")));
         const auto calls = verifies; CHECK(verified(host.refresh())); CHECK(verifies == calls);
         const auto stopped = shutdowns;

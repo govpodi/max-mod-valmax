@@ -12,11 +12,11 @@ Item {
         if (!value) { failure = message; Qt.exit(1); return false; }
         return true;
     }
-    function good() {
+    function good(serviceVerified) {
         var ids = ["tracer_main", "tracer_service", "ui_statistics", "mytracker", "log_masking", "error_logs"];
         var rows = [];
-        for (var i = 0; i < ids.length; ++i) rows.push({ id: ids[i], state: i === 1 || i === 3 ? "verified_package" : "verified_loaded" });
-        return { schema: 1, state: "verified", buildVerified: true, currentProcessVerified: true, serviceProcessVerified: false, error: "", groups: rows };
+        for (var i = 0; i < ids.length; ++i) rows.push({ id: ids[i], state: (i === 1 || i === 3) && !serviceVerified ? "verified_package" : "verified_loaded" });
+        return { schema: 1, state: "verified", buildVerified: true, currentProcessVerified: true, serviceProcessVerified: serviceVerified === true, error: "", groups: rows };
     }
     Timer {
         interval: 800; running: true
@@ -30,6 +30,7 @@ Item {
             if (!test.check(typeof Native.Bridge.configureRuntime === "undefined" && typeof Native.Bridge.refreshPrivacy === "undefined", "no QML path, role or reverify control")) return;
             if (!test.check(typeof page.report.observation === "undefined" && typeof page.report.manifest_sha256 === "undefined", "no packet counts or hashes in UI report")) return;
             if (!test.check(page.validateReport(test.good()), "exact valid report accepted")) return;
+            if (!test.check(page.validateReport(test.good(true)), "service proof and six loaded groups accepted")) return;
             for (var i = 0; i < 12; ++i) {
                 var value = test.good();
                 if (i === 0) value.schema = 2;

@@ -33,6 +33,7 @@ bool safe_root(const wchar_t *pointer,std::filesystem::path &output) {
 }
 struct Runtime {
     std::mutex mutex;
+    std::filesystem::path root;
     std::vector<HANDLE> files,directories;
     std::vector<HMODULE> modules;
     struct Loaded {uintptr_t base;const FilePin *pin;bool synthetic;};
@@ -44,6 +45,7 @@ struct Runtime {
         for(auto file:files)CloseHandle(file);files.clear();
         for(auto it=directories.rbegin();it!=directories.rend();++it)CloseHandle(*it);directories.clear();
         status={sizeof(ValmaxPrivacyStatus),1,VALMAX_PRIVACY_NOT_VERIFIED};
+        root.clear();
     }
 };
 Runtime &runtime(){static Runtime *value=new Runtime;return *value;}
@@ -149,7 +151,9 @@ uint32_t valmax_privacy_verify(const wchar_t *input,uint32_t role) {
     auto &state=runtime();std::lock_guard guard(state.mutex);state.clear();
     try {std::filesystem::path root;
         if(!safe_root(input,root)||(role!=VALMAX_PRIVACY_MAIN&&role!=VALMAX_PRIVACY_SERVICE))return state.status.error=VALMAX_PRIVACY_INVALID_ARGUMENT;
-        return state.status.error=verify(state,root,role,pins::kFiles);
+        state.status.error=verify(state,root,role,pins::kFiles);
+        if(state.status.error==VALMAX_PRIVACY_OK)state.root=root;
+        return state.status.error;
     }catch(...){state.clear();return state.status.error=VALMAX_PRIVACY_IO_ERROR;}
 }
 uint32_t valmax_privacy_status(ValmaxPrivacyStatus *output) {
@@ -159,5 +163,15 @@ uint32_t valmax_privacy_status(ValmaxPrivacyStatus *output) {
     if(state.status.ready)for(const auto &image:state.checked)if(!loaded_patches(image.base,*image.pin,!image.synthetic)){
         state.status.ready=0;state.status.loaded_rules=0;state.status.error=VALMAX_PRIVACY_MEMORY_MISMATCH;break;}
     return WriteProcessMemory(GetCurrentProcess(),output,&state.status,sizeof(state.status),&written)&&written==sizeof(state.status)?VALMAX_PRIVACY_OK:VALMAX_PRIVACY_INVALID_ARGUMENT;
+}
+uint32_t valmax_privacy_verify_service() {
+    auto &state=runtime();std::lock_guard guard(state.mutex);
+    if(!state.status.ready||state.status.role!=VALMAX_PRIVACY_MAIN||state.root.empty())return VALMAX_PRIVACY_NOT_VERIFIED;
+    for(const auto &image:state.checked)if(!loaded_patches(image.base,*image.pin,!image.synthetic)){
+        state.status.ready=0;state.status.loaded_rules=0;state.status.error=VALMAX_PRIVACY_MEMORY_MISMATCH;
+        return VALMAX_PRIVACY_NOT_VERIFIED;
+    }
+    try{return verify_service_processes(state.root,pins::kFiles);}
+    catch(...){return VALMAX_PRIVACY_IO_ERROR;}
 }
 uint32_t valmax_privacy_shutdown(){auto &state=runtime();std::lock_guard guard(state.mutex);state.clear();return VALMAX_PRIVACY_OK;}

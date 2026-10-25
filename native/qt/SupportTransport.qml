@@ -15,7 +15,7 @@ QtObject {
     function privacyStatus(value) {
         if (!value || value.schema !== 1) return null;
         if (value.state === "verified" && value.buildVerified === true
-                && value.currentProcessVerified === true && value.serviceProcessVerified === false
+                && value.currentProcessVerified === true && typeof value.serviceProcessVerified === "boolean"
                 && value.error === "") return true;
         if (value.state === "unavailable" && value.buildVerified === false
                 && value.currentProcessVerified === false && value.serviceProcessVerified === false) return false;

@@ -8,6 +8,7 @@ Component {
         onBackClicked: root.backClicked()
         readonly property var report: ValMAXNative.Bridge.privacyReport
         readonly property bool verified: validateReport(report)
+        readonly property bool serviceVerified: verified && report.serviceProcessVerified === true
         readonly property color primaryText: maxwellColorTokens.colorTextPrimary
         readonly property color secondaryText: maxwellColorTokens.colorTextSecondary
         readonly property color cardSurface: maxwellColorTokens.colorBackgroundCard
@@ -19,11 +20,11 @@ Component {
         function validateReport(value) {
             if (!value || value.schema !== 1 || value.state !== "verified"
                 || value.buildVerified !== true || value.currentProcessVerified !== true
-                || value.serviceProcessVerified !== false || value.error !== ""
+                || typeof value.serviceProcessVerified !== "boolean" || value.error !== ""
                 || !value.groups || value.groups.length !== 6) return false;
             var ids = ["tracer_main", "tracer_service", "ui_statistics", "mytracker", "log_masking", "error_logs"];
             for (var i = 0; i < ids.length; ++i) {
-                var state = i === 1 || i === 3 ? "verified_package" : "verified_loaded";
+                var state = (i === 1 || i === 3) && !value.serviceProcessVerified ? "verified_package" : "verified_loaded";
                 if (!value.groups[i] || value.groups[i].id !== ids[i] || value.groups[i].state !== state) return false;
             }
             return true;
@@ -35,7 +36,7 @@ Component {
             return "unavailable";
         }
         function stateLabel(state) {
-            if (state === "verified_loaded") return "Проверено в работающем приложении";
+            if (state === "verified_loaded") return "Проверено в работающем процессе";
             if (state === "verified_package") return "Патч есть в сборке; работа службы не проверена";
             return "Проверка недоступна";
         }
@@ -80,11 +81,11 @@ Component {
                 spacing: modPrivacyPage.innerPadding
                 DashboardText { Layout.fillWidth: true; text: "Меньше служебных данных"; typography: Typography.FontUtil.Styles.BodyStrong }
                 DashboardText { Layout.fillWidth: true; text: "В этой сборке изменены перечисленные точки сбора данных. Нативный модуль проверяет файлы и код приложения; отдельный наблюдатель не нужен."; color: modPrivacyPage.secondaryText }
-                DashboardText { objectName: "privacyVerification"; Layout.fillWidth: true; text: modPrivacyPage.verified ? "Файлы сборки и код текущего процесса проверены. Служба звонков отдельно не проверялась." : "Проверка не завершена или недоступна. Защита этих точек пока не подтверждена."; color: modPrivacyPage.verified ? modPrivacyPage.successColor : modPrivacyPage.warningColor; typography: Typography.FontUtil.Styles.Description }
+                DashboardText { objectName: "privacyVerification"; Layout.fillWidth: true; text: modPrivacyPage.serviceVerified ? "Файлы сборки и изменённые участки кода приложения и службы звонков проверены в работающих процессах." : modPrivacyPage.verified ? "Файлы сборки и код текущего процесса проверены. Служба звонков отдельно не проверялась." : "Проверка не завершена или недоступна. Защита этих точек пока не подтверждена."; color: modPrivacyPage.verified ? modPrivacyPage.successColor : modPrivacyPage.warningColor; typography: Typography.FontUtil.Styles.Description }
                 ProtectionRow { rule: "tracer_main"; heading: "Отчёты о сбоях приложения"; detail: "Отключены проверяемые вызовы встроенной диагностики Tracer в основном приложении." }
-                ProtectionRow { rule: "tracer_service"; heading: "Отчёты о сбоях службы звонков"; detail: "В файле службы отключены вызовы Tracer. Эта панель не проверяет память отдельного процесса службы." }
+                ProtectionRow { rule: "tracer_service"; heading: "Отчёты о сбоях службы звонков"; detail: modPrivacyPage.serviceVerified ? "Изменённые участки кода Tracer проверены в работающей службе звонков." : "В файле службы отключены вызовы Tracer. Эта панель не проверяет память отдельного процесса службы." }
                 ProtectionRow { rule: "ui_statistics"; heading: "Статистика интерфейса"; detail: "Отключены проверяемые точки начала сессии аналитики и отправки накопленной статистики интерфейса." }
-                ProtectionRow { rule: "mytracker"; heading: "MyTracker"; detail: "В файле службы звонков отключено создание MyTracker. Работа отдельного процесса службы не проверялась." }
+                ProtectionRow { rule: "mytracker"; heading: "MyTracker"; detail: modPrivacyPage.serviceVerified ? "Изменённый участок кода MyTracker проверен в работающей службе звонков." : "В файле службы звонков отключено создание MyTracker. Работа отдельного процесса службы не проверялась." }
                 ProtectionRow { rule: "log_masking"; heading: "Личные данные в журналах"; detail: "Включена штатная маскировка журналов: проверены настройки приложения и файл настроек службы." }
                 ProtectionRow { rule: "error_logs"; heading: "Отправка журналов ошибок"; detail: "Отключена настройка отправки журналов ошибок в приложении и файле настроек службы." }
                 DashboardText { objectName: "privacyUnknownScope"; Layout.fillWidth: true; text: "Другие способы сбора данных здесь не проверяются. Сервис MAX по-прежнему видит адрес подключения и данные, необходимые для работы аккаунта."; color: modPrivacyPage.secondaryText; typography: Typography.FontUtil.Styles.Description }

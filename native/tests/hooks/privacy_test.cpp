@@ -22,7 +22,7 @@ struct Fixture {
     std::array<std::string,6> hashes;
     std::array<FilePin,6> files{};
     std::array<uintptr_t,6> loaded{};
-    Fixture(){root=std::filesystem::path(L"C:/ValMAXBuild/fixtures")/(L"privacy-"+std::to_wstring(GetCurrentProcessId())+L"-"+std::to_wstring(GetTickCount64()));std::filesystem::create_directories(root/L"max-service");
+    Fixture(){root=std::filesystem::temp_directory_path()/(L"privacy-"+std::to_wstring(GetCurrentProcessId())+L"-"+std::to_wstring(GetTickCount64()));std::filesystem::create_directories(root/L"max-service");
         for(size_t i=0;i<files.size();++i){
             IMAGE_DOS_HEADER dos{};dos.e_magic=IMAGE_DOS_SIGNATURE;dos.e_lfanew=128;std::memcpy(bytes[i].data(),&dos,sizeof(dos));
             IMAGE_NT_HEADERS64 pe{};pe.Signature=IMAGE_NT_SIGNATURE;pe.FileHeader.Machine=IMAGE_FILE_MACHINE_AMD64;pe.OptionalHeader.Magic=IMAGE_NT_OPTIONAL_HDR64_MAGIC;pe.OptionalHeader.SizeOfImage=4096;
@@ -33,14 +33,21 @@ struct Fixture {
             auto memory=VirtualAlloc(nullptr,4096,MEM_RESERVE|MEM_COMMIT,PAGE_READWRITE);if(!memory)std::terminate();loaded[i]=reinterpret_cast<uintptr_t>(memory);
             std::memcpy(memory,bytes[i].data(),4096);DWORD old=0;if(!VirtualProtect(memory,4096,PAGE_EXECUTE_READ,&old))std::terminate();write(i);
         }}
-    ~Fixture(){valmax_privacy_shutdown();for(auto memory:loaded)VirtualFree(reinterpret_cast<void *>(memory),0,MEM_RELEASE);}
+    ~Fixture(){valmax_privacy_shutdown();for(auto memory:loaded)VirtualFree(reinterpret_cast<void *>(memory),0,MEM_RELEASE);
+        std::error_code ignored;
+        for(const auto &pin:pins::kFiles)std::filesystem::remove(root/pin.relative,ignored);
+        std::filesystem::remove(root/L"max-service",ignored);
+        std::filesystem::remove(root,ignored);
+    }
     void write(size_t i){std::ofstream file(root/files[i].relative,std::ios::binary);file.write(reinterpret_cast<const char *>(bytes[i].data()),4096);}
     void memory_byte(size_t i,uint32_t offset,uint8_t value){auto pointer=reinterpret_cast<void *>(loaded[i]);DWORD old=0;VirtualProtect(pointer,4096,PAGE_READWRITE,&old);reinterpret_cast<uint8_t *>(pointer)[offset]=value;DWORD unused=0;VirtualProtect(pointer,4096,old,&unused);}
     uint32_t verify(uint32_t role=1){return verify_synthetic(root.c_str(),role,files,loaded);}
 };
 ValmaxPrivacyStatus status(){ValmaxPrivacyStatus value{};value.size=sizeof(value);value.version=1;if(valmax_privacy_status(&value))std::terminate();return value;}
 }
-int main(){SetErrorMode(SEM_FAILCRITICALERRORS|SEM_NOGPFAULTERRORBOX|SEM_NOOPENFILEERRORBOX);
+int main(int argc,char **argv){
+    if(argc==2&&std::strcmp(argv[1],"--service-fixture")==0){Sleep(3000);return 0;}
+    SetErrorMode(SEM_FAILCRITICALERRORS|SEM_NOGPFAULTERRORBOX|SEM_NOOPENFILEERRORBOX);
     Fixture fixture;
     CHECK(sizeof(ValmaxPrivacyStatus)==112);
     CHECK(fixture.verify()==0);auto main=status();CHECK(main.ready&&main.disk_rules==63&&main.loaded_rules==53&&main.files_verified==6&&main.modules_verified==3&&main.patches_verified==31);
@@ -93,5 +100,52 @@ int main(){SetErrorMode(SEM_FAILCRITICALERRORS|SEM_NOGPFAULTERRORBOX|SEM_NOOPENF
     fixture.memory_byte(main_config,loaded_offset,0x48);CHECK(!status().ready&&status().error==VALMAX_PRIVACY_MEMORY_MISMATCH);
     fixture.memory_byte(main_config,loaded_offset,original);CHECK(!status().ready); // fresh full verify required
     CHECK(fixture.verify()==0&&status().ready);
-    std::cout<<"{\"schema\":1,\"ok\":true,\"checks\":"<<checks<<",\"callbacks\":0,\"codeWrites\":0,\"scope\":\"synthetic static privacy verification; owned buffers only\"}\n";
+    // A remote handle can attest only exact PE image bytes and executable
+    // patch spans. This owned process is the fixture; no MAX process is read.
+    const auto base=reinterpret_cast<uintptr_t>(GetModuleHandleW(nullptr));
+    const auto *dos=reinterpret_cast<const IMAGE_DOS_HEADER *>(base);
+    const auto *pe=reinterpret_cast<const IMAGE_NT_HEADERS64 *>(base+dos->e_lfanew);
+    const auto code=reinterpret_cast<uintptr_t>(&valmax_privacy_verify_service);
+    std::array<uint8_t,8> expected{};
+    std::memcpy(expected.data(),reinterpret_cast<const void *>(code),expected.size());
+    PatchPin remotePatch{static_cast<uint32_t>(code-base),0,VALMAX_PRIVACY_TRACER_SERVICE,expected};
+    FilePin remotePin{L"max-service/max-service.exe","",0,pe->OptionalHeader.SizeOfImage,
+                      VALMAX_PRIVACY_SERVICE,std::span(&remotePatch,1)};
+    CHECK(remote_loaded_patches(GetCurrentProcess(),base,remotePin));
+    expected[0]^=1;CHECK(!remote_loaded_patches(GetCurrentProcess(),base,remotePin));expected[0]^=1;
+    remotePin.image_size=1;CHECK(!remote_loaded_patches(GetCurrentProcess(),base,remotePin));
+    CHECK(valmax_privacy_shutdown()==VALMAX_PRIVACY_OK);
+    CHECK(valmax_privacy_verify_service()==VALMAX_PRIVACY_NOT_VERIFIED);
+    remotePin.image_size=pe->OptionalHeader.SizeOfImage;
+    std::wstring image(32768,L'\0');
+    const DWORD imageLength=GetModuleFileNameW(nullptr,image.data(),static_cast<DWORD>(image.size()));
+    CHECK(imageLength>0&&imageLength<image.size());image.resize(imageLength);
+    const auto childImage=fixture.root/L"max-service"/L"max-service.exe";
+    CHECK(CopyFileW(image.c_str(),childImage.c_str(),FALSE)!=0);
+    std::wstring command=L"\""+childImage.wstring()+L"\" --service-fixture";
+    STARTUPINFOW startup{};startup.cb=sizeof(startup);PROCESS_INFORMATION childProcess{};
+    CHECK(CreateProcessW(childImage.c_str(),command.data(),nullptr,nullptr,FALSE,CREATE_NO_WINDOW,
+                         nullptr,fixture.root.c_str(),&startup,&childProcess)!=0);
+    CloseHandle(childProcess.hThread);
+    uint32_t childResult=VALMAX_PRIVACY_MODULE_NOT_LOADED;
+    for(unsigned attempt=0;attempt<100;++attempt){
+        childResult=verify_service_processes(fixture.root,std::span(&remotePin,1));
+        if(childResult==VALMAX_PRIVACY_OK)break;
+        Sleep(10);
+    }
+    CHECK(childResult==VALMAX_PRIVACY_OK);
+    // The production path must require this direct child and the exact image.
+    CHECK(verify_service_processes(fixture.root/L"unrelated",std::span(&remotePin,1))
+          ==VALMAX_PRIVACY_MODULE_NOT_LOADED);
+    FilePin absentModule{L"max-service/absent.dll","",0,remotePin.image_size,
+                         VALMAX_PRIVACY_SERVICE,std::span(&remotePatch,1)};
+    const std::array requiredModules{remotePin,absentModule};
+    CHECK(verify_service_processes(fixture.root,requiredModules)==VALMAX_PRIVACY_MODULE_NOT_LOADED);
+    expected[0]^=1;
+    CHECK(verify_service_processes(fixture.root,std::span(&remotePin,1))==VALMAX_PRIVACY_MEMORY_MISMATCH);
+    expected[0]^=1;
+    CHECK(WaitForSingleObject(childProcess.hProcess,5000)==WAIT_OBJECT_0);
+    CloseHandle(childProcess.hProcess);
+    CHECK(verify_service_processes(fixture.root,std::span(&remotePin,1))!=VALMAX_PRIVACY_OK);
+    std::cout<<"{\"schema\":1,\"ok\":true,\"checks\":"<<checks<<",\"callbacks\":0,\"codeWrites\":0,\"scope\":\"synthetic privacy verification; owned buffers and child process only\"}\n";
 }

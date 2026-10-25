@@ -39,6 +39,10 @@ typedef struct ValmaxPrivacyStatus {
 // retains readonly file and module references until the next verify/shutdown.
 VALMAX_PRIVACY_API uint32_t valmax_privacy_verify(const wchar_t *runtime_root,uint32_t role);
 VALMAX_PRIVACY_API uint32_t valmax_privacy_status(ValmaxPrivacyStatus *status);
+// Read-only snapshot of the exact running max-service images for this verified
+// runtime. Returns NOT_VERIFIED when the main verifier is not ready, and never
+// launches or changes a process. A non-OK result must not be shown as proof.
+VALMAX_PRIVACY_API uint32_t valmax_privacy_verify_service(void);
 // Releases verification handles and clears readiness. Static protection remains
 // in the packaged program bytes; this operation cannot undo any privacy patch.
 VALMAX_PRIVACY_API uint32_t valmax_privacy_shutdown(void);
