@@ -13,6 +13,7 @@ PANEL_MARKER = "// VALMAX_EXPORT_PANEL_BETA"
 RESOURCE_NAMES = ("LeadingSettingsBar.qml", "ContactMoreMenu.qml")
 CONFIG_IMPORT = 'import "qrc:/valmax/optimization" as ValMAXOptimization\n'
 FLAG_NAMES = ("enabled", "smoothWheel", "listScheduling", "listPrefetch", "readyCache", "historyCache", "historyBookkeeping", "photoDecodeResize", "windowPosition", "hiddenPageWork", "profileRows")
+RELEASE_CHANNELS = ("beta", "stable-candidate")
 
 
 def once(source, anchor, replacement):
@@ -75,7 +76,9 @@ BETA_CELL = '''    // VALMAX_BETA_SETTINGS_CELL
 '''
 
 
-def transform_leading(source, directory=None):
+def transform_leading(source, directory=None, *, release_channel="beta"):
+    if release_channel not in RELEASE_CHANNELS:
+        raise ValueError("Unknown UI release channel")
     if type(source) is not str or MARKER in source or BETA_MARKER in source:
         raise ValueError("Optimization settings require untouched feature output")
     source = source.replace("\r\n", "\n")
@@ -87,18 +90,20 @@ def transform_leading(source, directory=None):
         source = "import QtQuick\n" + CONFIG_IMPORT + source[len("import QtQuick\n"):]
     directory = Path(directory) if directory is not None else Path(__file__).parent
     panel = (directory / "optimization_panel.qml").read_text(encoding="utf8").replace("\r\n", "\n")
+    badge_cell = BETA_CELL if release_channel == "beta" else ""
     source = once(source, "    Component {\n        id: settingsDev\n",
-                  "    " + MARKER + "\n" + BETA_CELL + panel.rstrip() + "\n\n    Component {\n        id: settingsDev\n")
+                  "    " + MARKER + "\n" + badge_cell + panel.rstrip() + "\n\n    Component {\n        id: settingsDev\n")
     for title in ("MData", "Аккаунты ValMAX", "Удалённые сообщения"):
         anchor = '                OpenPageSettingsCellImpl {\n                    title: "' + title + '"\n'
-        source = once(source, anchor, anchor.replace("OpenPageSettingsCellImpl", "ValMAXBetaSettingsCellImpl", 1))
-    entry = '''                ValMAXBetaSettingsCellImpl {
+        replacement = anchor.replace("OpenPageSettingsCellImpl", "ValMAXBetaSettingsCellImpl", 1) if release_channel == "beta" else anchor
+        source = once(source, anchor, replacement)
+    entry = '''                RELEASE_SETTINGS_CELL {
                     title: "Оптимизация"
                     iconSource: "qrc:/icon_pack/flash.svg"
                     settingsPage: settingsValMAXOptimization
                 }
 
-'''
+'''.replace("RELEASE_SETTINGS_CELL", "ValMAXBetaSettingsCellImpl" if release_channel == "beta" else "OpenPageSettingsCellImpl")
     anchor = "                UiKit.MeLoader {\n                    id: accountSelector\n"
     return once(source, anchor, entry + anchor)
 
@@ -171,10 +176,13 @@ def transform_export_panel(source):
 ''')
 
 
-def transform_sources(sources, directory=None):
+def transform_sources(sources, directory=None, *, release_channel="beta"):
+    if release_channel not in RELEASE_CHANNELS:
+        raise ValueError("Unknown UI release channel")
     if type(sources) is not dict or any(name not in sources for name in RESOURCE_NAMES):
         raise ValueError("Optimization/BETA requires settings and export menu")
     result = dict(sources)
-    result["LeadingSettingsBar.qml"] = transform_leading(sources["LeadingSettingsBar.qml"], directory)
+    result["LeadingSettingsBar.qml"] = transform_leading(sources["LeadingSettingsBar.qml"], directory,
+                                                           release_channel=release_channel)
     result["ContactMoreMenu.qml"] = transform_menu(sources["ContactMoreMenu.qml"])
     return result

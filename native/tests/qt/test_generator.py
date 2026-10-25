@@ -36,6 +36,17 @@ def main():
     assert legacy["extraResourceHashes"][QUEUE_RESOURCE] == hashlib.sha256(transform_extra(queue_source(), QUEUE_RESOURCE).encode()).hexdigest()
     native_sources, _, _, native = build_native_qml.prepare(
         baseline, scratch / "native", native_runtime=True, rcc=Path("C:/ValMAXBuild/Qt/bin/rcc.exe"))
+    stable_sources, _, _, stable = build_native_qml.prepare(
+        baseline, scratch / "stable-candidate", native_runtime=True,
+        rcc=Path("C:/ValMAXBuild/Qt/bin/rcc.exe"), ui_release_channel="stable-candidate")
+    settings_key = ":/qt/qml/OneMeUi/LeadingSettingsBar.qml"
+    assert native["uiReleaseChannel"] == native["resourceEvidence"]["uiReleaseChannel"] == "beta"
+    assert stable["uiReleaseChannel"] == stable["resourceEvidence"]["uiReleaseChannel"] == "stable-candidate"
+    assert {key for key in native_sources if native_sources[key] != stable_sources[key]} == {settings_key}
+    assert "ValMAXBetaSettingsCellImpl" in native_sources[settings_key].decode("utf8")
+    assert "ValMAXBetaSettingsCellImpl" not in stable_sources[settings_key].decode("utf8")
+    assert native["extraResourceHashes"] == stable["extraResourceHashes"]
+    assert native["sourceHashes"][settings_key] != stable["sourceHashes"][settings_key]
     assert set(native_sources) - set(legacy_sources) == set(RECORDING_RESOURCES)
     for key in RECORDING_RESOURCES:
         recorder = native_sources[key].decode("utf8")

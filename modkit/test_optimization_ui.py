@@ -37,6 +37,40 @@ class OptimizationUiTests(unittest.TestCase):
         self.assertEqual(1, result.count(target.CONFIG_IMPORT))
         with self.assertRaises(ValueError): target.transform_leading(result)
 
+    def test_stable_candidate_removes_only_generic_settings_badges(self):
+        source = leading_fixture()
+        beta = target.transform_leading(source)
+        self.assertEqual(beta, target.transform_leading(source, release_channel="beta"))
+        stable = target.transform_leading(source, release_channel="stable-candidate")
+        self.assertNotIn(target.BETA_MARKER, stable)
+        self.assertNotIn("ValMAXBetaSettingsCellImpl", stable)
+        for title in ("MData", "Аккаунты ValMAX", "Удалённые сообщения", "Оптимизация"):
+            self.assertIn('OpenPageSettingsCellImpl {\n                    title: "' + title + '"', stable)
+            self.assertIn('ValMAXBetaSettingsCellImpl {\n                    title: "' + title + '"', beta)
+        for value in ('settingsPage: settingsModMData', 'settingsPage: settingsValMAXAccounts',
+                      'settingsPage: settingsValMAXRetention', 'settingsPage: settingsValMAXOptimization'):
+            self.assertEqual(beta.count(value), stable.count(value))
+        self.assertEqual(beta.count('id: settingsValMAXOptimization'), stable.count('id: settingsValMAXOptimization'))
+        self.assertEqual(beta.count(target.CONFIG_IMPORT), stable.count(target.CONFIG_IMPORT))
+        with self.assertRaises(ValueError): target.transform_leading(stable)
+        with self.assertRaises(ValueError): target.transform_leading(source, release_channel="stable")
+
+    def test_stable_candidate_keeps_export_beta_and_partial_history_warning(self):
+        from chat_export_ui import transform
+        from chat_lock_ui import transform_export_panel
+        sources = {'LeadingSettingsBar.qml': leading_fixture(),
+                   'ContactMoreMenu.qml': transform((NATIVE / 'ContactMoreMenu.qml').read_text('utf8'))}
+        beta = target.transform_sources(sources)
+        stable = target.transform_sources(sources, release_channel="stable-candidate")
+        self.assertEqual(beta['ContactMoreMenu.qml'], stable['ContactMoreMenu.qml'])
+        self.assertIn('objectName: "valmaxChatExportBeta"', stable['ContactMoreMenu.qml'])
+        self.assertIn('Accessible.name: "BETA · функция тестируется"', stable['ContactMoreMenu.qml'])
+        panel_source = transform_export_panel((HERE / 'chat_export_panel.qml').read_text('utf8'))
+        stable_panel = target.transform_export_panel(panel_source)
+        self.assertIn('Архив чата может быть неполным.', stable_panel)
+        self.assertIn('objectName: "valmaxChatExportPanelBeta"', stable_panel)
+        with self.assertRaises(ValueError): target.transform_sources(sources, release_channel="stable")
+
     def test_badge_menu_preserves_native_actions_and_content_layout(self):
         from chat_export_ui import transform
         native = (NATIVE / 'ContactMoreMenu.qml').read_text('utf8')

@@ -14,7 +14,10 @@ from ui_prepare_privacy import prepare_source
 FEATURE_RESOURCES = tuple(path for path in RESOURCES if path not in NATIVE_RECORDING_RESOURCES)
 
 
-def prepare(binary: bytes, *, icon_bundle: bytes) -> tuple[dict[str, bytes], dict]:
+def prepare(binary: bytes, *, icon_bundle: bytes, ui_release_channel="beta") -> tuple[dict[str, bytes], dict]:
+    from optimization_ui import RELEASE_CHANNELS
+    if ui_release_channel not in RELEASE_CHANNELS:
+        raise ValueError("Unknown UI release channel")
     from quick_replies_ui import transform_sources
     if (len(RESOURCES) != 34 or len(FEATURE_RESOURCES) != 32
             or set(NATIVE_RECORDING_RESOURCES) - set(RESOURCES)
@@ -84,7 +87,7 @@ def prepare(binary: bytes, *, icon_bundle: bytes) -> tuple[dict[str, bytes], dic
     from optimization_gates import transform_sources as optimization_gates_transform
     transformed = optimization_gates_transform(transformed)
     from optimization_ui import transform_sources as optimization_settings_transform
-    transformed = optimization_settings_transform(transformed)
+    transformed = optimization_settings_transform(transformed, release_channel=ui_release_channel)
     from support_ui import transform_leading as support_transform
     transformed["LeadingSettingsBar.qml"] = support_transform(transformed["LeadingSettingsBar.qml"])
     if set(transformed) != set(originals) or any(type(value) is not str for value in transformed.values()):
@@ -95,6 +98,7 @@ def prepare(binary: bytes, *, icon_bundle: bytes) -> tuple[dict[str, bytes], dic
         raise ValueError("Compiled preservation resource selection mismatch")
     spec, evidence = make_resource_spec(binary, sources, icon_bundle=icon_bundle)
     evidence["preservedCompiledResources"] = list(PRESERVED_COMPILED_RESOURCES)
+    evidence["uiReleaseChannel"] = ui_release_channel
     for patch in spec["patches"]:
         if patch["id"].startswith("ui_privacy.leading"):
             patch["id"] = patch["id"].replace("ui_privacy.leading", "ui_privacy.mdata_ghost_leading", 1)
@@ -106,6 +110,7 @@ def main():
     parser.add_argument("--baseline", type=Path, required=True)
     parser.add_argument("--output", type=Path, required=True)
     parser.add_argument("--emit-spec", type=Path, required=True)
+    parser.add_argument("--ui-release-channel", choices=("beta", "stable-candidate"), default="beta")
     args = parser.parse_args()
     args.output.mkdir(parents=True, exist_ok=True)
     from icon_resources import prepare as prepare_icons
@@ -125,7 +130,7 @@ def main():
                          ROW_RESOURCE: row_source().encode("utf8"),
                          QUEUE_RESOURCE: queue_source().encode("utf8"),
                          WHEEL_RESOURCE: wheel_source().encode("utf8")}))
-    sources, prepared = prepare(binary, icon_bundle=icon_bundle)
+    sources, prepared = prepare(binary, icon_bundle=icon_bundle, ui_release_channel=args.ui_release_channel)
     for path, source in sources.items():
         (args.output / path.rsplit("/", 1)[1]).write_bytes(source)
     args.emit_spec.write_text(
@@ -140,7 +145,8 @@ def main():
     evidence["features"].extend(["independent_async_chat_contact_call_rows", "static_scroll_skeletons", "hidden_page_work_suspension"])
     evidence["features"].extend(["frame_bounded_row_admission", "retained_ready_viewport_cache", "visual_viewport_observer_gating", "identity_scoped_pending_input", "owned_popup_lifetime"])
     evidence["features"].extend(["bounded_history_and_profile_wheel_admission", "stable_profile_detail_rows"])
-    evidence["features"].extend(["restart_scoped_optimization_switches", "native_beta_badges"])
+    evidence["features"].extend(["restart_scoped_optimization_switches",
+                                "native_beta_badges" if args.ui_release_channel == "beta" else "stable_candidate_settings_labels"])
     evidence["features"].append("explicit_local_support_report")
     evidence["templateEndpoints"] = {"GET": "/quick-replies", "POST": "/quick-replies"}
     evidence["sendSemantics"] = "Selection inserts a draft and stages attachments immediately; native Send remains manual; native cleared closes the final-part hint."

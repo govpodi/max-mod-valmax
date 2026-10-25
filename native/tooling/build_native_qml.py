@@ -957,7 +957,8 @@ def native_export_panel(source: str) -> str:
     return source
 
 
-def prepare(binary: bytes, output: Path, *, native_runtime: bool, rcc: Path):
+def prepare(binary: bytes, output: Path, *, native_runtime: bool, rcc: Path,
+            ui_release_channel="beta"):
     import icon_resources
     import ui_prepare_features
     from ui_multi_resource_patch import make_resource_spec, read_source, PRESERVED_COMPILED_RESOURCES
@@ -970,6 +971,10 @@ def prepare(binary: bytes, output: Path, *, native_runtime: bool, rcc: Path):
     from optimization_ui import transform_export_panel as beta_export_panel
     if type(native_runtime) is not bool:
         raise ValueError("native_runtime must be explicit bool")
+    if ui_release_channel not in ("beta", "stable-candidate"):
+        raise ValueError("Unknown UI release channel")
+    if not native_runtime and ui_release_channel != "beta":
+        raise ValueError("Stable candidate labels require the native runtime")
     output.mkdir(parents=True, exist_ok=False)
     resources = transform_extra_resources({
         ":/valmax/ChatExportPanel.qml": beta_export_panel(transform_export_panel((PROJECT / "modkit/chat_export_panel.qml").read_text(encoding="utf8"))).encode(),
@@ -992,7 +997,8 @@ def prepare(binary: bytes, output: Path, *, native_runtime: bool, rcc: Path):
         source = IMPORT + source.replace(anchor, "readonly property bool viewActive: " + flag("listScheduling") + " && pageActive &&", 1)
         resources[QUEUE_RESOURCE] = source.encode()
     bundle, icons = icon_resources.prepare(binary, output / "icons", rcc=rcc, extra_resources=resources)
-    sources, generated = ui_prepare_features.prepare(binary, icon_bundle=bundle)
+    sources, generated = ui_prepare_features.prepare(binary, icon_bundle=bundle,
+                                                     ui_release_channel=ui_release_channel)
     if native_runtime:
         name = ":/qt/qml/OneMeUi/MeWindow.qml"
         source = sources[name].decode()
@@ -1025,6 +1031,7 @@ def prepare(binary: bytes, output: Path, *, native_runtime: bool, rcc: Path):
             sources[key] = recording_transform(key, read_source(binary, key))
         spec, evidence = make_resource_spec(binary, sources, icon_bundle=bundle)
         evidence["preservedCompiledResources"] = list(PRESERVED_COMPILED_RESOURCES)
+        evidence["uiReleaseChannel"] = ui_release_channel
     else:
         spec, evidence = generated["spec"], generated["evidence"]
     for name, payload in sources.items():
@@ -1032,7 +1039,8 @@ def prepare(binary: bytes, output: Path, *, native_runtime: bool, rcc: Path):
     (output / "ui_native.py").write_text(
         '"""Generated isolated native runtime resources; do not edit bytes."""\nPATCH_FILES = '
         + pprint.pformat([spec], width=110, sort_dicts=False) + "\n", encoding="utf8")
-    proof = {"schema": 1, "nativeRuntime": native_runtime, "legacyGeneratorsModified": False,
+    proof = {"schema": 1, "nativeRuntime": native_runtime, "uiReleaseChannel": ui_release_channel,
+             "legacyGeneratorsModified": False,
              "generatedArtifacts": {"ui_native.py": sha((output / "ui_native.py").read_bytes()),
                                     "icons/icon-pack-plus-valmax.rcc": sha(bundle)},
              "baselineSha256": sha(binary), "sourceHashes": {name: sha(value) for name, value in sources.items()},
@@ -1050,9 +1058,12 @@ def main():
     parser.add_argument("--output", required=True, type=Path)
     parser.add_argument("--rcc", required=True, type=Path)
     parser.add_argument("--native-runtime", action="store_true")
+    parser.add_argument("--ui-release-channel", choices=("beta", "stable-candidate"), default="beta")
     args = parser.parse_args()
-    _, _, _, proof = prepare(args.baseline.read_bytes(), args.output, native_runtime=args.native_runtime, rcc=args.rcc)
-    print(json.dumps({key: proof[key] for key in ("schema", "nativeRuntime", "legacyGeneratorsModified", "requiredNativeFiles")}))
+    _, _, _, proof = prepare(args.baseline.read_bytes(), args.output, native_runtime=args.native_runtime,
+                             rcc=args.rcc, ui_release_channel=args.ui_release_channel)
+    print(json.dumps({key: proof[key] for key in ("schema", "nativeRuntime", "uiReleaseChannel",
+                                               "legacyGeneratorsModified", "requiredNativeFiles")}))
 
 
 if __name__ == "__main__":
