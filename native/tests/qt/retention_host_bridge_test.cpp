@@ -9,6 +9,7 @@
 #include <cstdint>
 #include <cstring>
 #include <iostream>
+#include <limits>
 #include <string>
 #include <vector>
 
@@ -146,6 +147,16 @@ int main()
         bridge.refresh();
         if (!check(acknowledgements.back().missed == 5,
             "bounded callback skips reach the native status receipt")) return 1;
+        host.worker.missed = std::numeric_limits<uint64_t>::max();
+        host.bounded_skips = 2;
+        bridge.refresh();
+        if (!check(acknowledgements.back().missed == 1'000'000'000,
+            "worker counter overflow saturates before addition")) return 1;
+        host.worker.missed = 2;
+        host.bounded_skips = std::numeric_limits<uint64_t>::max();
+        bridge.refresh();
+        if (!check(acknowledgements.back().missed == 1'000'000'000,
+            "callback counter overflow saturates before addition")) return 1;
         host.worker.error = valmax::retention::pilot::AsyncError::Storage;
         host.worker.ready = false;
         bridge.refresh();

@@ -86,6 +86,11 @@ uint32_t native_error(const passive::NativeStatus &host)
 
 uint64_t bounded(uint64_t count) { return std::min(count, MaximumCount); }
 uint32_t bounded(uint32_t count) { return std::min(count, uint32_t(MaximumCount)); }
+uint64_t bounded_sum(uint64_t first, uint64_t second)
+{
+    first = bounded(first);
+    return first + std::min(second, MaximumCount - first);
+}
 
 } // namespace
 
@@ -154,7 +159,7 @@ void RetentionHostBridge::publish() const
     // Oversized borrowed-row callbacks are intentionally skipped without
     // revoking later capture. Include them in the count-only receipt so the
     // native status cannot silently report a loss-free run.
-    value.missed = bounded(host.worker.missed + host.bounded_skips);
+    value.missed = bounded_sum(host.worker.missed, host.bounded_skips);
     value.failures = bounded(host.worker.failures);
     value.queued = bounded(host.worker.queued);
     value.in_flight = bounded(host.worker.in_flight);
