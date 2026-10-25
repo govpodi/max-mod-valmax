@@ -229,7 +229,7 @@ class MessageRetentionTransformTests(unittest.TestCase):
             with self.assertRaises(ValueError): target.transform_leading(bad)
         panel = SETTINGS.read_text('utf8')
         self.assertIn('property bool savedEnabled: false', panel)
-        self.assertIn('повторная синхронизация ещё проверяется', panel)
+        self.assertIn('Удаления, которые обработчик не увидел, не восстанавливаются; ранее сохранённые сообщения остаются', panel)
         self.assertNotIn('purge', panel)
 
     @unittest.skipUnless(shutil.which('node'), 'Node VM unavailable')

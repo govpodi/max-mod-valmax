@@ -59,6 +59,11 @@ class NativeRetentionSettings(unittest.TestCase):
         if missed is None:
             raise AssertionError("Actual generated missed-event warning missing")
         cls.missed_visible, cls.missed_text = missed.groups()
+        counts = re.search(r'RetentionText \{ objectName: "retentionCounts"; Layout.fillWidth: true; '
+                           r'visible: ([^;]+); text: ([^;]+); typography:', cls.panel)
+        if counts is None:
+            raise AssertionError("Actual generated retention counts label missing")
+        cls.counts_visible, cls.counts_text = counts.groups()
 
     def evaluate(self, source):
         result = self.engine.evaluate(source)
@@ -84,6 +89,31 @@ class NativeRetentionSettings(unittest.TestCase):
                 self.assertTrue(self.accepts(value))
                 self.assertIsNone(value["runtime"]["retainedEvents"])
                 self.assertIsNone(value["runtime"]["retainedMessages"])
+
+    def test_count_label_distinguishes_unknown_from_zero_and_known_counts(self):
+        def label(events, messages, trusted=True):
+            setup = "var retentionPage=" + json.dumps({
+                "runtimeTrusted": trusted,
+                "runtime": {"retainedEvents": events, "retainedMessages": messages},
+            }) + ";"
+            visible = self.evaluate("(function(){" + setup + "return ("
+                                    + self.counts_visible + ");})()").toBool()
+            text = self.evaluate("(function(){" + setup + "return ("
+                                 + self.counts_text + ");})()").toString()
+            return visible, text
+
+        unknown = "Общее количество удалений и сохранённых сообщений недоступно."
+        self.assertEqual(label(None, None), (True, unknown))
+        self.assertEqual(label(None, 7), (True, unknown))
+        self.assertEqual(label(4, None), (True, unknown))
+        self.assertEqual(label(0, 0),
+                         (True, "Отмечено удалений: 0. Сообщений сохранено: 0."))
+        self.assertEqual(label(4, 7),
+                         (True, "Отмечено удалений: 4. Сообщений сохранено: 7."))
+        self.assertFalse(label(None, None, trusted=False)[0])
+        self.assertIn("Бета: входящий текст сохраняется", self.panel)
+        self.assertIn("Удаления, которые обработчик не увидел, не восстанавливаются; ранее сохранённые сообщения остаются", self.panel)
+        self.assertNotIn("повторная синхронизация ещё проверяется", self.panel)
 
     def test_saved_true_never_means_capture_active(self):
         self.assertFalse(self.active(status(True)))

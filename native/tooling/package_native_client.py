@@ -22,6 +22,8 @@ from datetime import datetime, timedelta, timezone
 
 from package_transfer_helper import pe_imports, system_dependency
 from assemble_native_runtime import dependency_closure as runtime_dependency_closure
+from webview2_bootstrapper import verify as verify_webview2_bootstrapper
+from webview2_bootstrapper import load_pin as webview2_bootstrapper_pin
 
 ROOT = Path(__file__).resolve().parents[2]
 WORK_ROOTS = (Path("C:/ValMAXBuild"), Path("D:/ValMAXBuild"), Path("E:/ValMAXBuild"))
@@ -1275,9 +1277,9 @@ def preview_information(version, webview2_mode="fixed", qt_source_mode="inline",
     require_preview_version(version)
     require(webview2_mode in ("fixed", "evergreen") and qt_source_mode in ("inline", "separate-asset"),
             "unknown local preview packaging mode")
-    evergreen_ru = ("Для вкладки бизнеса и мини-приложений требуется установленный в Windows Microsoft Edge WebView2 Evergreen Runtime. Установщик проверит его до обновления.\n"
+    evergreen_ru = ("Для вкладки бизнеса и мини-приложений нужен Microsoft Edge WebView2 Evergreen Runtime. Если его нет, мастер установит его через интернет до обновления ValMAX; без сети понадобится официальный автономный установщик Microsoft.\n"
                     if webview2_mode == "evergreen" else "")
-    evergreen_en = ("The business tab and mini apps require Microsoft Edge WebView2 Evergreen Runtime installed in Windows. Setup checks this before upgrading.\n"
+    evergreen_en = ("The business tab and mini apps need Microsoft Edge WebView2 Evergreen Runtime. If missing, Setup installs it online before upgrading ValMAX; offline use requires Microsoft's standalone installer.\n"
                     if webview2_mode == "evergreen" else "")
     asset_ru = asset_en = ""
     if qt_source_mode == "separate-asset":
@@ -1345,9 +1347,9 @@ def beta_information(version, webview2_mode="fixed", qt_source_mode="inline", qt
     material_limitations = beta_material_limitations(webview2_mode, qt_source_mode)
     material_ru = "".join("• " + item["noticeRu"] + "\n" for item in material_limitations)
     material_en = "".join("• " + item["noticeEn"] + "\n" for item in material_limitations)
-    evergreen_ru = ("• Для вкладки бизнеса и мини-приложений нужен установленный в Windows Microsoft Edge WebView2 Evergreen Runtime; установщик его не содержит.\n"
+    evergreen_ru = ("• Для вкладки бизнеса и мини-приложений нужен Microsoft Edge WebView2 Evergreen Runtime. Если его нет, мастер установит Runtime через интернет; без сети нужен официальный автономный установщик Microsoft.\n"
                     if webview2_mode == "evergreen" else "")
-    evergreen_en = ("Mini apps and the business tab require the Microsoft Edge WebView2 Evergreen Runtime installed in Windows; this installer does not bundle it.\n"
+    evergreen_en = ("Mini apps and the business tab need Microsoft Edge WebView2 Evergreen Runtime. If missing, Setup installs the Runtime online; offline use requires Microsoft's standalone installer.\n"
                     if webview2_mode == "evergreen" else "")
     asset_ru = asset_en = ""
     if qt_source_mode == "separate-asset":
@@ -1412,6 +1414,14 @@ def write_release_state(payload, manifest, report):
               '#define NativeReleaseEligible ' + str(int(report["releaseEligible"] is True)) + '\n'
               '#define NativeReleaseBlockerCount ' + str(len(report["blockers"])) + '\n'
               '#define NativePackageManifestSha256 "' + digest + '"\n')
+    if manifest.get("webview2Mode", "fixed") == "evergreen":
+        bootstrapper = manifest.get("webview2Bootstrapper")
+        require(bootstrapper == webview2_bootstrapper_pin(),
+                "Evergreen bootstrapper release pin changed before installer compilation")
+        marker += ('#define NativeWebView2BootstrapperSha256 "' + bootstrapper["sha256"] + '"\n')
+    else:
+        require(manifest.get("webview2Bootstrapper") is None,
+                "Fixed WebView2 package claims an Evergreen bootstrapper")
     if qt_source_mode == "separate-asset":
         marker += ('#define NativeQtSourceAssetSha256 "' + asset["assetSha256"] + '"\n'
                    '#define NativeQtSourceInfoSha256 "' + manifest["qtSourceAvailability"]["sha256"] + '"\n')
@@ -1472,6 +1482,8 @@ def main():
     parser.add_argument("--output", type=Path)
     parser.add_argument("--version", help="Required for packaging; may be omitted for a technical preflight report.")
     parser.add_argument("--iscc", type=Path)
+    parser.add_argument("--evergreen-bootstrapper", type=Path,
+                        help="Pinned, Microsoft-signed online Evergreen bootstrapper; required for Evergreen packaging.")
     parser.add_argument("--distribution", choices=("user-release", "developer-staging", "local-preview", "public-beta"), default="user-release")
     parser.add_argument("--release-evidence", type=Path, help="Full feature manifest for user-release, installed core smoke receipt for public-beta.")
     parser.add_argument("--beta-materials-evidence", type=Path,
@@ -1567,12 +1579,24 @@ def main():
         return
     require_distribution(args.distribution, report, bool(args.iscc))
     require(inputs is not None, "native artifact validation failed; see " + str(report_path))
+    webview2_mode = inputs.get("webview2Mode", "fixed")
+    if webview2_mode == "evergreen":
+        require(args.evergreen_bootstrapper is not None,
+                "Evergreen packaging requires --evergreen-bootstrapper (pinned Microsoft EXE)")
+        bootstrapper_source = owned(args.evergreen_bootstrapper)
+        bootstrapper_pin = verify_webview2_bootstrapper(bootstrapper_source)
+    else:
+        require(args.evergreen_bootstrapper is None,
+                "Fixed WebView2 package must not include an Evergreen bootstrapper")
+        bootstrapper_source = bootstrapper_pin = None
     runtime, qml, rows, launcher = inputs["runtime"], inputs["qml"], inputs["rows"], inputs["launcher"]
     launcher_hash, qml_result, closure = inputs["launcherHash"], inputs["qmlResult"], inputs["closure"]
     ancillary = ancillary_inventory()
     required_bytes = sum(row["size"] for row in rows) + launcher.stat().st_size + sum(row["size"] for row in ancillary)
     if inputs.get("qtSourceAsset") is not None:
         required_bytes += inputs["qtSourceAsset"]["receipt"]["assetBytes"]
+    if bootstrapper_pin is not None:
+        required_bytes += bootstrapper_pin["size"]
     if beta_plan is not None:
         required_bytes += sum(row["size"] for row in beta_plan["summary"]["sourceBundles"])
         required_bytes += sum(row["signature"]["size"] for row in beta_plan["summary"]["sourceBundles"])
@@ -1595,6 +1619,20 @@ def main():
             and pins.inventory(runtime, webview2_mode, qt_source_mode) == rows, "runtime changed during packaging")
     qt_asset = inputs.get("qtSourceAsset")
     qt_asset_copy = qt_info = None
+    bootstrapper_copy = None
+    if bootstrapper_pin is not None:
+        prerequisite_folder = output / "installer-prerequisites"
+        prerequisite_folder.mkdir()
+        target = prerequisite_folder / bootstrapper_pin["name"]
+        require(not target.exists() and sha(bootstrapper_source) == bootstrapper_pin["sha256"],
+                "Evergreen bootstrapper changed before packaging")
+        shutil.copyfile(bootstrapper_source, target)
+        require(ordinary(target).st_size == bootstrapper_pin["size"]
+                and sha(target) == bootstrapper_pin["sha256"],
+                "Evergreen bootstrapper copy differs from release pin")
+        bootstrapper_copy = {"path": str(target), "size": bootstrapper_pin["size"],
+                             "sha256": bootstrapper_pin["sha256"],
+                             "signerThumbprint": bootstrapper_pin["signerThumbprint"]}
     if qt_asset is not None:
         asset = qt_asset["receipt"]
         asset_folder = output / "source-assets"
@@ -1628,6 +1666,7 @@ def main():
             None if qt_asset is None else qt_asset["receipt"]))
         beta_info = {"path": PUBLIC_BETA_INFO, "sha256": sha(payload / PUBLIC_BETA_INFO)}
     manifest = {"schema": 1, "nativeOnly": True, "version": args.version, "webview2Mode": webview2_mode,
+                "webview2Bootstrapper": bootstrapper_pin,
                 "qtSourceMode": qt_source_mode,
                 "qtSourceDistribution": None if qt_asset is None else qt_asset["receipt"],
                 "qtSourceAvailability": qt_info,
@@ -1653,6 +1692,7 @@ def main():
     (payload / "native-package.json").write_text(json.dumps(manifest, ensure_ascii=False, indent=2) + "\n", encoding="utf8")
     receipt = {"schema": 1, "packaged": True, "nativeOnly": True, "installerCompiled": False,
                "webview2Mode": webview2_mode, "qtSourceMode": qt_source_mode,
+               "webview2Bootstrapper": bootstrapper_copy,
                "qtSourceAsset": qt_asset_copy,
                "qtSourceDistribution": None if qt_asset is None else qt_asset["receipt"],
                "payload": str(payload), "manifestSha256": sha(payload / "native-package.json"),
@@ -1683,6 +1723,10 @@ def main():
             require(sha(Path(qt_asset_copy["path"])) == qt_asset_copy["sha256"],
                     "separate Qt source ZIP changed before Inno compilation")
             command.insert(-1, "/DQtSourceAsset=" + qt_asset_copy["path"])
+        if bootstrapper_copy is not None:
+            require(sha(Path(bootstrapper_copy["path"])) == bootstrapper_pin["sha256"],
+                    "Evergreen bootstrapper changed before Inno compilation")
+            command.insert(-1, "/DWebView2Bootstrapper=" + bootstrapper_copy["path"])
         with (output / "inno.log").open("xb") as log:
             result = subprocess.run(command, stdout=log, stderr=subprocess.STDOUT, timeout=1800,
                                     creationflags=subprocess.CREATE_NO_WINDOW)
@@ -1696,6 +1740,11 @@ def main():
                 and sha(qt_asset["archive"]) == qt_asset_copy["sha256"]
                 and sha(payload / QT_SOURCE_INFO) == qt_info["sha256"],
                 "separate Qt source asset or availability notice changed before final receipt")
+    if bootstrapper_copy is not None:
+        require(ordinary(Path(bootstrapper_copy["path"])).st_size == bootstrapper_pin["size"]
+                and sha(Path(bootstrapper_copy["path"])) == bootstrapper_pin["sha256"]
+                and sha(bootstrapper_source) == bootstrapper_pin["sha256"],
+                "Evergreen bootstrapper changed before final receipt")
     (output / "build-receipt.json").write_text(json.dumps(receipt, indent=2) + "\n", encoding="utf8")
     print(json.dumps(receipt))
 

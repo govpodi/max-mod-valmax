@@ -109,7 +109,7 @@ Component {
                 ProtectionRow { rule: "mytracker"; heading: "MyTracker"; detail: modPrivacyPage.serviceVerified ? "Изменённый участок кода MyTracker проверен в работающей службе звонков." : "В файле службы звонков отключено создание MyTracker; статус работающего процесса указан выше." }
                 ProtectionRow { rule: "log_masking"; heading: "Личные данные в журналах"; detail: "Включена штатная маскировка журналов: проверены настройки приложения и файл настроек службы." }
                 ProtectionRow { rule: "error_logs"; heading: "Отправка журналов ошибок"; detail: "Отключена настройка отправки журналов ошибок в приложении и файле настроек службы." }
-                DashboardText { objectName: "privacyUnknownScope"; Layout.fillWidth: true; text: "Другие способы сбора данных здесь не проверяются. Сервис MAX по-прежнему видит адрес подключения и данные, необходимые для работы аккаунта."; color: modPrivacyPage.secondaryText; typography: Typography.FontUtil.Styles.Description }
+                DashboardText { objectName: "privacyUnknownScope"; Layout.fillWidth: true; text: "Здесь показаны только перечисленные локальные настройки. Сервис MAX по-прежнему видит адрес подключения и данные, необходимые для работы аккаунта."; color: modPrivacyPage.secondaryText; typography: Typography.FontUtil.Styles.Description }
             }
         }
     }

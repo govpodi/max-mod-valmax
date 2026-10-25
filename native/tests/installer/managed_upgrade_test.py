@@ -95,8 +95,13 @@ class Fixture:
         self.process = None
         self.process_executable = process_executable
         self.owns_registry = False
+        self.webview_called = self.root / 'webview2-bootstrapper-called.marker'
+        self.webview_present = self.root / 'webview2-present.marker'
         self.environment = os.environ.copy()
-        self.environment.update(TEMP=str(work_root / 'tmp'), TMP=str(work_root / 'tmp'))
+        self.environment.update(TEMP=str(work_root / 'tmp'), TMP=str(work_root / 'tmp'),
+                                VALMAX_FIXTURE_WEBVIEW2_CALLED=str(self.webview_called),
+                                VALMAX_FIXTURE_WEBVIEW2_PRESENT=str(self.webview_present),
+                                VALMAX_FIXTURE_WEBVIEW2_MODE='failure')
 
     def check(self, name, condition):
         if not condition:
@@ -115,7 +120,17 @@ class Fixture:
         command = [str(ISCC), '/Qp', '/DPayload=' + str(payload), '/DOutput=' + str(output),
                    '/DProductVersion=' + version, '/DValMAXInstallerFixture=1',
                    '/DFixtureRoot=' + str(self.root).replace('/', '\\')]
-        if define:
+        if define in ('FixtureEvergreenPrerequisite', 'FixtureEvergreenSilentPrerequisite',
+                      'FixtureEvergreenConsentRace'):
+            command.append('/DFixtureEvergreenPrerequisite=1')
+            if define != 'FixtureEvergreenSilentPrerequisite':
+                command.append('/DFixtureConsentConfirmed=1')
+            if define == 'FixtureEvergreenConsentRace':
+                command.append('/DFixtureConsentLaunchesClient=1')
+            command.extend(['/DWebView2Bootstrapper=' + str(self.process_executable),
+                            '/DNativeWebView2BootstrapperSha256=' +
+                            hashlib.sha256(self.process_executable.read_bytes()).hexdigest()])
+        elif define:
             command.append('/D' + define + '=1')
         command.append(str(ROOT / 'native/installer/valmax-native.iss'))
         result = subprocess.run(command, env=self.environment, capture_output=True, timeout=90)
@@ -194,6 +209,45 @@ class Fixture:
         with winreg.CreateKeyEx(winreg.HKEY_CURRENT_USER, KEY + '\\FixtureChild', 0, winreg.KEY_WRITE | VIEW) as key:
             winreg.SetValueEx(key, 'Typed', 0, winreg.REG_DWORD, 27)
 
+    def execute_evergreen_consent_race(self):
+        self.check('consent-race-fixture-key-unoccupied', registry_tree(KEY) is None)
+        self.check('consent-race-transaction-key-unoccupied', registry_tree(TRANSACTIONS) is None)
+        self.owns_registry = True
+        initial = self.compile('0.0.10-fixture')
+        race = self.compile('0.0.11-fixture', 'FixtureEvergreenConsentRace')
+        retry = self.compile('0.0.12-fixture', 'FixtureEvergreenPrerequisite')
+        self.run(initial)
+        original_launcher = (self.app / 'ValMAX.exe').read_bytes()
+        shutil.copyfile(self.process_executable, self.app / 'ValMAX.exe')
+        app_before, registry_before = inventory(self.app), registry_tree(KEY)
+        try:
+            self.run(race, False)
+            log = (self.root / ('install-' + str(self.log_index) + '.log')).read_text(encoding='utf-8-sig')
+            self.check('consent-race-fixture-client-started',
+                       'fixture_evergreen_consent_started_client' in log)
+            self.check('consent-race-initial-target-preflight-before-consent',
+                       log.index('fixture_evergreen_target_preflight_ok') <
+                       log.index('fixture_evergreen_consent_started_client'))
+            self.check('consent-race-post-consent-process-preflight-blocked',
+                       'fixture_evergreen_post_consent_preflight_ok' not in log)
+            self.check('consent-race-bootstrapper-never-started', not self.webview_called.exists())
+            self.check('consent-race-no-upgrade-journal',
+                       not Path(str(self.app) + '.valmax-update.ini').exists())
+            self.check('consent-race-app-and-registration-preserved',
+                       inventory(self.app) == app_before and registry_tree(KEY) == registry_before)
+            self.check('consent-race-profile-preserved', inventory(self.profile) == self.profile_before)
+        finally:
+            # The only spawned EXE is the owned /fixture-short program. It exits
+            # itself after five seconds; wait before restoring its file bytes.
+            time.sleep(5.5)
+            (self.app / 'ValMAX.exe').write_bytes(original_launcher)
+        self.environment['VALMAX_FIXTURE_WEBVIEW2_MODE'] = 'success'
+        self.run(retry)
+        self.check('consent-race-follow-up-setup-can-retry',
+                   self.webview_called.is_file() and self.webview_present.is_file() and
+                   (self.app / 'runtime/native-version.txt').read_text() == '0.0.12-fixture')
+        self.check('consent-race-follow-up-leaves-profile', inventory(self.profile) == self.profile_before)
+
     def execute(self):
         self.check('fixture-key-unoccupied-at-start', registry_tree(KEY) is None)
         self.check('transaction-key-unoccupied-at-start', registry_tree(TRANSACTIONS) is None)
@@ -204,6 +258,8 @@ class Fixture:
         fallback = self.compile('0.0.5-fixture', 'FixtureForcePathFallback')
         preview_name = self.compile('0.0.6-fixture', 'FixturePreviewName')
         beta_name = self.compile('0.0.7-fixture', 'FixtureBetaName')
+        evergreen = self.compile('0.0.8-fixture', 'FixtureEvergreenPrerequisite')
+        evergreen_silent = self.compile('0.0.9-fixture', 'FixtureEvergreenSilentPrerequisite')
         self.compile_release_gates()
         self.run(fail, False)
         self.check('fresh-failure-registration-absent', registry_tree(KEY) is None)
@@ -212,6 +268,77 @@ class Fixture:
         self.run(v1)
         self.check('fresh-native-marker-written', (self.app / '.valmax-installation.ini').is_file())
         self.check('fresh-version-registered', registry_tree(KEY)['values']['DisplayVersion'][0] == '0.0.1-fixture')
+        evergreen_before, evergreen_registry = inventory(self.app), registry_tree(KEY)
+        self.run(evergreen_silent, False)
+        silent_log = (self.root / ('install-' + str(self.log_index) + '.log')).read_text(encoding='utf-8-sig')
+        self.check('evergreen-silent-without-runtime-never-launches-bootstrapper',
+                   not self.webview_called.exists() and 'fixture_evergreen_silent_refused' in silent_log)
+        self.check('evergreen-silent-without-runtime-preserves-app-and-registration',
+                   inventory(self.app) == evergreen_before and registry_tree(KEY) == evergreen_registry)
+        self.check('evergreen-silent-without-runtime-leaves-no-journal',
+                   not Path(str(self.app) + '.valmax-update.ini').exists())
+        for mode in ('failure', 'restart', 'restart_initiated', 'success_no_registry'):
+            self.webview_called.unlink(missing_ok=True)
+            self.environment['VALMAX_FIXTURE_WEBVIEW2_MODE'] = mode
+            code = self.run(evergreen, False)
+            log = (self.root / ('install-' + str(self.log_index) + '.log')).read_text(encoding='utf-8-sig')
+            self.check('evergreen-' + mode + '-bootstrapper-invoked', self.webview_called.is_file())
+            self.check('evergreen-' + mode + '-leaves-app-unchanged', inventory(self.app) == evergreen_before)
+            self.check('evergreen-' + mode + '-leaves-registration-unchanged', registry_tree(KEY) == evergreen_registry)
+            self.check('evergreen-' + mode + '-leaves-no-journal',
+                       not Path(str(self.app) + '.valmax-update.ini').exists())
+            self.check('evergreen-' + mode + '-unlocks-for-retry',
+                       'fixture_evergreen_mutex_released' in log and
+                       'fixture_transaction_label_created' not in log)
+            if mode in ('restart', 'restart_initiated'):
+                self.check('evergreen-restart-returns-reboot-code', code == 8)
+        self.webview_called.unlink(missing_ok=True)
+        original_launcher = (self.app / 'ValMAX.exe').read_bytes()
+        shutil.copyfile(self.process_executable, self.app / 'ValMAX.exe')
+        try:
+            self.process = subprocess.Popen([str(self.app / 'ValMAX.exe')],
+                                            creationflags=subprocess.CREATE_NO_WINDOW)
+            time.sleep(0.1)
+            self.check('evergreen-running-client-fixture-started', self.process.poll() is None)
+            running_before = inventory(self.app)
+            self.run(evergreen, False)
+            self.check('evergreen-running-client-skips-prerequisite', not self.webview_called.exists())
+            self.check('evergreen-running-client-leaves-app-unchanged', inventory(self.app) == running_before)
+            self.check('evergreen-running-client-leaves-registration-unchanged',
+                       registry_tree(KEY) == evergreen_registry)
+        finally:
+            if self.process is not None and self.process.poll() is None:
+                self.process.terminate()
+                self.process.wait(timeout=5)
+            (self.app / 'ValMAX.exe').write_bytes(original_launcher)
+        link = self.app / 'unsafe-fixture-link'
+        subprocess.run(['cmd', '/c', 'mklink', '/J', str(link), str(self.profile)], check=True,
+                       capture_output=True, creationflags=subprocess.CREATE_NO_WINDOW)
+        try:
+            self.run(evergreen, False)
+            self.check('evergreen-unsafe-target-skips-prerequisite', not self.webview_called.exists())
+            self.check('evergreen-unsafe-target-preserves-profile', inventory(self.profile) == self.profile_before)
+        finally:
+            os.rmdir(link)  # Exact owned junction only; never recursive.
+        self.environment['VALMAX_FIXTURE_WEBVIEW2_MODE'] = 'success'
+        self.run(evergreen)
+        log = (self.root / ('install-' + str(self.log_index) + '.log')).read_text(encoding='utf-8-sig')
+        order = ('fixture_evergreen_target_preflight_ok', 'WebView2 bootstrapper exit code: 0',
+                 'fixture_evergreen_post_preflight_ok', 'fixture_transaction_label_created')
+        self.check('evergreen-success-order-before-transaction',
+                   all(part in log for part in order) and
+                   list(map(log.index, order)) == sorted(map(log.index, order)))
+        self.check('evergreen-success-installs-fixture-prerequisite',
+                   self.webview_called.is_file() and self.webview_present.is_file())
+        self.check('evergreen-success-upgrades-owned-app',
+                   (self.app / 'runtime/native-version.txt').read_text() == '0.0.8-fixture')
+        self.webview_called.unlink()
+        self.run(evergreen)
+        self.check('evergreen-already-present-skips-bootstrapper', not self.webview_called.exists())
+        self.check('evergreen-already-present-keeps-prerequisite', self.webview_present.is_file())
+        self.run(evergreen_silent)
+        self.check('evergreen-silent-with-runtime-needs-no-consent-or-bootstrapper',
+                   not self.webview_called.exists() and self.webview_present.is_file())
         self.add_old_files()
         self.add_registry_sentinels()
         before = inventory(self.app)
@@ -457,6 +584,7 @@ class Fixture:
 
 def main():
     parser = argparse.ArgumentParser()
+    parser.add_argument('--scenario', choices=('full', 'evergreen-consent-race'), default='full')
     parser.add_argument('--report', type=Path, required=True)
     parser.add_argument('--process-executable', type=Path, required=True)
     parser.add_argument('--work-root', type=Path, required=True)
@@ -472,7 +600,10 @@ def main():
     fixture = Fixture(process_executable, work_root)
     error = None
     try:
-        fixture.execute()
+        if args.scenario == 'full':
+            fixture.execute()
+        else:
+            fixture.execute_evergreen_consent_race()
     except Exception as caught:
         error = str(caught)
     finally:
@@ -481,7 +612,7 @@ def main():
         if fixture.owns_registry:
             cleanup_test_key(KEY)
             cleanup_test_key(TRANSACTIONS)
-    report = {'schema': 1, 'ok': error is None, 'syntheticOnly': True,
+    report = {'schema': 1, 'ok': error is None, 'scenario': args.scenario, 'syntheticOnly': True,
               'productionInstallerRun': False, 'realProfilesOrWinCredAccessed': False,
               'fixtureRoot': str(fixture.root), 'fixtureAppId': APP_ID,
               'checks': fixture.checks, 'passed': len(fixture.checks), 'error': error,

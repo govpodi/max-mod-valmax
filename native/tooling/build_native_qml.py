@@ -311,8 +311,6 @@ def native_retention_settings_panel(panel: str) -> str:
          'if (!canSavePreference || pendingRequest !== null || !dirty || needsRefresh) return;'),
         ('enabled: retentionPage.loaded && !retentionPage.saving; checked:',
          'enabled: retentionPage.loaded && !retentionPage.saving && retentionPage.capabilities !== null && (retentionPage.capabilities.enable || retentionPage.savedEnabled && retentionPage.capabilities.disable); checked:'),
-        ('visible: retentionPage.runtimeTrusted && retentionPage.runtime !== null; text: retentionPage.runtime ?',
-         'visible: retentionPage.runtimeTrusted && retentionPage.runtime !== null && retentionPage.runtime.retainedEvents !== null && retentionPage.runtime.retainedMessages !== null; text: retentionPage.runtime ?'),
         ('enabled: retentionPage.loaded && retentionPage.runtimeTrusted && retentionPage.pendingRequest === null && retentionPage.dirty && !retentionPage.needsRefresh;',
          'enabled: retentionPage.canSavePreference && retentionPage.pendingRequest === null && retentionPage.dirty && !retentionPage.needsRefresh;'),
     )

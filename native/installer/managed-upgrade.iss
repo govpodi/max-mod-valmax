@@ -388,32 +388,109 @@ begin
   Result := RestorePrevious;
 end;
 
-function PrepareToInstall(var NeedsRestart: Boolean): String;
-var Entries: Integer;
+#ifdef NativeUseEvergreenPrerequisite
+function PrerequisiteTargetPreflight: Boolean;
+var
+  Nonce, Previous, Backup: String;
 begin
-  NeedsRestart := False;
-#if ValMAXInstallerFixture != "1"
-  #ifdef NativeWebView2Mode
-    #if NativeWebView2Mode == "evergreen"
-  if not EvergreenWebView2Present then
+  Result := False;
+  if not PlainPath(UpgradeApp, True) then Exit;
+  UpgradeJournal := UpgradeApp + '.valmax-update.ini';
+  if MissingPath(UpgradeJournal) then
   begin
-    Result := CustomMessage('EvergreenMissing');
+    if not EmptyDirectory(UpgradeApp) then
+    begin
+      if not RegisteredInstallation(UpgradeApp) then Exit;
+    end
+    else if RegKeyExists(HKCU64, UninstallKey) then Exit;
+    Result := True;
     Exit;
   end;
-    #endif
-  #endif
+  { An interrupted transaction is examined without changing it. Recovery
+    remains after the prerequisite and its second process/target preflight. }
+  if not PlainFile(UpgradeJournal) or
+     (GetIniString('transaction', 'schema', '', UpgradeJournal) <> '1') or
+     (GetIniString('transaction', 'appId', '', UpgradeJournal) <> '{#NativeAppId}') or
+     (GetIniString('transaction', 'app', '', UpgradeJournal) <> UpgradeApp) then Exit;
+  Nonce := GetIniString('transaction', 'nonce', '', UpgradeJournal);
+  Previous := GetIniString('transaction', 'previous', '', UpgradeJournal);
+  if not NonceValid(Nonce) or ((Previous <> '0') and (Previous <> '1')) then Exit;
+  if (Previous = '1') <> RegKeyExists(HKCU64, TransactionKey + '\' + Nonce) then Exit;
+  Backup := UpgradeApp + '.valmax-backup-' + Nonce;
+  if not PlainPath(Backup, True) or
+     not PlainPath(UpgradeApp + '.valmax-incomplete-' + Nonce, True) then Exit;
+  if (not MissingPath(Backup)) and (OwnedDirectoryProcessPreflight(Backup) <> '') then Exit;
+  Result := True;
+end;
 #endif
+
+function PrepareToInstall(var NeedsRestart: Boolean): String;
+var
+  Entries: Integer;
+#ifdef NativeUseEvergreenPrerequisite
+  PrerequisiteRestart: Boolean;
+#endif
+begin
+  NeedsRestart := False;
   Result := CustomMessage('UpgradeUnsafe');
   if not LockTransfer then Exit;
+  try
   Result := OwnedProcessPreflight;
-  if Result <> '' then Exit;
+  if Result <> '' then begin UnlockTransfer; Exit; end;
   Result := CustomMessage('UpgradeUnsafe');
   UpgradeApp := RemoveBackslashUnlessRoot(NormalizedPath(ExpandConstant('{app}')));
 #if ValMAXInstallerFixture == "1"
-  if CompareText(UpgradeApp, '{#FixtureRoot}\app') <> 0 then Exit;
+  if CompareText(UpgradeApp, '{#FixtureRoot}\app') <> 0 then begin UnlockTransfer; Exit; end;
 #endif
-  if not PlainPath(UpgradeApp, True) then Exit;
+  if not PlainPath(UpgradeApp, True) then begin UnlockTransfer; Exit; end;
   UpgradeJournal := UpgradeApp + '.valmax-update.ini';
+#ifdef NativeUseEvergreenPrerequisite
+  if not PrerequisiteTargetPreflight then begin UnlockTransfer; Exit; end;
+#if ValMAXInstallerFixture == "1"
+  Log('fixture_evergreen_target_preflight_ok');
+#endif
+  if not ConfirmEvergreenWebView2 then
+  begin
+    Result := CustomMessage('EvergreenConsentRequired');
+    UnlockTransfer;
+#if ValMAXInstallerFixture == "1"
+    Log('fixture_evergreen_mutex_released');
+#endif
+    Exit;
+  end;
+  { The confirmation can remain open while ValMAX starts or its directory
+    changes. Check both immediately before extracting/running Microsoft code. }
+  Result := OwnedProcessPreflight;
+  if Result <> '' then begin UnlockTransfer; Exit; end;
+  Result := CustomMessage('UpgradeUnsafe');
+  if not PrerequisiteTargetPreflight then begin UnlockTransfer; Exit; end;
+#if ValMAXInstallerFixture == "1"
+  Log('fixture_evergreen_post_consent_preflight_ok');
+#endif
+  if not EnsureEvergreenWebView2(PrerequisiteRestart) then
+  begin
+    if PrerequisiteRestart then
+    begin
+      NeedsRestart := True;
+      Result := CustomMessage('EvergreenRestart');
+    end
+    else Result := CustomMessage('EvergreenInstallFailed');
+    UnlockTransfer;
+#if ValMAXInstallerFixture == "1"
+    Log('fixture_evergreen_mutex_released');
+#endif
+    Exit;
+  end;
+  { The Microsoft prerequisite can take time; the client may start or the
+    target may change while it runs. Repeat both checks before any journal. }
+  Result := OwnedProcessPreflight;
+  if Result <> '' then begin UnlockTransfer; Exit; end;
+  Result := CustomMessage('UpgradeUnsafe');
+  if not PrerequisiteTargetPreflight then begin UnlockTransfer; Exit; end;
+#if ValMAXInstallerFixture == "1"
+  Log('fixture_evergreen_post_preflight_ok');
+#endif
+#endif
   if not RecoverInterrupted then begin Result := CustomMessage('UpgradeRecovery'); Exit; end;
   HadPrevious := not EmptyDirectory(UpgradeApp);
   if HadPrevious then
@@ -456,6 +533,11 @@ begin
   #endif
 #endif
   Result := '';
+  finally
+    { A Preparing-page refusal before a transaction must not hold this mutex
+      while the wizard remains open or the user retries. }
+    if (Result <> '') and not UpgradePrepared then UnlockTransfer;
+  end;
 end;
 
 procedure CurStepChanged(CurStep: TSetupStep);

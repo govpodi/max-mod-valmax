@@ -189,6 +189,29 @@
     #endif
   #endif
 #endif
+#if ValMAXInstallerFixture == "1"
+  #ifdef FixtureEvergreenPrerequisite
+    #define NativeUseEvergreenPrerequisite 1
+  #endif
+#else
+  #if NativeWebView2Mode == "evergreen"
+    #define NativeUseEvergreenPrerequisite 1
+  #endif
+#endif
+#ifdef NativeUseEvergreenPrerequisite
+  #ifndef NativeWebView2BootstrapperSha256
+    #error Evergreen WebView2 bootstrapper digest is missing
+  #endif
+  #ifndef WebView2Bootstrapper
+    #error Evergreen WebView2 bootstrapper path must be supplied to the compiler
+  #endif
+  #if !FileExists(WebView2Bootstrapper)
+    #error Evergreen WebView2 bootstrapper is missing
+  #endif
+  #if GetSHA256OfFile(WebView2Bootstrapper) != NativeWebView2BootstrapperSha256
+    #error Evergreen WebView2 bootstrapper differs from the package receipt
+  #endif
+#endif
 #if !FileExists(Payload + "\ValMAX.exe")
   #error Native launcher is missing
 #endif
@@ -245,10 +268,18 @@ Name: "english"; MessagesFile: "compiler:Default.isl"
 
 [Messages]
 russian.WelcomeLabel1=ValMAX%nВаше общение. Ваши правила.
+#ifdef NativeUseEvergreenPrerequisite
+russian.WelcomeLabel2=Неофициальный клиент MAX для Windows — для жизни и бизнеса.%n%nВАЛ — Возможности. Автоматизация. Личный контроль.%n%nБлиже к клиентам. Свободнее в работе.%n%nЕсли WebView2 отсутствует, мастер загрузит его. Сохраните работу: установка Runtime может начать перезагрузку Windows.
+#else
 russian.WelcomeLabel2=Неофициальный клиент MAX для Windows — для жизни и бизнеса.%n%nВАЛ — Возможности. Автоматизация. Личный контроль.%n%nБлиже к клиентам. Свободнее в работе.%n%nМастер установит ValMAX и необходимые библиотеки на этот компьютер.
+#endif
 russian.FinishedLabel=Ваше общение. Ваши правила.%n%nValMAX установлена. Нажмите «Завершить», чтобы закрыть мастер.
 english.WelcomeLabel1=ValMAX%nYour conversations. Your rules.
+#ifdef NativeUseEvergreenPrerequisite
+english.WelcomeLabel2=An unofficial MAX client for Windows, for everyday life and business.%n%nCloser to customers. More freedom at work.%n%nIf WebView2 is missing, Setup downloads it. Save your work: Runtime installation may initiate a Windows restart.
+#else
 english.WelcomeLabel2=An unofficial MAX client for Windows, for everyday life and business.%n%nCloser to customers. More freedom at work.%n%nSetup will install ValMAX and its required libraries on this computer.
+#endif
 english.FinishedLabel=Your conversations. Your rules.%n%nValMAX is installed. Click Finish to close Setup.
 
 [CustomMessages]
@@ -268,8 +299,16 @@ russian.UpgradeUnsafe=Не удалось безопасно обновить э
 english.UpgradeUnsafe=This folder cannot be upgraded safely. Select an empty folder or a registered ValMAX installation without directory links. Account data has not been changed.
 russian.UpgradeRecovery=Предыдущее обновление не завершилось. Старая установка и незавершённые файлы сохранены рядом. Повторите установку для проверки и восстановления; при повторной ошибке сохраните эти папки.
 english.UpgradeRecovery=The previous update did not finish. The old installation and incomplete files are preserved beside the install folder. Retry Setup to check and restore them; keep these folders if recovery fails.
-russian.EvergreenMissing=Для этой компактной сборки нужен Microsoft Edge WebView2 Evergreen Runtime. Установите его с официальной страницы Microsoft https://developer.microsoft.com/en-us/microsoft-edge/webview2/ и повторите установку. Без сети можно заранее скачать официальный автономный установщик Runtime или использовать опубликованную полную p16. ValMAX и аккаунты не изменены.
-english.EvergreenMissing=This compact build requires Microsoft Edge WebView2 Evergreen Runtime. Install it from the official Microsoft page https://developer.microsoft.com/en-us/microsoft-edge/webview2/ and retry Setup. For an offline PC, prepare Microsoft's standalone Runtime installer in advance or use the published full p16. ValMAX and account data were not changed.
+russian.EvergreenInstalling=Загружаем и устанавливаем Microsoft Edge WebView2 Runtime для мини-приложений. Это может занять несколько минут.
+english.EvergreenInstalling=Downloading and installing Microsoft Edge WebView2 Runtime for mini apps. This may take a few minutes.
+russian.EvergreenConfirm=Microsoft Edge WebView2 Runtime отсутствует. Мастер запустит подписанный установщик Microsoft и загрузит Runtime через интернет. Сохраните работу в других программах: установка может потребовать или начать перезагрузку Windows. Продолжить?
+english.EvergreenConfirm=Microsoft Edge WebView2 Runtime is missing. Setup will run Microsoft's signed installer and download the Runtime online. Save work in other apps: installation may require or initiate a Windows restart. Continue?
+russian.EvergreenConsentRequired=Установка Microsoft Edge WebView2 Runtime не подтверждена. Запустите мастер без тихого режима и подтвердите установку либо установите официальный Runtime вручную и повторите запуск. Файлы ValMAX и данные аккаунтов не изменены.
+english.EvergreenConsentRequired=Microsoft Edge WebView2 Runtime installation was not confirmed. Run Setup interactively and approve it, or install Microsoft's official Runtime manually and retry. ValMAX files and account data were not changed.
+russian.EvergreenInstallFailed=Не удалось установить Microsoft Edge WebView2 Runtime. Проверьте подключение к интернету и повторите попытку. Без сети установите официальный автономный Evergreen Runtime с https://developer.microsoft.com/microsoft-edge/webview2/ и снова запустите мастер. ValMAX и аккаунты не изменены.
+english.EvergreenInstallFailed=Microsoft Edge WebView2 Runtime could not be installed. Check your internet connection and retry. Offline, install Microsoft's official Evergreen Standalone Runtime from https://developer.microsoft.com/microsoft-edge/webview2/ and run Setup again. ValMAX and account data were not changed.
+russian.EvergreenRestart=Установка Microsoft Edge WebView2 Runtime требует перезагрузки Windows. После перезагрузки снова запустите мастер ValMAX. ValMAX и аккаунты не изменены.
+english.EvergreenRestart=Microsoft Edge WebView2 Runtime requires a Windows restart. Restart, then run ValMAX Setup again. ValMAX and account data were not changed.
 
 #if ValMAXInstallerFixture != "1"
 [Tasks]
@@ -277,6 +316,9 @@ Name: "desktopicon"; Description: "{cm:DesktopIcon}"; Flags: unchecked
 #endif
 
 [Files]
+#ifdef NativeUseEvergreenPrerequisite
+Source: "{#WebView2Bootstrapper}"; DestName: "MicrosoftEdgeWebview2Setup.exe"; Flags: dontcopy noencryption
+#endif
 Source: "{#Payload}\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs
 
 [UninstallDelete]
@@ -304,6 +346,24 @@ begin
 end;
 
 function EvergreenWebView2Present: Boolean;
+#if ValMAXInstallerFixture == "1"
+  #ifdef FixtureEvergreenPrerequisite
+begin
+  { The installer fixture never queries or modifies the real WebView2 registry. }
+  Result := FileExists('{#FixtureRoot}\webview2-present.marker');
+end;
+  #else
+var
+  ClientKey, Version: String;
+begin
+  ClientKey := 'Software\Microsoft\EdgeUpdate\Clients\{F3017226-FE2A-4295-8BDF-00C3A9A7E4C5}';
+  Result := (RegQueryStringValue(HKLM32, ClientKey, 'pv', Version) and
+             WebView2VersionPresent(Version)) or
+            (RegQueryStringValue(HKCU, ClientKey, 'pv', Version) and
+             WebView2VersionPresent(Version));
+end;
+  #endif
+#else
 var
   ClientKey, Version: String;
 begin
@@ -314,6 +374,102 @@ begin
             (RegQueryStringValue(HKCU, ClientKey, 'pv', Version) and
              WebView2VersionPresent(Version));
 end;
+#endif
+
+#ifdef NativeUseEvergreenPrerequisite
+function ConfirmEvergreenWebView2: Boolean;
+#if ValMAXInstallerFixture == "1"
+  #ifdef FixtureConsentLaunchesClient
+var
+  FixtureResult: Integer;
+  #endif
+#endif
+begin
+  Result := True;
+  if EvergreenWebView2Present then Exit;
+#if ValMAXInstallerFixture == "1"
+  #ifdef FixtureConsentConfirmed
+  Log('fixture_evergreen_consent_simulated');
+    #ifdef FixtureConsentLaunchesClient
+  if not Exec(ExpandConstant('{app}\ValMAX.exe'), '/fixture-short', '',
+              SW_HIDE, ewNoWait, FixtureResult) then
+    RaiseException('Could not start owned process during fixture consent');
+  Sleep(1000);
+  Log('fixture_evergreen_consent_started_client');
+    #endif
+  #else
+  if WizardSilent then
+  begin
+    Result := False;
+    Log('fixture_evergreen_silent_refused');
+    Exit;
+  end;
+  if MsgBox(CustomMessage('EvergreenConfirm'), mbConfirmation,
+            MB_YESNO or MB_DEFBUTTON2) <> IDYES then Result := False;
+  #endif
+#else
+  if WizardSilent then
+  begin
+    Result := False;
+    Exit;
+  end;
+  if MsgBox(CustomMessage('EvergreenConfirm'), mbConfirmation,
+            MB_YESNO or MB_DEFBUTTON2) <> IDYES then Result := False;
+#endif
+end;
+
+function EnsureEvergreenWebView2(var RestartRequired: Boolean): Boolean;
+var
+  ExitCode, Attempt: Integer;
+  BootstrapperPath: String;
+begin
+  Result := EvergreenWebView2Present;
+  RestartRequired := False;
+  if Result then Exit;
+  Log(CustomMessage('EvergreenInstalling'));
+  if not WizardSilent then
+  begin
+    WizardForm.PreparingLabel.Caption := CustomMessage('EvergreenInstalling');
+    { Inno hides this label before calling PrepareToInstall. Show progress while
+      the Microsoft bootstrapper runs, then Inno advances to Installing. }
+    WizardForm.PreparingLabel.Visible := True;
+    WizardForm.PreparingLabel.Update;
+  end;
+  BootstrapperPath := ExpandConstant('{tmp}\MicrosoftEdgeWebview2Setup.exe');
+  try
+    ExtractTemporaryFile('MicrosoftEdgeWebview2Setup.exe');
+    if CompareText(GetSHA256OfFile(BootstrapperPath),
+                   '{#NativeWebView2BootstrapperSha256}') <> 0 then
+      RaiseException('Pinned WebView2 bootstrapper changed after extraction');
+  except
+    Log('Could not verify extracted WebView2 bootstrapper: ' + GetExceptionMessage);
+    Exit;
+  end;
+  if not Exec(BootstrapperPath,
+              '/silent /install', '', SW_HIDE, ewWaitUntilTerminated, ExitCode) then
+  begin
+    Log('Could not launch WebView2 bootstrapper: ' + IntToStr(ExitCode));
+    Exit;
+  end;
+  Log('WebView2 bootstrapper exit code: ' + IntToStr(ExitCode));
+  if (ExitCode = 3010) or (ExitCode = 1641) then
+  begin
+    RestartRequired := True;
+    Exit;
+  end;
+  if ExitCode <> 0 then Exit;
+  for Attempt := 1 to 20 do
+  begin
+    if EvergreenWebView2Present then
+    begin
+      Result := True;
+      Exit;
+    end;
+    Sleep(500);
+  end;
+  Log('WebView2 bootstrapper returned success but Runtime registry pv is absent.');
+end;
+#endif
 
 function NormalizedPath(const Value: String): String;
 begin

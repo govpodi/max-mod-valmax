@@ -1,0 +1,9 @@
+{
+  "schema": 1,
+  "name": "MicrosoftEdgeWebview2Setup.exe",
+  "source": "https://go.microsoft.com/fwlink/p/?LinkId=2124703",
+  "size": 1888472,
+  "sha256": "ca4c9016c70e2184c5e231662e0e98abf4826647180ef3faab32fcb1ca2ec15e",
+  "signerSubject": "CN=Microsoft Corporation, O=Microsoft Corporation, L=Redmond, S=Washington, C=US",
+  "signerThumbprint": "4028CAD637509D4744B17EC5B42AED8D7A31E6AF"
+}

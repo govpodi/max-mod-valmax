@@ -8,6 +8,7 @@ import subprocess
 import sys
 import tempfile
 import unittest
+from unittest import mock
 import zipfile
 
 ROOT = Path(__file__).resolve().parents[3]
@@ -16,6 +17,8 @@ sys.path.insert(0, str(ROOT / "native/launcher"))
 import package_native_client as package
 from qt_source_asset import verify_external_qt_source_asset
 from launcher_generate_pins import REQUIRED, EVERGREEN_REQUIRED, generate, inventory
+from webview2_bootstrapper import load_pin as webview2_bootstrapper_pin
+from webview2_bootstrapper import verify as verify_webview2_bootstrapper
 
 
 def digest(data: bytes) -> str:
@@ -35,6 +38,63 @@ class SlimPackaging(unittest.TestCase):
         plan[destination.casefold()] = {"path": destination, "source": str(source),
                                         "sha256": digest(content)}
         return source
+
+    def test_pinned_microsoft_bootstrapper_and_changed_bytes(self):
+        pin = webview2_bootstrapper_pin()
+        asset = Path("E:/ValMAXBuild/deps/webview2-evergreen-bootstrapper") / pin["name"]
+        if not asset.is_file():
+            self.skipTest("pinned Microsoft bootstrapper is not staged on this build host")
+        self.assertEqual(verify_webview2_bootstrapper(asset), pin)
+        changed = self.root / pin["name"]
+        changed.write_bytes(asset.read_bytes() + b"synthetic drift")
+        with mock.patch("webview2_bootstrapper.authenticode") as signature:
+            with self.assertRaisesRegex(ValueError, "differs from release pin"):
+                verify_webview2_bootstrapper(changed)
+            signature.assert_not_called()
+
+    def test_evergreen_packager_requires_and_records_exact_bootstrapper(self):
+        pin = webview2_bootstrapper_pin()
+        asset = Path("E:/ValMAXBuild/deps/webview2-evergreen-bootstrapper") / pin["name"]
+        runtime = self.root / "runtime"
+        client = runtime / "mod/max.exe"
+        client.parent.mkdir(parents=True)
+        client.write_bytes(b"inert native runtime fixture")
+        launcher = self.root / "ValMAX.exe"
+        launcher.write_bytes(b"inert launcher fixture")
+        rows = [{"path": "mod/max.exe", "size": client.stat().st_size,
+                 "sha256": digest(client.read_bytes())}]
+        inputs = {"runtime": runtime, "qml": self.root / "qml", "rows": rows,
+                  "launcher": launcher, "launcherHash": digest(launcher.read_bytes()),
+                  "qmlResult": {"proofSha256": "c" * 64}, "closure": [],
+                  "hookTargetIdentity": {"assemblyReceiptSha256": "d" * 64},
+                  "webview2Mode": "evergreen", "qtSourceMode": "inline"}
+        base = ["package_native_client.py", "--version", "8.9.0",
+                "--distribution", "developer-staging", "--runtime", str(runtime),
+                "--qml-build", str(self.root / "qml"), "--launcher-proof", str(self.root / "proof.json")]
+        with mock.patch.object(sys, "argv", base + ["--output", str(self.root / "missing")]), \
+             mock.patch.object(package, "packaging_inputs", return_value=inputs), \
+             mock.patch.object(package.shutil, "copyfile") as copy:
+            with self.assertRaisesRegex(ValueError, "requires --evergreen-bootstrapper"):
+                package.main()
+            copy.assert_not_called()
+        if not asset.is_file():
+            self.skipTest("pinned Microsoft bootstrapper is not staged on this build host")
+        output = self.root / "packaged"
+        with mock.patch.object(sys, "argv", base + ["--output", str(output),
+                                                     "--evergreen-bootstrapper", str(asset)]), \
+             mock.patch.object(package, "packaging_inputs", return_value=inputs), \
+             mock.patch.object(package.pins, "inventory", return_value=rows):
+            package.main()
+        copied = output / "installer-prerequisites" / pin["name"]
+        manifest = json.loads((output / "payload/native-package.json").read_text("utf8"))
+        receipt = json.loads((output / "build-receipt.json").read_text("utf8"))
+        self.assertEqual(manifest["webview2Bootstrapper"], pin)
+        self.assertEqual(receipt["webview2Bootstrapper"]["sha256"], pin["sha256"])
+        self.assertEqual(receipt["webview2Bootstrapper"]["size"], pin["size"])
+        self.assertEqual(copied.stat().st_size, pin["size"])
+        self.assertEqual(digest(copied.read_bytes()), pin["sha256"])
+        self.assertIn('#define NativeWebView2BootstrapperSha256 "' + pin["sha256"] + '"',
+                      (output / "payload/native-release-state.iss").read_text("utf8"))
 
     def source_fixture(self):
         archive_name = "qtbase-everywhere-src-6.11.2.tar.xz"
@@ -158,13 +218,17 @@ class SlimPackaging(unittest.TestCase):
         notice.write_bytes(b"synthetic source availability\n")
         asset = self.root / "qt-sources.zip"
         asset.write_bytes(b"synthetic source asset")
+        bootstrapper = self.root / "MicrosoftEdgeWebview2Setup.exe"
+        bootstrapper.write_bytes(b"inert synthetic WebView2 installer for compile only")
         asset_hash, notice_hash = digest(asset.read_bytes()), digest(notice.read_bytes())
         marker = payload / "native-release-state.iss"
         output = self.root / "compile-only"
         output.mkdir()
 
         def compile_case(*, browser="evergreen", asset_pin=None, notice_pin=None,
-                         include_asset=True, include_notice=True):
+                         bootstrapper_pin=None, include_asset=True, include_notice=True,
+                         include_bootstrapper=True, bootstrapper_file=None):
+            selected_bootstrapper = bootstrapper_file or bootstrapper
             marker.write_text(
                 '#define NativeDistributionMode "local-preview"\n'
                 '#define NativeWebView2Mode "' + browser + '"\n'
@@ -175,7 +239,9 @@ class SlimPackaging(unittest.TestCase):
                 '#define NativePreviewInfoSha256 "' + digest(preview.read_bytes()) + '"\n'
                 '#define NativeQtSourceMode "separate-asset"\n'
                 '#define NativeQtSourceAssetSha256 "' + (asset_pin or asset_hash) + '"\n'
-                '#define NativeQtSourceInfoSha256 "' + (notice_pin or notice_hash) + '"\n',
+                '#define NativeQtSourceInfoSha256 "' + (notice_pin or notice_hash) + '"\n'
+                '#define NativeWebView2BootstrapperSha256 "' +
+                (bootstrapper_pin or digest(selected_bootstrapper.read_bytes())) + '"\n',
                 encoding="utf8")
             if not include_notice:
                 notice.unlink()
@@ -183,6 +249,8 @@ class SlimPackaging(unittest.TestCase):
                        "/DOutput=" + str(output), "/DProductVersion=8.9.0-native.preview.99"]
             if include_asset:
                 command.append("/DQtSourceAsset=" + str(asset))
+            if include_bootstrapper:
+                command.append("/DWebView2Bootstrapper=" + str(selected_bootstrapper))
             command.append(str(ROOT / "native/installer/valmax-native.iss"))
             result = subprocess.run(command, capture_output=True, timeout=60)
             if not include_notice:
@@ -191,11 +259,17 @@ class SlimPackaging(unittest.TestCase):
 
         code, output_text = compile_case()
         self.assertEqual(code, 0, output_text)
+        microsoft = Path("E:/ValMAXBuild/deps/webview2-evergreen-bootstrapper") / webview2_bootstrapper_pin()["name"]
+        if microsoft.is_file():
+            code, output_text = compile_case(bootstrapper_file=microsoft)
+            self.assertEqual(code, 0, output_text)
         for options, expected in (
             ({"include_asset": False}, "ZIP path must be supplied"),
             ({"asset_pin": "0" * 64}, "ZIP differs from the package receipt"),
             ({"include_notice": False}, "availability notice is missing"),
             ({"notice_pin": "0" * 64}, "availability notice differs from the package receipt"),
+            ({"include_bootstrapper": False}, "bootstrapper path must be supplied"),
+            ({"bootstrapper_pin": "0" * 64}, "bootstrapper differs from the package receipt"),
             ({"browser": "fixed"}, "requires Evergreen WebView2 mode"),
         ):
             code, output_text = compile_case(**options)
