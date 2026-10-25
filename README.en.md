@@ -43,8 +43,12 @@ In Russian, **ВАЛ** stands for «Возможности · Автоматиз
 The `8.9.0` source in `main` is a release candidate. Until `v8.9.0` is published separately, install the latest available beta release.
 
 1. In [GitHub Releases](https://github.com/govpodi/max-mod-valmax/releases), open a published release and download its installer ending in `-Setup.exe` and `SHA256SUMS.txt`. Compare the installer's SHA-256 with the checksum.
-2. Fully exit ValMAX from its tray menu and preserve a rollback path. The business tab and mini apps require [Microsoft Edge WebView2 Runtime](https://developer.microsoft.com/en-us/microsoft-edge/webview2/); setup checks for it before upgrading.
+2. Fully exit ValMAX from its tray menu and preserve a rollback path.
 3. Run the installer and open ValMAX through its shortcut. No separate Python installation is needed. The first launch may take up to a minute.
+
+**Why package sizes differ.** The published Beta 2 (`preview.16`) includes its own fixed-version WebView2 copy, so it needs no separate Runtime installation.
+
+The prepared compact `8.9.0` installer uses an existing [Microsoft Edge WebView2 Evergreen Runtime](https://developer.microsoft.com/en-us/microsoft-edge/webview2/) and checks for it before upgrading. The compact installer has not been published yet.
 
 <details>
 <summary>About your data and BETA features</summary>
