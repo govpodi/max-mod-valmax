@@ -181,6 +181,6 @@ uint32_t verify_service_processes(const std::filesystem::path &root, std::span<c
             return VALMAX_PRIVACY_IO_ERROR;
     } while (Process32NextW(snapshot.value, &entry));
     if (GetLastError() != ERROR_NO_MORE_FILES) return VALMAX_PRIVACY_IO_ERROR;
-    return owned ? VALMAX_PRIVACY_OK : VALMAX_PRIVACY_MODULE_NOT_LOADED;
+    return owned ? VALMAX_PRIVACY_OK : VALMAX_PRIVACY_SERVICE_NOT_RUNNING;
 }
 }

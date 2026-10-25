@@ -17,6 +17,7 @@ QString code(uint32_t value) {
     case VALMAX_PRIVACY_MEMORY_MISMATCH: return QStringLiteral("memory_mismatch");
     case VALMAX_PRIVACY_IO_ERROR: return QStringLiteral("io_error");
     case VALMAX_PRIVACY_NOT_VERIFIED: return QStringLiteral("not_verified");
+    case VALMAX_PRIVACY_SERVICE_NOT_RUNNING: return QStringLiteral("service_not_running");
     default: return QStringLiteral("invalid_status");
     }
 }
@@ -54,6 +55,7 @@ QVariantMap PrivacyHost::unavailable(const QString &error)
     return {{QStringLiteral("schema"), 1}, {QStringLiteral("state"), QStringLiteral("unavailable")},
         {QStringLiteral("error"), error}, {QStringLiteral("buildVerified"), false},
         {QStringLiteral("currentProcessVerified"), false}, {QStringLiteral("serviceProcessVerified"), false},
+        {QStringLiteral("serviceError"), QStringLiteral("not_verified")},
         {QStringLiteral("groups"), groups(false)}};
 }
 #if VALMAX_HAS_PRIVACY
@@ -84,7 +86,8 @@ QVariantMap PrivacyHost::refresh()
         verified_ = false; failure_ = status.error ? code(status.error) : QStringLiteral("invalid_status");
         return unavailable(failure_);
     }
-    const bool serviceVerified = valmax_privacy_verify_service() == VALMAX_PRIVACY_OK;
+    const uint32_t serviceResult = valmax_privacy_verify_service();
+    const bool serviceVerified = serviceResult == VALMAX_PRIVACY_OK;
     // The remote snapshot is separate from the main-process attestation. The
     // main verifier may have revoked itself while the service was inspected.
     status = {}; status.size = sizeof(status); status.version = 1;
@@ -95,6 +98,7 @@ QVariantMap PrivacyHost::refresh()
     return {{QStringLiteral("schema"), 1}, {QStringLiteral("state"), QStringLiteral("verified")},
         {QStringLiteral("error"), QString()}, {QStringLiteral("buildVerified"), true},
         {QStringLiteral("currentProcessVerified"), true}, {QStringLiteral("serviceProcessVerified"), serviceVerified},
+        {QStringLiteral("serviceError"), serviceVerified ? QString() : code(serviceResult)},
         {QStringLiteral("groups"), groups(true, serviceVerified)}};
 }
 #endif

@@ -10,7 +10,7 @@
 
 namespace {
 uint32_t verifyResult = 0;
-uint32_t serviceResult = VALMAX_PRIVACY_MODULE_NOT_LOADED;
+uint32_t serviceResult = VALMAX_PRIVACY_SERVICE_NOT_RUNNING;
 ValmaxPrivacyStatus native{};
 unsigned verifies = 0, statuses = 0, shutdowns = 0, serviceChecks = 0, checks = 0;
 bool validPath = false;
@@ -32,7 +32,8 @@ extern "C" uint32_t valmax_privacy_verify_service() { ++serviceChecks; return se
 extern "C" uint32_t valmax_privacy_shutdown() { ++shutdowns; return 0; }
 int main(int argc, char **argv) {
     QCoreApplication app(argc, argv); good();
-    CHECK(unavailable(valmax::PrivacyHost::unavailable()));
+    const auto initial = valmax::PrivacyHost::unavailable();
+    CHECK(unavailable(initial) && initial.value(QStringLiteral("serviceError")).toString() == QStringLiteral("not_verified"));
     for (uint32_t error : {VALMAX_PRIVACY_FILE_MISMATCH, VALMAX_PRIVACY_MEMORY_MISMATCH, VALMAX_PRIVACY_IO_ERROR}) {
         verifyResult = error; const auto previous = verifies;
         { valmax::PrivacyHost host; CHECK(unavailable(host.refresh())); CHECK(unavailable(host.refresh())); }
@@ -72,6 +73,7 @@ int main(int argc, char **argv) {
         valmax::PrivacyHost host; const auto report = host.refresh(); CHECK(verified(report));
         CHECK(report.value(QStringLiteral("buildVerified")).toBool() && report.value(QStringLiteral("currentProcessVerified")).toBool());
         CHECK(!report.value(QStringLiteral("serviceProcessVerified")).toBool());
+        CHECK(report.value(QStringLiteral("serviceError")).toString() == QStringLiteral("service_not_running"));
         const auto rows = report.value(QStringLiteral("groups")).toList(); CHECK(rows.size() == 6);
         unsigned loaded = 0, packaged = 0;
         for (const auto &row : rows) {
@@ -83,13 +85,28 @@ int main(int argc, char **argv) {
         serviceResult = VALMAX_PRIVACY_OK;
         const auto service = host.refresh(); CHECK(verified(service));
         CHECK(service.value(QStringLiteral("serviceProcessVerified")).toBool());
+        CHECK(service.value(QStringLiteral("serviceError")).toString().isEmpty());
         unsigned serviceLoaded = 0;
         for (const auto &row : service.value(QStringLiteral("groups")).toList())
             serviceLoaded += row.toMap().value(QStringLiteral("state")).toString() == QStringLiteral("verified_loaded");
         CHECK(serviceLoaded == 6);
         serviceResult = VALMAX_PRIVACY_MODULE_NOT_LOADED;
-        CHECK(!host.refresh().value(QStringLiteral("serviceProcessVerified")).toBool());
-        CHECK(!report.contains(QStringLiteral("observation")) && !report.contains(QStringLiteral("manifest_sha256")) && !report.contains(QStringLiteral("path")));
+        const auto missingModule = host.refresh();
+        CHECK(verified(missingModule) && !missingModule.value(QStringLiteral("serviceProcessVerified")).toBool()
+              && missingModule.value(QStringLiteral("serviceError")).toString() == QStringLiteral("module_not_loaded"));
+        serviceResult = VALMAX_PRIVACY_MEMORY_MISMATCH;
+        const auto mismatch = host.refresh();
+        CHECK(verified(mismatch) && !mismatch.value(QStringLiteral("serviceProcessVerified")).toBool()
+              && mismatch.value(QStringLiteral("serviceError")).toString() == QStringLiteral("memory_mismatch"));
+        serviceResult = VALMAX_PRIVACY_IO_ERROR;
+        const auto inaccessible = host.refresh();
+        CHECK(verified(inaccessible) && !inaccessible.value(QStringLiteral("serviceProcessVerified")).toBool()
+              && inaccessible.value(QStringLiteral("serviceError")).toString() == QStringLiteral("io_error"));
+        CHECK(report.size() == 8 && mismatch.size() == 8
+              && !mismatch.contains(QStringLiteral("observation"))
+              && !mismatch.contains(QStringLiteral("manifest_sha256"))
+              && !mismatch.contains(QStringLiteral("path"))
+              && !mismatch.contains(QStringLiteral("pid")));
         const auto calls = verifies; CHECK(verified(host.refresh())); CHECK(verifies == calls);
         const auto stopped = shutdowns;
         { valmax::PrivacyHost second; CHECK(unavailable(second.refresh())); }
@@ -99,6 +116,7 @@ int main(int argc, char **argv) {
         CHECK(unavailable(host.refresh()) && verifies == calls); // No endless verify after hard failure.
     }
     good();
+    serviceResult = VALMAX_PRIVACY_SERVICE_NOT_RUNNING;
     { valmax::PrivacyHost restarted; CHECK(verified(restarted.refresh())); }
     QTextStream(stdout) << "{\"schema\":1,\"ok\":true,\"checks\":" << checks << ",\"syntheticVerifierABI\":true}\n";
     return 0;

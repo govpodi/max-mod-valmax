@@ -127,7 +127,7 @@ int main(int argc,char **argv){
     CHECK(CreateProcessW(childImage.c_str(),command.data(),nullptr,nullptr,FALSE,CREATE_NO_WINDOW,
                          nullptr,fixture.root.c_str(),&startup,&childProcess)!=0);
     CloseHandle(childProcess.hThread);
-    uint32_t childResult=VALMAX_PRIVACY_MODULE_NOT_LOADED;
+    uint32_t childResult=VALMAX_PRIVACY_SERVICE_NOT_RUNNING;
     for(unsigned attempt=0;attempt<100;++attempt){
         childResult=verify_service_processes(fixture.root,std::span(&remotePin,1));
         if(childResult==VALMAX_PRIVACY_OK)break;
@@ -136,7 +136,7 @@ int main(int argc,char **argv){
     CHECK(childResult==VALMAX_PRIVACY_OK);
     // The production path must require this direct child and the exact image.
     CHECK(verify_service_processes(fixture.root/L"unrelated",std::span(&remotePin,1))
-          ==VALMAX_PRIVACY_MODULE_NOT_LOADED);
+          ==VALMAX_PRIVACY_SERVICE_NOT_RUNNING);
     FilePin absentModule{L"max-service/absent.dll","",0,remotePin.image_size,
                          VALMAX_PRIVACY_SERVICE,std::span(&remotePatch,1)};
     const std::array requiredModules{remotePin,absentModule};
@@ -146,6 +146,6 @@ int main(int argc,char **argv){
     expected[0]^=1;
     CHECK(WaitForSingleObject(childProcess.hProcess,5000)==WAIT_OBJECT_0);
     CloseHandle(childProcess.hProcess);
-    CHECK(verify_service_processes(fixture.root,std::span(&remotePin,1))!=VALMAX_PRIVACY_OK);
+    CHECK(verify_service_processes(fixture.root,std::span(&remotePin,1))==VALMAX_PRIVACY_SERVICE_NOT_RUNNING);
     std::cout<<"{\"schema\":1,\"ok\":true,\"checks\":"<<checks<<",\"callbacks\":0,\"codeWrites\":0,\"scope\":\"synthetic privacy verification; owned buffers and child process only\"}\n";
 }

@@ -29,7 +29,7 @@ extern "C" uint32_t valmax_privacy_status(ValmaxPrivacyStatus *out) {
     else out->error=VALMAX_PRIVACY_NOT_VERIFIED;
     ++calls;return 0;
 }
-extern "C" uint32_t valmax_privacy_verify_service() {return VALMAX_PRIVACY_MODULE_NOT_LOADED;}
+extern "C" uint32_t valmax_privacy_verify_service() {return VALMAX_PRIVACY_SERVICE_NOT_RUNNING;}
 extern "C" uint32_t valmax_privacy_shutdown() {return 0;}
 int main(int argc,char **argv) {
     QCoreApplication app(argc,argv);valmax::NativeBridge bridge;
@@ -41,6 +41,7 @@ int main(int argc,char **argv) {
     CHECK(calls==2); // Cannot start a newer read before applying the queued one.
     QCoreApplication::processEvents();
     CHECK(bridge.privacyReport().value(QStringLiteral("state")).toString()==QStringLiteral("verified"));
+    CHECK(bridge.privacyReport().value(QStringLiteral("serviceError")).toString()==QStringLiteral("service_not_running"));
     valmax::NativeBridgePrivacyTest::refresh(bridge);CHECK(waitFor(3));QThread::msleep(30);
     QCoreApplication::processEvents();
     CHECK(bridge.privacyReport().value(QStringLiteral("state")).toString()==QStringLiteral("unavailable"));

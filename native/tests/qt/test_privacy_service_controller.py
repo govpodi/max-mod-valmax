@@ -22,8 +22,9 @@ def controller_source() -> str:
     for line in body.splitlines():
         if "property var selfComponent:" in line or line.strip().startswith(("title:", "onBackClicked:")):
             continue
-        if "readonly property color " in line:
-            line = line.split(":", 1)[0] + ': "#aaaaaa"'
+        if "readonly property color " in line and "verificationColor" not in line:
+            color = "#00aa00" if "successColor" in line else "#ffaa00" if "warningColor" in line else "#aaaaaa"
+            line = line.split(":", 1)[0] + f': "{color}"'
         if "readonly property real " in line:
             line = line.split(":", 1)[0] + ": 8"
         lines.append(line)
@@ -49,11 +50,13 @@ import QtQuick
 Item {
     property string runtimeState: "unconfigured"
     property var privacyReport: ({schema: 1, state: "unavailable", buildVerified: false,
-        currentProcessVerified: false, serviceProcessVerified: false, error: "starting",
+        currentProcessVerified: false, serviceProcessVerified: false,
+        serviceError: "not_verified", error: "starting",
         groups: []})
     Timer { interval: 20; running: true; repeat: false; onTriggered: parent.privacyReport =
         {schema: 1, state: "unavailable", buildVerified: false,
-         currentProcessVerified: false, serviceProcessVerified: false, error: "io_error",
+         currentProcessVerified: false, serviceProcessVerified: false,
+         serviceError: "not_verified", error: "io_error",
          groups: ["tracer_main", "tracer_service", "ui_statistics", "mytracker", "log_masking", "error_logs"].map(
              function(id) { return {id: id, state: "unavailable"}; })} }
 }
@@ -69,7 +72,8 @@ Item {
         result = subprocess.run([str(args.qml), "-I", str(fixture), str(fixture / "test.qml")],
                                 cwd=fixture, env=env, capture_output=True, text=True, timeout=15)
         if result.returncode:
-            raise RuntimeError(f"synthetic privacy QML failed ({result.returncode}):\n{result.stderr[-3000:]}")
+            raise RuntimeError(f"synthetic privacy QML failed ({result.returncode}):\n"
+                               f"stdout: {result.stdout[-3000:]}\nstderr: {result.stderr[-3000:]}")
     print('{"schema":1,"syntheticPrivacyControllerPassed":true,"installedClientStarted":false}')
 
 
