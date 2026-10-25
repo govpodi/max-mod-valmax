@@ -1,0 +1,35 @@
+{
+  "producer": "Python modkit/session_archive.py; artificial records only",
+  "sourceSha256": "28817748e6dc74b7028003fc4a6d18e4b5bdafab3766ed56f8a8706b5163a46f",
+  "policy": {
+    "credential_names": [
+      "synthetic_auth_7@MXMOD",
+      "synthetic_Common@MXMOD"
+    ],
+    "credential_prefixes": [],
+    "allowed_file_paths": [
+      "auth_7",
+      "settings/synthetic.json"
+    ],
+    "credential_name_patterns": [],
+    "file_path_patterns": []
+  },
+  "payload": {
+    "schema": 1,
+    "sourceClient": "MAX Desktop",
+    "sourceVersion": "26.35.1",
+    "credentials": [
+      {
+        "name": "synthetic_auth_7@MXMOD",
+        "blob": "U1lOVEhFVElDLU5PVC1BLVJFQUwtU0VTU0lPTgD/"
+      }
+    ],
+    "files": [
+      {
+        "path": "auth_7",
+        "data": "U1lOVEhFVElDLUZJTEUtT05MWQ=="
+      }
+    ]
+  },
+  "archive": "TVhNT0RTQQEA2nsiY2lwaGVyIjoiQUVTLTI1Ni1HQ00iLCJrZGYiOnsibiI6MzI3NjgsIm5hbWUiOiJzY3J5cHQiLCJwIjoxLCJyIjo4LCJzYWx0IjoidWNnL1Jad0dZbGlWT0I3QW5QR1pkZz09In0sIm5vbmNlIjoiVnIrbWc3NFNEejNGcGNiUiIsInBsYWludGV4dEJ5dGVzIjoyMzMsInNjaGVtYSI6MSwic291cmNlQ2xpZW50IjoiTUFYIERlc2t0b3AiLCJzb3VyY2VWZXJzaW9uIjoiMjYuMzUuMSJ9zWuSHva6nLR5d1cBnMh98WST+Vry3CH3CfysOTAgteZQAUEI8N6H7mJxClJRs8+Kqukh8czKRlr4JATzWxuYqK0DlDAM+dt7lItx/LbL8WxkGwlrwsPYSQ3j3jl0UiFoyap9NjESYCSv4lzN3pl/RzkFSb7nYiKtxJbOU95dTRn5v+vrTwP5ucq+NP8Eqb66kmZELHV3seQH0pvnaVu1GEhsT1nkTNnXqcF9I0jhrRCDQeOYd49KZ+9s4oLC+Uqzkt3gQWfg/pOxSeY2kiOwBOwBuoraXy8W7qi+jxLD5SxgUgdU7O3Ieidcm/j775N28h1oz2nyP/7O"
+}

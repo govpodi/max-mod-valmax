@@ -5,7 +5,9 @@
 
 # ValMAX — a MAX mod for Windows
 
-An unofficial MAX modification for Windows x64, with added features for conversations and work. **ValMAX 8.8.4 Beta**, based on **MAX 26.35.1.80662**.
+An unofficial MAX modification for Windows x64, with added features for conversations and work. This checkout contains the **ValMAX 8.9.0-native.preview.14 BETA source candidate**, based on **MAX 26.35.1.80662**.
+
+**Status:** local test candidate. A public preview.14 installer and checksums have not been published. Complete server history, the full installed-client lifecycle and redistribution materials remain unverified (`releaseEligible=false`). [Preview.14 status and limitations](docs/NATIVE_PREVIEW_14.md).
 
 **VAL** — **V**ersatility · **A**utomation · **L**ocal control.
 
@@ -22,7 +24,7 @@ In Russian, **ВАЛ** stands for «Возможности · Автоматиз
 | Up to three accounts · BETA | Phone accounts with local labels, colors and separate notification schedules. |
 | Quick replies | Shared or account-specific templates triggered by `/command`, with multiple messages and attachments. Sending remains manual. |
 | Business dashboard | The official [business.max.ru](https://business.max.ru/) dashboard in a ValMAX tab. Sign in yourself; it does not use a phone account slot. |
-| Chat export · BETA | An HTML copy of a conversation with available attachments, readable without MAX or internet access. |
+| Chat export · BETA | An HTML copy of available history, photos, videos and voice messages. The UI shows progress and warns that the archive may be incomplete. |
 | MData · BETA | Compact transfer of an authorized session for one or all of your own accounts, including the required MAX keys from Windows. |
 
 ## Other features
@@ -38,11 +40,11 @@ In Russian, **ВАЛ** stands for «Возможности · Автоматиз
 
 ## Installation
 
-1. [Download the ValMAX 8.8.4 Beta installer for Windows x64](https://github.com/govpodi/max-mod-valmax/releases/download/v8.8.4/ValMAX-26.35.1-Setup.exe) from GitHub Releases. [SHA-256 checksums](https://github.com/govpodi/max-mod-valmax/releases/download/v8.8.4/SHA256SUMS.txt).
-2. If an earlier version is running, close it: tray icon → Exit.
-3. Run the installer, then open ValMAX through its shortcut. No separate Python installation is needed. The first launch may take up to a minute.
+The public preview.14 installer has not been released. Local testing requires an installer with a separate verified SHA-256 receipt. [Published releases](https://github.com/govpodi/max-mod-valmax/releases).
 
-[All releases](https://github.com/govpodi/max-mod-valmax/releases)
+1. Fully exit ValMAX from the tray menu.
+2. Compare the installer SHA-256 with its receipt and preserve a rollback path.
+3. Run the installer, then open ValMAX through its shortcut. No separate Python installation is needed. The first launch may take up to a minute.
 
 <details>
 <summary>About BETA and your data</summary>
@@ -54,7 +56,7 @@ In Russian, **ВАЛ** stands for «Возможности · Автоматиз
 - The PIN restricts access locally. It does not encrypt the message database or close previously opened media windows. HTML chat copies are not password-protected; unavailable attachments and incomplete history are noted in the export report.
 - Privacy settings do not provide full anonymity: the server receives your connection address and data required to operate your account. Ghost mode shows active status after the client confirms its filters.
 - The local ghost-mode unread counter adjustment is BETA and lasts for the current run. After a restart, message deletion or changed read marks from another device, the counter may show the server's remaining unread count again. Full resynchronization still needs validation.
-- ValMAX uses a profile separate from the official MAX client. Updating an older modified build preserves MXMOD data. MAX's built-in updater is disabled; new builds are available in GitHub Releases.
+- ValMAX uses a profile separate from the official MAX client. Updating an older modified build preserves MXMOD data. MAX's built-in updater is disabled; public builds and checksums appear in GitHub Releases after verification.
 - ValMAX is not affiliated with the MAX team. The application is not signed with a ValMAX developer certificate; Windows may display a warning when you run it.
 
 </details>

@@ -1,0 +1,8 @@
+if(NOT TARGET valmax_closed_clients)
+    include("${CMAKE_CURRENT_LIST_DIR}/closed_clients.cmake")
+endif()
+add_library(valmax_transfer_host STATIC "${CMAKE_CURRENT_LIST_DIR}/host_callbacks.cpp" "${CMAKE_CURRENT_LIST_DIR}/host_callbacks.h")
+target_compile_features(valmax_transfer_host PUBLIC cxx_std_20)
+target_link_libraries(valmax_transfer_host PUBLIC valmax_closed_clients)
+target_include_directories(valmax_transfer_host PUBLIC "${CMAKE_CURRENT_LIST_DIR}")
+target_compile_options(valmax_transfer_host PRIVATE /W4 /WX /permissive- /utf-8)

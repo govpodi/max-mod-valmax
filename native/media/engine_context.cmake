@@ -1,0 +1,8 @@
+add_library(valmax_media_engine STATIC engine_context.cpp engine_context.h)
+set_target_properties(valmax_media_engine PROPERTIES AUTOMOC ON)
+target_include_directories(valmax_media_engine PUBLIC "${CMAKE_CURRENT_LIST_DIR}")
+target_link_libraries(valmax_media_engine PUBLIC valmax_media_preview)
+target_compile_definitions(valmax_media_engine PRIVATE QT_NO_CAST_FROM_ASCII QT_NO_CAST_TO_ASCII)
+if(MSVC)
+  target_compile_options(valmax_media_engine PRIVATE /W4 /WX /permissive- /utf-8)
+endif()

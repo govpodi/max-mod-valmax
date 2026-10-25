@@ -1,0 +1,8 @@
+find_package(Qt6 6.11.2 EXACT REQUIRED COMPONENTS Gui Quick Qml)
+add_library(valmax_media_preview STATIC preview_provider.cpp preview_provider.h)
+target_include_directories(valmax_media_preview PUBLIC "${CMAKE_CURRENT_LIST_DIR}")
+target_link_libraries(valmax_media_preview PUBLIC Qt6::Gui Qt6::Quick Qt6::Qml)
+target_compile_definitions(valmax_media_preview PRIVATE QT_NO_CAST_FROM_ASCII QT_NO_CAST_TO_ASCII)
+if(MSVC)
+  target_compile_options(valmax_media_preview PRIVATE /W4 /WX /permissive- /utf-8)
+endif()

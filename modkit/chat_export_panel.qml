@@ -17,6 +17,26 @@ import ru.oneme.components 1.0
         required property var nativeChatId
         required property var nativeChatProperties
         required property string chatTitle
+        property var selectedScope: null
+        property bool scopeArmed: false
+        property bool scopeInvalidated: false
+        property bool nativeHistoryPreviewAvailable: false
+        property bool nativeApi2ExportAvailable: false
+        property string exportMode: "client"
+        property int api2WindowsFetched: 0
+        property int api2MediaProcessed: 0
+        property int api2MediaTotal: 0
+        property string api2Stage: "history"
+        property bool api2StopPending: false
+        property bool api2Pacing: false
+        property double api2PauseUntil: 0
+        property int api2PauseRemainingMs: 0
+        property double exportStartedAt: 0
+        property int elapsedSeconds: 0
+        property bool previewRequested: false
+        property bool previewBusy: false
+        property var pendingPreviewRequest: null
+        property string previewStatusText: ""
         signal exportFinished()
         property bool closedByUser: false
         property bool cancelRequested: false
@@ -26,6 +46,7 @@ import ru.oneme.components 1.0
         property var accountDependency: null
         property var seedContext: null
         property var historyContext: null
+        property var api2HistoryContext: null
         property var activeBubble: null
         property var pendingRequest: null
         property var nativeDownloadRequest: null
@@ -64,9 +85,23 @@ import ru.oneme.components 1.0
         property bool forwardEnd: false
         property bool historicalEndProven: false
         property bool hasError: false
-        readonly property bool busy: ["seed", "history", "history-proof", "page", "media", "finishing", "rendering", "cancelling"].indexOf(phase) >= 0
+        readonly property bool busy: previewBusy || ["seed", "history", "history-proof", "page", "media", "finishing", "rendering", "api2-start", "api2-seed", "api2-next", "cancelling"].indexOf(phase) >= 0
+        readonly property string progressStageText: phase === "cancelling" ? "Остановка экспорта…"
+            : exportMode === "api2-text"
+                ? (phase === "api2-start" || phase === "api2-seed" ? "Шаг 1/3 · Подготовка"
+                    : api2Stage === "media" ? "Шаг 3/3 · Вложения и создание HTML"
+                    : "Шаг 2/3 · История и вложения")
+                : (phase === "seed" ? "Шаг 1/3 · Подготовка"
+                    : phase === "finishing" || phase === "rendering"
+                        ? "Шаг 3/3 · Создание HTML"
+                        : "Шаг 2/3 · История и файлы")
         readonly property string ownId: String(QmlUtils.contactIdString(commonDependency.selfInfo.id))
         readonly property string chatIdText: String(QmlUtils.chatIdString(nativeChatId))
+        onCommonDependencyChanged: if (scopeArmed) invalidateSelectedScope()
+        onNativeChatIdChanged: if (scopeArmed) invalidateSelectedScope()
+        onNativeChatPropertiesChanged: if (scopeArmed) invalidateSelectedScope()
+        onSelectedScopeChanged: if (scopeArmed) invalidateSelectedScope()
+        Component.onCompleted: scopeArmed = true
         readonly property var history: getContext(historyContext)
         readonly property var seedHistory: getContext(seedContext)
         readonly property bool moreBackward: history ? history.hasMoreBackward : false
@@ -81,29 +116,71 @@ import ru.oneme.components 1.0
         title: "Скачать чат"
         subtitle: chatTitle
         confirmText: busy ? "" : htmlFileURL ? "Открыть экспорт" : "Выбрать папку"
-        cancelText: busy ? "Остановить" : "Закрыть"
+        cancelText: api2StopPending ? "Закрыть" : busy ? "Остановить" : "Закрыть"
         confirmButtonEnabled: !busy
         closePolicy: busy ? Popup.NoAutoClose : Popup.CloseOnEscape | Popup.CloseOnPressOutside
         onConfirmClicked: {
             if (htmlFileURL) Qt.openUrlExternally(htmlFileURL);
-            else destinationDialog.open();
+            else if (validSelectedScope()) destinationDialog.open();
+            else invalidateSelectedScope();
         }
-        onCancelClicked: { if (busy) cancelExport(); else close(); }
-        onCloseClicked: { if (busy) cancelExport(); else close(); }
+        onCancelClicked: { if (api2StopPending) close(); else if (previewBusy) abortPreview(); else if (busy) cancelExport(); else close(); }
+        onCloseClicked: { if (api2StopPending) close(); else if (previewBusy) abortPreview(); else if (busy) cancelExport(); else close(); }
         onClosed: {
             closedByUser = true;
+            if (previewBusy) abortPreview();
             if (busy && !cancelRequested) cancelExport();
-            if (!activeNative && !busy) dispose();
+            if (api2StopPending || !activeNative && !busy) dispose();
         }
+        onOpened: if (selectedScope && !validSelectedScope()) invalidateSelectedScope()
         Component.onDestruction: {
-            requestWatchdog.stop(); mediaWatchdog.stop(); stepTimer.stop();
+            requestWatchdog.stop(); mediaWatchdog.stop(); stepTimer.stop(); api2PaceTimer.stop();
             if (pendingRequest) pendingRequest.abort();
+            if (pendingPreviewRequest) pendingPreviewRequest.abort();
             if (nativeDownloadRequest) nativeDownloadRequest.abort();
+            if (nativeApi2ExportAvailable && exportMode === "api2-text" && jobId && jobToken) {
+                const job = {jobId: jobId, jobToken: jobToken};
+                cancelApi2NativeJob(job);
+                releaseApi2NativeHistory(job);
+            }
+            api2HistoryContext = null; seedContext = null;
         }
 
         function getContext(wrapper) {
             try { return wrapper && !wrapper.isNull ? wrapper.get() : null; }
             catch (_) { return null; }
+        }
+        function validSelectedScope() {
+            if (scopeInvalidated || closedByUser || !selectedScope) return false;
+            try {
+                const scope = selectedScope;
+                const model = application.accountModel;
+                const properties = getContext(nativeChatProperties);
+                const owner = commonDependency;
+                const currentChatId = String(QmlUtils.chatIdString(nativeChatId));
+                const propertyChatId = String(QmlUtils.chatIdString(properties.chatId));
+                const propertyContactId = canonicalId(properties.dialogContactId, "contact");
+                if (!/^-?[0-9]{1,20}$/.test(scope.ownId) || !/^-?[0-9]{1,20}$/.test(scope.chatId)
+                        || !/^-?[0-9]{1,20}$/.test(scope.contactId)) return false;
+                return scope.owner === owner && scope.propertiesContext === nativeChatProperties
+                    && scope.accountKey !== undefined && scope.accountKey !== null
+                    && scope.accountKey === owner.selfInfo.accountId
+                    && scope.accountKey === model.currentAccountId
+                    && model.activeAccountDependency.commonDependency === owner
+                    && scope.ownId === canonicalId(owner.selfInfo.id, "contact")
+                    && scope.chatId === currentChatId && scope.chatId === propertyChatId
+                    && scope.chatId === String(QmlUtils.chatIdString(scope.nativeChatId))
+                    && scope.contactId === propertyContactId
+                    && scope.title === chatTitle && properties.isPreventCopyingEnabled === false;
+            } catch (_) { return false; }
+        }
+        function invalidateSelectedScope() {
+            if (scopeInvalidated) return;
+            scopeInvalidated = true;
+            if (previewBusy) abortPreview();
+            if (busy && !cancelRequested) cancelExport();
+            try { destinationDialog.close(); } catch (_) {}
+            close();
         }
         function canonicalId(value, kind) {
             try {
@@ -133,16 +210,201 @@ import ru.oneme.components 1.0
         function jobBody(extra) {
             return Object.assign({schema: 1, jobId: jobId, jobToken: jobToken}, extra || {});
         }
+        function validApi2Counts(value) {
+            if (!value || typeof value !== "object" || Array.isArray(value)
+                    || Object.keys(value).sort().join(",") !== "attachments,mediaBytes,messages,ready,unavailable") return false;
+            for (const key of ["messages", "attachments", "ready", "unavailable", "mediaBytes"])
+                if (!Number.isSafeInteger(value[key]) || value[key] < 0) return false;
+            return value.ready + value.unavailable <= value.attachments;
+        }
+        function validApi2Receipt(value) {
+            if (!value || value.schema !== 1 || value.jobId !== jobId || !validApi2Counts(value.counts)
+                    || value.downloadsPending !== false || !value.api2
+                    || Object.keys(value.api2).sort().join(",") !== "done,mediaProcessed,mediaTotal,phase,windowsFetched"
+                    || !Number.isSafeInteger(value.api2.windowsFetched)
+                    || value.api2.windowsFetched < api2WindowsFetched || value.api2.windowsFetched > 1000
+                    || !Number.isSafeInteger(value.api2.mediaProcessed)
+                    || !Number.isSafeInteger(value.api2.mediaTotal)
+                    || value.api2.mediaProcessed < api2MediaProcessed
+                    || value.api2.mediaTotal < api2MediaTotal || value.api2.mediaTotal > 1000000
+                    || value.api2.mediaProcessed > value.api2.mediaTotal
+                    || ["history", "media", "done"].indexOf(value.api2.phase) < 0
+                    || ["history", "media", "done"].indexOf(value.api2.phase)
+                        < ["history", "media", "done"].indexOf(api2Stage)
+                    || typeof value.api2.done !== "boolean"
+                    || value.api2.done !== (value.api2.phase === "done")
+                    || value.counts.ready + value.counts.unavailable
+                        + value.api2.mediaTotal - value.api2.mediaProcessed !== value.counts.attachments) return false;
+            const allowed = ["api2", "counts", "downloadsPending", "error", "htmlFileURL", "htmlPath", "jobId", "schema", "state"];
+            if (Object.keys(value).some(function(key) { return allowed.indexOf(key) < 0; })) return false;
+            if (value.state === "exporting") return !value.api2.done
+                && (value.api2.windowsFetched > api2WindowsFetched
+                    || value.api2.mediaProcessed > api2MediaProcessed || value.api2.phase !== api2Stage)
+                && value.htmlPath === undefined && value.htmlFileURL === undefined && value.error === undefined;
+            if (!value.api2.done || value.api2.mediaProcessed !== value.api2.mediaTotal) return false;
+            if (value.state === "partial") return typeof value.htmlPath === "string" && value.htmlPath.length > 0
+                && localFileURL(value.htmlFileURL) && value.error === undefined;
+            return (value.state === "failed" || value.state === "cancelled")
+                && value.htmlPath === undefined && value.htmlFileURL === undefined;
+        }
+        function cancelApi2NativeJob(job) { /* Native generator binds detached cancellation. */ }
+        function beginApi2NativeHistory(job) { return false; /* Native generator starts the selected-view lease. */ }
+        function bindApi2NativeHistory(view, job) { return false; /* Native generator binds the selected view. */ }
+        function releaseApi2NativeHistory(job) { /* Native generator releases the selected view. */ }
+        function stopApi2Export(text, failed) {
+            if (api2StopPending) return;
+            const job = jobId && jobToken ? {jobId: jobId, jobToken: jobToken} : null;
+            api2StopPending = true; cancelRequested = true;
+            requestWatchdog.stop(); stepTimer.stop(); renderPoll.stop(); historyProofTimer.stop(); api2PaceTimer.stop();
+            api2Pacing = false; api2PauseRemainingMs = 0;
+            const xhr = pendingRequest; pendingRequest = null;
+            if (xhr) xhr.abort();
+            if (job) { cancelApi2NativeJob(job); releaseApi2NativeHistory(job); }
+            api2HistoryContext = null; seedContext = null;
+            jobId = ""; jobToken = ""; htmlPath = ""; htmlFileURL = "";
+            phase = "cancelling"; hasError = failed === true; statusText = text;
+            if (closedByUser) dispose();
+        }
+        function applyApi2Receipt(value) {
+            if (!validApi2Receipt(value)) throw new Error("api2_receipt");
+            if (!validSelectedScope()) { invalidateSelectedScope(); return; }
+            api2WindowsFetched = value.api2.windowsFetched;
+            api2MediaProcessed = value.api2.mediaProcessed;
+            api2MediaTotal = value.api2.mediaTotal;
+            api2Stage = value.api2.phase;
+            messageCount = value.counts.messages; attachmentCount = value.counts.attachments;
+            mediaCount = value.counts.ready; omissionCount = value.counts.unavailable;
+            if (!value.api2.done) {
+                phase = "api2-next";
+                statusText = api2Stage === "media"
+                    ? "Вложения: обработано " + api2MediaProcessed + " из " + api2MediaTotal
+                        + ", скачано " + mediaCount + ", недоступно " + omissionCount + "."
+                    : "История: обработано окон " + api2WindowsFetched
+                        + ", сообщений " + messageCount + ". Вложения: обработано "
+                        + api2MediaProcessed + " из " + api2MediaTotal
+                        + ", скачано " + mediaCount + ", недоступно " + omissionCount
+                        + ". Полнота пока не подтверждена.";
+                queueApi2Window();
+                return;
+            }
+            api2PaceTimer.stop(); api2Pacing = false; api2PauseRemainingMs = 0;
+            phase = value.state; api2StopPending = false;
+            htmlPath = value.state === "partial" ? value.htmlPath : "";
+            htmlFileURL = value.state === "partial" ? value.htmlFileURL : "";
+            hasError = value.state === "failed";
+            statusText = value.state === "partial"
+                ? "Сохранена доступная часть чата. Файлов вложений: " + mediaCount
+                    + "; недоступно: " + omissionCount + ". Полнота истории не подтверждена."
+                : value.state === "cancelled" ? "Экспорт остановлен." : "Не удалось завершить экспорт.";
+            releaseApi2NativeHistory({jobId: jobId, jobToken: jobToken});
+            api2HistoryContext = null; seedContext = null;
+            jobId = ""; jobToken = "";
+            if (closedByUser) dispose();
+        }
+        function queueApi2Window() {
+            if (phase !== "api2-next" || cancelRequested || pendingRequest) return;
+            api2PauseUntil = Date.now() + 500;
+            api2PauseRemainingMs = 500;
+            api2Pacing = true;
+            api2PaceTimer.restart();
+        }
+        function nextApi2Window() {
+            if (phase !== "api2-next" || cancelRequested || pendingRequest || api2Pacing) return;
+            if (!validSelectedScope()) { invalidateSelectedScope(); return; }
+            if (!getContext(api2HistoryContext)) {
+                stopApi2Export("Привязка истории выбранного чата потеряна. Остановка запрошена; её завершение может произойти в фоне.", true);
+                return;
+            }
+            request("api2-next", jobBody(), function(value) {
+                if (phase === "api2-next" && !cancelRequested) applyApi2Receipt(value);
+            });
+        }
         function fail(reason, text) {
+            if (nativeApi2ExportAvailable && exportMode === "api2-text"
+                    && ["api2-start", "api2-seed", "api2-next"].indexOf(phase) >= 0) {
+                stopApi2Export(text + " Остановка запрошена; её завершение может произойти в фоне.", true);
+                return;
+            }
             hasError = true; statusText = text; failureText = text;
             if (phase === "cancelling" || cancelRequested) { phase = "failed"; releaseNative(); return; }
             if (jobId) cancelExport();
             else { phase = "failed"; releaseNative(); }
         }
+        function abortPreview() {
+            const xhr = pendingPreviewRequest;
+            pendingPreviewRequest = null;
+            previewWatchdog.stop();
+            previewBusy = false;
+            if (xhr) xhr.abort();
+            previewStatusText = "Показ результата отменён. Начатый запрос может завершиться в фоне.";
+        }
+        function validPreviewResult(value) {
+            if (!value || value.schema !== 1 || value.complete !== false
+                    || (value.pages !== 1 && value.pages !== 2)) return false;
+            const keys = ["schema", "pages", "firstCount", "secondCount", "boundaryOverlapCount",
+                "firstAdvanced", "secondAdvanced", "emptyFollowupWindow", "cursorFieldSeen",
+                "hasMoreFieldSeen", "totalFieldSeen", "complete"];
+            if (Object.keys(value).sort().join(",") !== keys.sort().join(",")) return false;
+            for (const key of ["firstCount", "secondCount", "boundaryOverlapCount"])
+                if (!Number.isSafeInteger(value[key]) || value[key] < 0 || value[key] > 3) return false;
+            return value.boundaryOverlapCount <= Math.min(value.firstCount, value.secondCount)
+                && typeof value.firstAdvanced === "boolean" && typeof value.secondAdvanced === "boolean"
+                && typeof value.emptyFollowupWindow === "boolean"
+                && typeof value.cursorFieldSeen === "boolean" && typeof value.hasMoreFieldSeen === "boolean"
+                && typeof value.totalFieldSeen === "boolean";
+        }
+        function previewFailureText(responseText) {
+            const fallback = "Не удалось проверить историю этого чата.";
+            try {
+                const failure = JSON.parse(responseText);
+                if (!failure || failure.schema !== 1 || typeof failure.error !== "string") return fallback;
+                const code = failure.error;
+                const nativeCode = /^api2_(?:connect_(?:trust|tls|timeout|cancelled|io)|init_(?:rejected|limit|protocol|timeout|cancelled|io)|credential_(?:invalid|unavailable)|login_(?:request_(?:token|protocol)|frame_(?:rejected|limit|protocol|timeout|cancelled|io)|decompress_(?:limit|protocol)|preflight_(?:limit|protocol)|msgpack_protocol|trailing_protocol|profile_missing|contact_missing|id_invalid|bind_(?:account|protocol))|history_(?:rejected|scope|clock|limit|protocol|timeout|cancelled|io))$/.test(code);
+                if (!nativeCode && ["invalid_request", "busy", "unavailable", "internal_error"].indexOf(code) < 0) return fallback;
+                const stage = nativeCode ? code.split("_")[1] : "bridge";
+                const names = {connect: "соединение", init: "инициализация", credential: "доступ к аккаунту",
+                    login: "вход", history: "чтение истории", bridge: "вызов модуля"};
+                return fallback + " Этап: " + names[stage] + "; код: " + code + ".";
+            } catch (_) { return fallback; }
+        }
+        function previewHistory() {
+            if (!nativeHistoryPreviewAvailable || previewRequested || busy || pendingRequest) return;
+            if (!validSelectedScope()) { invalidateSelectedScope(); return; }
+            const scope = selectedScope;
+            previewRequested = true;
+            previewBusy = true;
+            previewStatusText = "Проверка чтения истории…";
+            const xhr = new XMLHttpRequest(); pendingPreviewRequest = xhr;
+            previewWatchdog.restart();
+            xhr.onreadystatechange = function() {
+                if (xhr.readyState !== 4 || pendingPreviewRequest !== xhr) return;
+                pendingPreviewRequest = null; previewWatchdog.stop(); previewBusy = false;
+                if (!validSelectedScope()) { invalidateSelectedScope(); return; }
+                if (xhr.status !== 200) { previewStatusText = previewFailureText(xhr.responseText); return; }
+                try {
+                    const value = JSON.parse(xhr.responseText);
+                    if (!validPreviewResult(value)) throw new Error("preview_response");
+                    previewStatusText = "Проверены страницы: " + value.pages + "; сообщений в них: "
+                        + value.firstCount + " + " + value.secondCount + "; повторов на границе: "
+                        + value.boundaryOverlapCount + ". Полнота истории ещё не подтверждена.";
+                } catch (_) { previewStatusText = "Ответ проверки истории не прошёл проверку."; }
+            };
+            try {
+                xhr.open("POST", "api2.history.preview");
+                if (!validSelectedScope()) { abortPreview(); invalidateSelectedScope(); return; }
+                xhr.send(JSON.stringify({schema: 1, ownId: scope.ownId, chatId: scope.chatId}));
+            } catch (_) {
+                try { xhr.abort(); } catch (_) {}
+                pendingPreviewRequest = null; previewWatchdog.stop(); previewBusy = false;
+                previewStatusText = "Не удалось начать проверку истории.";
+            }
+        }
         function request(route, body, callback) {
             if (pendingRequest !== null) return false;
             const xhr = new XMLHttpRequest(); pendingRequest = xhr;
-            requestWatchdog.interval = route === "media-chunk" ? 10000 : 15000;
+            // A native VIDEO_PLAY transfer may make steady progress for four
+            // hours. Leave five minutes for resolution, import, and receipt.
+            requestWatchdog.interval = route === "media-chunk" ? 10000 : route === "api2-next" ? 14700000 : 15000;
             requestWatchdog.restart();
             xhr.onreadystatechange = function() {
                 if (xhr.readyState !== XMLHttpRequest.DONE || pendingRequest !== xhr) return;
@@ -163,15 +425,100 @@ import ru.oneme.components 1.0
             return true;
         }
         function dependencyForAccount() {
-            for (let i = 0; i < Math.min(accountSources.count, 3); ++i) {
+            const count = accountSources.count;
+            if (!Number.isSafeInteger(count) || count < 1 || count > 32) return null;
+            let selected = null;
+            for (let i = 0; i < count; ++i) {
                 const item = accountSources.itemAt(i);
-                try { if (item && item.dependency && canonicalId(item.dependency.commonDependency.selfInfo.id, "contact") === ownId) return item.dependency; }
+                try {
+                    if (item && item.dependency && canonicalId(item.dependency.commonDependency.selfInfo.id, "contact") === ownId) {
+                        if (selected) return null;
+                        selected = item.dependency;
+                    }
+                }
                 catch (_) {}
             }
-            return null;
+            return selected;
+        }
+
+        function startApi2Export(directory) {
+            if (!nativeApi2ExportAvailable || exportMode !== "api2-text" || busy || !localFileURL(directory)) return;
+            if (!validSelectedScope()) { invalidateSelectedScope(); return; }
+            jobId = ""; jobToken = ""; htmlPath = ""; htmlFileURL = "";
+            api2HistoryContext = null; seedContext = null;
+            cancelRequested = false; api2StopPending = false; failureText = "";
+            api2PaceTimer.stop(); api2Pacing = false; api2PauseRemainingMs = 0;
+            exportStartedAt = Date.now(); elapsedSeconds = 0;
+            messageCount = 0; attachmentCount = 0; mediaCount = 0; omissionCount = 0; api2WindowsFetched = 0;
+            api2MediaProcessed = 0; api2MediaTotal = 0; api2Stage = "history";
+            phase = "api2-start"; hasError = false; statusText = "Подготовка бета-экспорта…";
+            request("start", {schema: 1, accountId: ownId,
+                chat: {id: chatIdText, title: plain(chatTitle, 256), timezoneOffsetMinutes: -new Date().getTimezoneOffset()},
+                directory: directory}, function(value) {
+                if (!/^[0-9a-f]{32}$/.test(value.jobId) || !/^[0-9a-f]{64}$/.test(value.jobToken)) throw new Error("api2_start_job");
+                jobId = value.jobId; jobToken = value.jobToken;
+                if (value.state !== "exporting" || value.downloadsPending !== false
+                        || !validApi2Counts(value.counts) || value.counts.messages !== 0
+                        || value.counts.attachments !== 0 || value.htmlPath !== undefined
+                        || value.htmlFileURL !== undefined) throw new Error("api2_start");
+                if (!validSelectedScope()) { stopApi2Export("Выбранный чат изменился. Остановка запрошена; её завершение может произойти в фоне.", true); return; }
+                try {
+                    accountDependency = dependencyForAccount();
+                    if (!accountDependency || accountDependency.commonDependency !== commonDependency
+                            || !accountDependency.historyPanelDependency
+                            || !accountDependency.historyPanelDependency.openedChatsContext
+                            || !accountDependency.historyPanelDependency.historyViewFactory) throw new Error("history_dependency");
+                    seedContext = accountDependency.historyPanelDependency.openedChatsContext.getOrCreateChatHistory(nativeChatId);
+                    if (!seedContext) throw new Error("history_seed");
+                } catch (_) {
+                    stopApi2Export("Не удалось привязать историю выбранного чата. Остановка запрошена; её завершение может произойти в фоне.", true);
+                    return;
+                }
+                phase = "api2-seed"; waitStarted = Date.now();
+                statusText = "Подготовка истории выбранного чата…";
+                stepTimer.start();
+            });
+        }
+        function api2SeedStep() {
+            if (phase !== "api2-seed" || cancelRequested) return;
+            if (!validSelectedScope()) { invalidateSelectedScope(); return; }
+            if (!seedHistory || seedModel.items.count === 0) {
+                if (Date.now() - waitStarted >= 30000)
+                    stopApi2Export("Не удалось получить отправное сообщение выбранного чата. Остановка запрошена; её завершение может произойти в фоне.", true);
+                return;
+            }
+            const message = getContext(seedModel.items.get(0).model.messageContext);
+            if (!message) {
+                if (Date.now() - waitStarted >= 30000)
+                    stopApi2Export("Не удалось прочитать отправное сообщение выбранного чата. Остановка запрошена; её завершение может произойти в фоне.", true);
+                return;
+            }
+            try {
+                if (String(QmlUtils.chatIdString(message.chatId)) !== chatIdText
+                        || message.messageTimeId === undefined || message.messageTimeId === null)
+                    throw new Error("history_seed_scope");
+                const job = {jobId: jobId, jobToken: jobToken};
+                if (!beginApi2NativeHistory(job)) throw new Error("history_begin");
+                api2HistoryContext = accountDependency.historyPanelDependency.historyViewFactory.createOnMessage(nativeChatId, message.messageTimeId);
+                const selectedView = getContext(api2HistoryContext);
+                if (!selectedView || !validSelectedScope()) throw new Error("history_view");
+                selectedView.objectName = "valmax-export-" + jobId;
+                if (!bindApi2NativeHistory(selectedView, job))
+                    throw new Error("history_bind");
+            } catch (_) {
+                stopApi2Export("Не удалось привязать историю выбранного чата. Остановка запрошена; её завершение может произойти в фоне.", true);
+                return;
+            }
+            stepTimer.stop();
+            phase = "api2-next"; statusText = "Чтение истории выбранного чата…";
+            Qt.callLater(function() { if (exportDialog.phase === "api2-next" && !exportDialog.cancelRequested)
+                exportDialog.nextApi2Window(); });
         }
         function startExport(directory) {
             if (busy || !localFileURL(directory)) return;
+            if (!validSelectedScope()) { invalidateSelectedScope(); return; }
+            if (nativeApi2ExportAvailable && exportMode === "api2-text") { startApi2Export(directory); return; }
+            exportStartedAt = Date.now(); elapsedSeconds = 0;
             jobId = ""; jobToken = ""; htmlPath = ""; htmlFileURL = "";
             cancelRequested = false; activeNative = false; terminalResult = null; failureText = "";
             sentIds = ({}); nativeTasks = ({}); mediaQueue = []; pendingMessages = [];
@@ -180,7 +527,10 @@ import ru.oneme.components 1.0
             stopReason = ""; direction = "backward"; awaitingHistory = false;
             sawHistoryChange = false; initialHistoryReady = false; backwardEnd = false; forwardEnd = false; historicalEndProven = false;
             accountDependency = dependencyForAccount();
-            if (!accountDependency || !accountDependency.historyPanelDependency) { fail("unsupported_history", "История этого аккаунта сейчас недоступна."); return; }
+            if (!accountDependency || !accountDependency.historyPanelDependency
+                    || accountDependency.commonDependency !== commonDependency || !validSelectedScope()) {
+                invalidateSelectedScope(); return;
+            }
             if (nativeChatProperties.get().isPreventCopyingEnabled) { fail("history_error", "В этом чате запрещено сохранение содержимого."); return; }
             phase = "seed"; hasError = false; statusText = "Подготовка экспорта…";
             request("start", {schema: 1, accountId: ownId, chat: {id: chatIdText, title: plain(chatTitle, 256), timezoneOffsetMinutes: -new Date().getTimezoneOffset()}, directory: directory}, function(value) {
@@ -465,6 +815,11 @@ import ru.oneme.components 1.0
             if (closedByUser && !activeNative) dispose();
         }
         function cancelExport() {
+            if (nativeApi2ExportAvailable && exportMode === "api2-text"
+                    && ["api2-start", "api2-seed", "api2-next"].indexOf(phase) >= 0) {
+                stopApi2Export("Остановка запрошена. Текущая операция может завершиться в фоне; файл пока недоступен.", false);
+                return;
+            }
             if ((!busy && !cancelRequested) || phase === "cancelling") return;
             cancelRequested = true;
             requestWatchdog.stop(); mediaWatchdog.stop(); stepTimer.stop(); renderPoll.stop();
@@ -489,6 +844,14 @@ import ru.oneme.components 1.0
             exportFinished();
         }
 
+        Connections {
+            target: typeof application !== "undefined" && application && application.accountModel
+                && application.accountModel.currentAccountId !== undefined ? application.accountModel : null
+            ignoreUnknownSignals: true
+            function onCurrentAccountIdChanged() { if (exportDialog.scopeArmed) exportDialog.invalidateSelectedScope(); }
+            function onActiveAccountDependencyChanged() { if (exportDialog.scopeArmed) exportDialog.invalidateSelectedScope(); }
+            function onCurrentIndexChanged() { if (exportDialog.scopeArmed) exportDialog.invalidateSelectedScope(); }
+        }
         Repeater {
             id: accountSources
             model: typeof application !== "undefined" && application ? application.accountModel : null
@@ -500,15 +863,10 @@ import ru.oneme.components 1.0
         ExportPreview.PreviewGridContext { id: previewContext; previews: []; panelWidth: 600; extraWidth: 0 }
         ExportModels.DelegateModel { id: previewModel; model: previewContext.previewModel; delegate: QtObject {} }
         Connections {
-            target: exportDialog.history
-            ignoreUnknownSignals: true
-            function onHistoryStateChanged() { exportDialog.historyUpdated(); }
-            function onMessagesCountChanged() { exportDialog.historyUpdated(); }
-        }
-        Connections {
             target: exportDialog.history ? exportDialog.history.model : null
             ignoreUnknownSignals: true
             function onRowsInserted() { exportDialog.historyUpdated(); }
+            function onDataChanged() { exportDialog.historyUpdated(); }
             function onModelReset() { exportDialog.historyUpdated(); }
         }
         Connections {
@@ -529,16 +887,46 @@ import ru.oneme.components 1.0
             }
         }
         Timer { id: requestWatchdog; interval: 15000; onTriggered: { if (exportDialog.pendingRequest) { const xhr = exportDialog.pendingRequest; exportDialog.pendingRequest = null; xhr.abort(); } exportDialog.fail("timeout", "Локальная задача не ответила вовремя."); } }
+        Timer { id: previewWatchdog; interval: 45000; onTriggered: { if (exportDialog.previewBusy) { exportDialog.abortPreview(); exportDialog.previewStatusText = "Показ результата прекращён из-за долгого ожидания. Начатый запрос может завершиться в фоне."; } } }
         Timer { id: mediaWatchdog; interval: 120000; onTriggered: { if (exportDialog.activeNative) { exportDialog.failureText = "Загрузка вложения не завершилась вовремя. Экспорт остановлен; текущая загрузка может продолжиться в фоне."; exportDialog.cancelExport(); } else exportDialog.mediaFinished("error", "timeout"); } }
-        Timer { id: stepTimer; interval: 250; repeat: true; onTriggered: { try { if (exportDialog.phase === "seed") exportDialog.seedStep(); else if (exportDialog.phase === "history") exportDialog.historyStep(); } catch (_) { exportDialog.fail("history_error", "Не удалось прочитать историю этого чата."); } } }
+        Timer { id: stepTimer; interval: 250; repeat: true; onTriggered: { try { if (exportDialog.phase === "seed") exportDialog.seedStep(); else if (exportDialog.phase === "api2-seed") exportDialog.api2SeedStep(); else if (exportDialog.phase === "history") exportDialog.historyStep(); } catch (_) { exportDialog.fail("history_error", "Не удалось прочитать историю этого чата."); } } }
         Timer { id: historyProofTimer; interval: 200; onTriggered: exportDialog.pollHistoryProof() }
         Timer { id: renderPoll; interval: 1000; repeat: true; onTriggered: { if (!exportDialog.pendingRequest) exportDialog.request("status", exportDialog.jobBody(), exportDialog.applyStatus); } }
+        Timer { id: exportClock; interval: 1000; repeat: true; running: exportDialog.busy && exportDialog.exportStartedAt > 0; onTriggered: exportDialog.elapsedSeconds = Math.max(0, Math.floor((Date.now() - exportDialog.exportStartedAt) / 1000)) }
+        Timer { id: api2PaceClock; interval: 100; repeat: true; running: exportDialog.api2Pacing; onTriggered: exportDialog.api2PauseRemainingMs = Math.max(0, Math.ceil((exportDialog.api2PauseUntil - Date.now()) / 100) * 100) }
+        Timer { id: api2PaceTimer; interval: 500; onTriggered: { exportDialog.api2Pacing = false; exportDialog.api2PauseRemainingMs = 0; exportDialog.nextApi2Window(); } }
         ExportDialogs.FolderDialog { id: destinationDialog; title: "Папка для экспорта чата"; onAccepted: exportDialog.startExport(selectedFolder.toString()) }
         dialogContentItem: ColumnLayout {
-            spacing: UiKit.DesignSystem.SpacingCommon._M
+            spacing: 8
+            UiKit.MeText { objectName: "valmaxExportBetaWarning"; Layout.fillWidth: true; text: exportDialog.nativeApi2ExportAvailable && exportDialog.exportMode === "api2-text"
+                ? "Бета: архив чата может быть неполным. Фото, видео и голосовые сохраняются, когда доступны (до 4 ГиБ на файл). Отдельный раздел содержит только входящие сообщения, полученные и локально сохранённые после включения функции; прежние и недоступные удаления не восстановятся. Возможны повторы и пропуски."
+                : "Бета: архив чата может быть неполным. В режиме «История из клиента» сохраняются показанные клиентом сообщения и доступные вложения. Локально сохранённые удаления в этот архив не входят; возможны пропуски."; wrapMode: Text.WordWrap; color: exportDialog.colors.colorTextAttention; typography: ExportTypography.FontUtil.Styles.Description }
             UiKit.MeText { Layout.fillWidth: true; text: exportDialog.statusText; wrapMode: Text.WordWrap; color: exportDialog.hasError ? exportDialog.colors.colorTextAttention : exportDialog.colors.colorTextPrimary; typography: ExportTypography.FontUtil.Styles.Body }
-            UiKit.MeText { Layout.fillWidth: true; text: "Сообщений: " + exportDialog.messageCount + " · вложений: " + exportDialog.mediaCount + " · пропущено: " + exportDialog.omissionCount; wrapMode: Text.WordWrap; color: exportDialog.colors.colorTextSecondary; typography: ExportTypography.FontUtil.Styles.Description }
-            ProgressBar { Layout.fillWidth: true; visible: exportDialog.busy; indeterminate: true }
-            UiKit.MeText { Layout.fillWidth: true; text: "История и файлы сохраняются в выбранную папку. Другие аккаунты и их переписка не затрагиваются."; wrapMode: Text.WordWrap; color: exportDialog.colors.colorTextSecondary; typography: ExportTypography.FontUtil.Styles.Description }
+            UiKit.MeText { objectName: "valmaxExportProgressStage"; Layout.fillWidth: true; visible: exportDialog.busy && exportDialog.phase !== "idle"; text: exportDialog.progressStageText + " · " + exportDialog.elapsedSeconds + " с"; wrapMode: Text.WordWrap; color: exportDialog.colors.colorTextPrimary; typography: ExportTypography.FontUtil.Styles.Description }
+            ColumnLayout {
+                Layout.fillWidth: true; visible: exportDialog.nativeApi2ExportAvailable
+                Button { objectName: "valmaxExportApi2TextMode"; Layout.fillWidth: true; enabled: !exportDialog.busy && !exportDialog.htmlFileURL; text: "История и медиа · Бета" + (exportDialog.exportMode === "api2-text" ? " · выбрано" : ""); onClicked: exportDialog.exportMode = "api2-text" }
+                Button { objectName: "valmaxExportClientMode"; Layout.fillWidth: true; enabled: !exportDialog.busy && !exportDialog.htmlFileURL; text: "История из клиента" + (exportDialog.exportMode === "client" ? " · выбрано" : ""); onClicked: exportDialog.exportMode = "client" }
+                UiKit.MeText { Layout.fillWidth: true; text: exportDialog.exportMode === "api2-text"
+                    ? "История читается через штатный API. Доступные фото, видео и голосовые скачиваются по одному; остальные вложения отмечаются в архиве."
+                    : "Сообщения и доступные вложения берутся из истории, показанной клиентом.";
+                    wrapMode: Text.WordWrap; color: exportDialog.colors.colorTextSecondary; typography: ExportTypography.FontUtil.Styles.Description }
+            }
+            Button { Layout.fillWidth: true; visible: exportDialog.nativeHistoryPreviewAvailable; enabled: !exportDialog.busy && !exportDialog.previewRequested && exportDialog.validSelectedScope(); text: "Проверить загрузку истории"; onClicked: exportDialog.previewHistory() }
+            UiKit.MeText { Layout.fillWidth: true; visible: exportDialog.previewStatusText.length > 0; text: exportDialog.previewStatusText; wrapMode: Text.WordWrap; color: exportDialog.colors.colorTextSecondary; typography: ExportTypography.FontUtil.Styles.Description }
+            UiKit.MeText { Layout.fillWidth: true; text: exportDialog.exportMode === "api2-text"
+                ? "Окон: " + exportDialog.api2WindowsFetched + " · сообщений: " + exportDialog.messageCount
+                    + " · скачано файлов: " + exportDialog.mediaCount + " · без файлов: " + exportDialog.omissionCount
+                    + " · обработано вложений: " + exportDialog.api2MediaProcessed + "/" + exportDialog.api2MediaTotal
+                : "Сообщений: " + exportDialog.messageCount + " · вложений: " + exportDialog.mediaCount + " · пропущено: " + exportDialog.omissionCount;
+                wrapMode: Text.WordWrap; color: exportDialog.colors.colorTextSecondary; typography: ExportTypography.FontUtil.Styles.Description }
+            UiKit.MeText { objectName: "valmaxExportPace"; Layout.fillWidth: true; visible: exportDialog.api2Pacing; text: "Пауза перед следующим запросом: " + (exportDialog.api2PauseRemainingMs / 1000).toFixed(1) + " с"; color: exportDialog.colors.colorTextSecondary; typography: ExportTypography.FontUtil.Styles.Description }
+            ProgressBar { objectName: "valmaxExportMediaProgressBar"; Layout.fillWidth: true; visible: exportDialog.busy && !exportDialog.api2StopPending;
+                indeterminate: exportDialog.exportMode !== "api2-text" || exportDialog.api2Stage !== "media";
+                from: 0; to: Math.max(1, exportDialog.api2MediaTotal); value: exportDialog.api2MediaProcessed }
+            UiKit.MeText { Layout.fillWidth: true; text: exportDialog.exportMode === "api2-text"
+                ? "HTML и временные файлы — в выбранной папке."
+                : "История и файлы — в выбранной папке.";
+                wrapMode: Text.WordWrap; color: exportDialog.colors.colorTextSecondary; typography: ExportTypography.FontUtil.Styles.Description }
         }
     }

@@ -1,0 +1,18 @@
+if(NOT TARGET valmax_media_runtime_prepare)
+  add_library(valmax_media_runtime_prepare STATIC "${CMAKE_CURRENT_LIST_DIR}/runtime_prepare.cpp" "${CMAKE_CURRENT_LIST_DIR}/runtime_prepare.h")
+  target_link_libraries(valmax_media_runtime_prepare PUBLIC valmax_media_service PRIVATE bcrypt ntdll)
+  target_include_directories(valmax_media_runtime_prepare PUBLIC "${CMAKE_CURRENT_LIST_DIR}")
+  target_compile_definitions(valmax_media_runtime_prepare PRIVATE QT_NO_CAST_FROM_ASCII QT_NO_CAST_TO_ASCII)
+  if(DEFINED VALMAX_CORE_PIN_SHA256 OR DEFINED VALMAX_CORE_PIN_BYTES)
+    string(LENGTH "${VALMAX_CORE_PIN_SHA256}" valmax_core_pin_length)
+    if(NOT valmax_core_pin_length EQUAL 64 OR NOT VALMAX_CORE_PIN_SHA256 MATCHES "^[0-9a-f]+$"
+       OR NOT VALMAX_CORE_PIN_BYTES MATCHES "^[1-9][0-9]*$")
+      message(FATAL_ERROR "A core pin requires a full lowercase SHA256 and positive byte count")
+    endif()
+    target_compile_definitions(valmax_media_runtime_prepare PRIVATE
+      VALMAX_CORE_PIN_SHA256="${VALMAX_CORE_PIN_SHA256}" VALMAX_CORE_PIN_BYTES=${VALMAX_CORE_PIN_BYTES})
+  endif()
+  if(MSVC)
+    target_compile_options(valmax_media_runtime_prepare PRIVATE /W4 /WX /permissive- /utf-8)
+  endif()
+endif()

@@ -63,6 +63,10 @@ class ChatLockUiTests(unittest.TestCase):
         transformed = target.transform_export_panel(chat_export_ui.factory_source())
         self.assertIn("destinationDialog.close()", transformed)
         self.assertIn("if (busy) cancelExport()", transformed)
+        self.assertEqual(transformed.count("Component.onCompleted:"), 1)
+        self.assertEqual(transformed.count("onOpened:"), 1)
+        self.assertIn("scopeArmed = true\n            valmaxExportLockInitialized = true", transformed)
+        self.assertIn("if (!valmaxExportAllowed) exportDialog.close()\n            else if (selectedScope && !validSelectedScope()) invalidateSelectedScope()", transformed)
         self.assertLess(transformed.index("if (!valmaxExportAllowed)", transformed.index("function startExport(directory)")),
                         transformed.index('request("start"', transformed.index("function startExport(directory)")))
         with self.assertRaises(ValueError):

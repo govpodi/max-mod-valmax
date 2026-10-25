@@ -4,6 +4,17 @@
 #ifndef Output
   #error Output is required
 #endif
+#ifndef NativeTransfer
+  #define NativeTransfer "0"
+#endif
+#if (NativeTransfer != "0") && (NativeTransfer != "1")
+  #error NativeTransfer must be 0 or 1
+#endif
+#if NativeTransfer == "1"
+  #if !FileExists(Payload + "\runtime\transfer\valmax-transfer.exe")
+    #error Verified native transfer payload is missing
+  #endif
+#endif
 
 [Setup]
 AppId={{419706B9-6FC7-46F8-B9FB-D7212FC91BAC}
@@ -47,7 +58,11 @@ Source: "{#Payload}\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs cr
 
 [Icons]
 Name: "{group}\ValMAX"; Filename: "{app}\ValMAX.exe"; WorkingDir: "{app}"
+#if NativeTransfer == "1"
+Name: "{group}\Войти с MData"; Filename: "{app}\runtime\transfer\valmax-transfer.exe"; WorkingDir: "{app}\runtime\transfer"
+#else
 Name: "{group}\Войти с MData"; Filename: "{app}\ValMAX.exe"; Parameters: "mdata"; WorkingDir: "{app}"
+#endif
 Name: "{group}\Восстановление MData"; Filename: "{app}\ValMAX.exe"; Parameters: "recover"; WorkingDir: "{app}"
 Name: "{group}\Инструкция"; Filename: "{app}\ValMAX-инструкция.txt"
 Name: "{autodesktop}\ValMAX"; Filename: "{app}\ValMAX.exe"; WorkingDir: "{app}"; Tasks: desktopicon
@@ -81,7 +96,7 @@ var
   Prefix, Image: String;
   Count, Index: Integer;
 begin
-  { WMI reads only executable paths for the three exact process names.
+  { WMI reads only executable paths for the exact process names below.
     No command line, memory, profile or credential is read; no process is killed. }
   Result := OwnedProcessScanFailed;
   try
@@ -90,7 +105,8 @@ begin
     Services := Locator.ConnectServer('.', 'root\CIMV2');
     Processes := Services.ExecQuery(
       'SELECT ExecutablePath FROM Win32_Process WHERE Name = ''max.exe'' ' +
-      'OR Name = ''max-service.exe'' OR Name = ''ValMAX.exe'' OR Name = ''MAX Mod.exe''', 'WQL', 0);
+      'OR Name = ''max-service.exe'' OR Name = ''ValMAX.exe'' OR Name = ''MAX Mod.exe'' ' +
+      'OR Name = ''valmax-transfer.exe''', 'WQL', 0);
     Count := Processes.Count;
     if (Count < 0) or (Count > 4096) then
       Exit;
@@ -120,10 +136,54 @@ begin
   end;
 end;
 
+#if NativeTransfer == "1"
+function TransferGetFileAttributes(Name: String): LongWord;
+  external 'GetFileAttributesW@kernel32.dll stdcall';
+
+function NativeTransferPreflight: String;
+var
+  Path, Parent: String;
+  Attributes, ErrorCode: LongWord;
+begin
+  { No deletion/merging: replacing a previously installed helper requires a
+    separate managed-inventory updater. This opt-in only installs a fresh tree. }
+  Result := 'Каталог нативного помощника MData уже существует или недоступен. Выбери новую папку установки ValMAX; существующие файлы не будут удалены.';
+  Path := ExpandConstant('{app}\runtime\transfer');
+  Attributes := TransferGetFileAttributes(Path);
+  if Attributes <> $FFFFFFFF then
+    Exit;
+  ErrorCode := DLLGetLastError;
+  if (ErrorCode <> 2) and (ErrorCode <> 3) then
+    Exit;
+  Path := ExtractFileDir(Path);
+  while Path <> '' do
+  begin
+    Attributes := TransferGetFileAttributes(Path);
+    if Attributes = $FFFFFFFF then
+    begin
+      ErrorCode := DLLGetLastError;
+      if (ErrorCode <> 2) and (ErrorCode <> 3) then
+        Exit;
+    end
+    else if ((Attributes and $400) <> 0) or ((Attributes and $10) = 0) then
+      Exit;
+    Parent := ExtractFileDir(Path);
+    if Parent = Path then
+      Break;
+    Path := Parent;
+  end;
+  Result := '';
+end;
+#endif
+
 function PrepareToInstall(var NeedsRestart: Boolean): String;
 begin
   NeedsRestart := False;
   Result := OwnedProcessPreflight;
+#if NativeTransfer == "1"
+  if Result = '' then
+    Result := NativeTransferPreflight;
+#endif
 end;
 
 function InitializeUninstall: Boolean;

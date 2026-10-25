@@ -1,0 +1,8 @@
+if(NOT TARGET valmax_startup_context)
+    add_library(valmax_startup_context STATIC "${CMAKE_CURRENT_LIST_DIR}/startup_context.cpp" "${CMAKE_CURRENT_LIST_DIR}/startup_context.h")
+    target_compile_features(valmax_startup_context PUBLIC cxx_std_20)
+    target_compile_definitions(valmax_startup_context PUBLIC WIN32_LEAN_AND_MEAN NOMINMAX)
+    target_include_directories(valmax_startup_context PUBLIC "${CMAKE_CURRENT_LIST_DIR}")
+    target_link_libraries(valmax_startup_context PUBLIC advapi32)
+    target_compile_options(valmax_startup_context PRIVATE /W4 /WX /permissive- /utf-8)
+endif()

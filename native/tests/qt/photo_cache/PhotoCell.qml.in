@@ -1,0 +1,49 @@
+import QtQuick
+
+Item {
+    id: root
+    required property int logicalId
+    required property var view
+    required property bool candidate
+    readonly property size sourceSize: Qt.size(decodeGeometry.decodeWidth, 180)
+    readonly property url fullSource: "image://cachebench/full-" + logicalId
+    readonly property bool viewportVisible: y + height > view.contentY && y < view.contentY + view.height
+    onViewportVisibleChanged: audit.visibility(logicalId, viewportVisible)
+    Component.onCompleted: audit.rowCreated(logicalId, viewportVisible)
+    Component.onDestruction: audit.rowDestroyed(logicalId)
+
+    // The same always-present preview, rounded layer and decode debounce in A/B.
+    // Only the full Image Loader's active expression changes between modes.
+    layer.enabled: true
+    layer.effect: ShaderEffect {
+        property var source
+        property vector2d itemSize: Qt.vector2d(width, height)
+        property real cornerRadius: 14
+        fragmentShader: "mask.frag.qsb"
+        onStatusChanged: audit.shaderStatus(status, log)
+    }
+    Image {
+        anchors.fill: parent
+        source: "image://cachebench/preview-" + root.logicalId
+        cache: true
+        fillMode: Image.PreserveAspectCrop
+        clip: true
+        onStatusChanged: audit.previewStatus(root.logicalId, status === Image.Ready)
+        Component.onCompleted: audit.previewStatus(root.logicalId, status === Image.Ready)
+    }
+    Loader {
+        anchors.fill: parent
+        active: !root.candidate || root.viewportVisible
+        asynchronous: true
+        visible: status === Loader.Ready
+        sourceComponent: Image {
+@@PHOTO_DECODE_PROPERTIES@@
+            cache: true
+            source: root.fullSource
+            sourceSize: valmaxDecodeSize
+            fillMode: Image.PreserveAspectCrop
+            onSourceSizeChanged: audit.targetChanged()
+            Component.onDestruction: audit.fullDestroyed(root.logicalId)
+        }
+    }
+}

@@ -1,0 +1,393 @@
+{
+  "sourceSha256": "b74c3bd17844fb7a4f3d916a984ca6b77215b107b7226041c5c5bff100aac14c",
+  "input": [
+    {
+      "accountId": "10",
+      "displayName": "Тестовый офис 🚀",
+      "color": "#8b5cf6",
+      "workHours": {
+        "enabled": true,
+        "days": [
+          7,
+          2,
+          5
+        ],
+        "start": "22:30",
+        "end": "06:15"
+      },
+      "ghost": {
+        "hideRead": true,
+        "hideStoryRead": false,
+        "hideTyping": false,
+        "hideOnline": false,
+        "autoOffline": false
+      }
+    },
+    {
+      "accountId": "2",
+      "displayName": "Испытание Äß東京",
+      "color": "#0088ff",
+      "workHours": {
+        "enabled": true,
+        "days": [
+          7,
+          2,
+          5
+        ],
+        "start": "22:30",
+        "end": "06:15"
+      },
+      "ghost": {
+        "hideRead": true,
+        "hideStoryRead": false,
+        "hideTyping": false,
+        "hideOnline": false,
+        "autoOffline": false
+      }
+    }
+  ],
+  "validated": [
+    {
+      "accountId": "2",
+      "displayName": "Испытание Äß東京",
+      "color": "#0088ff",
+      "workHours": {
+        "enabled": true,
+        "days": [
+          2,
+          5,
+          7
+        ],
+        "start": "22:30",
+        "end": "06:15"
+      },
+      "ghost": {
+        "hideRead": true,
+        "hideStoryRead": false,
+        "hideTyping": false,
+        "hideOnline": false,
+        "autoOffline": false
+      }
+    },
+    {
+      "accountId": "10",
+      "displayName": "Тестовый офис 🚀",
+      "color": "#8b5cf6",
+      "workHours": {
+        "enabled": true,
+        "days": [
+          2,
+          5,
+          7
+        ],
+        "start": "22:30",
+        "end": "06:15"
+      },
+      "ghost": {
+        "hideRead": true,
+        "hideStoryRead": false,
+        "hideTyping": false,
+        "hideOnline": false,
+        "autoOffline": false
+      }
+    }
+  ],
+  "canonical": "{\"accounts\":[{\"accountId\":\"2\",\"color\":\"#0088ff\",\"displayName\":\"Испытание Äß東京\",\"ghost\":{\"autoOffline\":false,\"hideOnline\":false,\"hideRead\":true,\"hideStoryRead\":false,\"hideTyping\":false},\"workHours\":{\"days\":[2,5,7],\"enabled\":true,\"end\":\"06:15\",\"start\":\"22:30\"}},{\"accountId\":\"10\",\"color\":\"#8b5cf6\",\"displayName\":\"Тестовый офис 🚀\",\"ghost\":{\"autoOffline\":false,\"hideOnline\":false,\"hideRead\":true,\"hideStoryRead\":false,\"hideTyping\":false},\"workHours\":{\"days\":[2,5,7],\"enabled\":true,\"end\":\"06:15\",\"start\":\"22:30\"}}],\"schema\":1}",
+  "snapshot": {
+    "schema": 1,
+    "revision": "00f543e3b0cafa5accc43aeb9582ff8427bbdaacc711f3369af733d09b2c920e",
+    "accounts": [
+      {
+        "accountId": "2",
+        "displayName": "Испытание Äß東京",
+        "color": "#0088ff",
+        "workHours": {
+          "enabled": true,
+          "days": [
+            2,
+            5,
+            7
+          ],
+          "start": "22:30",
+          "end": "06:15"
+        },
+        "ghost": {
+          "hideRead": true,
+          "hideStoryRead": false,
+          "hideTyping": false,
+          "hideOnline": false,
+          "autoOffline": false
+        }
+      },
+      {
+        "accountId": "10",
+        "displayName": "Тестовый офис 🚀",
+        "color": "#8b5cf6",
+        "workHours": {
+          "enabled": true,
+          "days": [
+            2,
+            5,
+            7
+          ],
+          "start": "22:30",
+          "end": "06:15"
+        },
+        "ghost": {
+          "hideRead": true,
+          "hideStoryRead": false,
+          "hideTyping": false,
+          "hideOnline": false,
+          "autoOffline": false
+        }
+      }
+    ]
+  },
+  "workTimes": [
+    {
+      "weekday": 1,
+      "minute": 0,
+      "expected": true
+    },
+    {
+      "weekday": 1,
+      "minute": 374,
+      "expected": true
+    },
+    {
+      "weekday": 1,
+      "minute": 375,
+      "expected": false
+    },
+    {
+      "weekday": 1,
+      "minute": 376,
+      "expected": false
+    },
+    {
+      "weekday": 1,
+      "minute": 1349,
+      "expected": false
+    },
+    {
+      "weekday": 1,
+      "minute": 1350,
+      "expected": false
+    },
+    {
+      "weekday": 1,
+      "minute": 1439,
+      "expected": false
+    },
+    {
+      "weekday": 2,
+      "minute": 0,
+      "expected": false
+    },
+    {
+      "weekday": 2,
+      "minute": 374,
+      "expected": false
+    },
+    {
+      "weekday": 2,
+      "minute": 375,
+      "expected": false
+    },
+    {
+      "weekday": 2,
+      "minute": 376,
+      "expected": false
+    },
+    {
+      "weekday": 2,
+      "minute": 1349,
+      "expected": false
+    },
+    {
+      "weekday": 2,
+      "minute": 1350,
+      "expected": true
+    },
+    {
+      "weekday": 2,
+      "minute": 1439,
+      "expected": true
+    },
+    {
+      "weekday": 3,
+      "minute": 0,
+      "expected": true
+    },
+    {
+      "weekday": 3,
+      "minute": 374,
+      "expected": true
+    },
+    {
+      "weekday": 3,
+      "minute": 375,
+      "expected": false
+    },
+    {
+      "weekday": 3,
+      "minute": 376,
+      "expected": false
+    },
+    {
+      "weekday": 3,
+      "minute": 1349,
+      "expected": false
+    },
+    {
+      "weekday": 3,
+      "minute": 1350,
+      "expected": false
+    },
+    {
+      "weekday": 3,
+      "minute": 1439,
+      "expected": false
+    },
+    {
+      "weekday": 4,
+      "minute": 0,
+      "expected": false
+    },
+    {
+      "weekday": 4,
+      "minute": 374,
+      "expected": false
+    },
+    {
+      "weekday": 4,
+      "minute": 375,
+      "expected": false
+    },
+    {
+      "weekday": 4,
+      "minute": 376,
+      "expected": false
+    },
+    {
+      "weekday": 4,
+      "minute": 1349,
+      "expected": false
+    },
+    {
+      "weekday": 4,
+      "minute": 1350,
+      "expected": false
+    },
+    {
+      "weekday": 4,
+      "minute": 1439,
+      "expected": false
+    },
+    {
+      "weekday": 5,
+      "minute": 0,
+      "expected": false
+    },
+    {
+      "weekday": 5,
+      "minute": 374,
+      "expected": false
+    },
+    {
+      "weekday": 5,
+      "minute": 375,
+      "expected": false
+    },
+    {
+      "weekday": 5,
+      "minute": 376,
+      "expected": false
+    },
+    {
+      "weekday": 5,
+      "minute": 1349,
+      "expected": false
+    },
+    {
+      "weekday": 5,
+      "minute": 1350,
+      "expected": true
+    },
+    {
+      "weekday": 5,
+      "minute": 1439,
+      "expected": true
+    },
+    {
+      "weekday": 6,
+      "minute": 0,
+      "expected": true
+    },
+    {
+      "weekday": 6,
+      "minute": 374,
+      "expected": true
+    },
+    {
+      "weekday": 6,
+      "minute": 375,
+      "expected": false
+    },
+    {
+      "weekday": 6,
+      "minute": 376,
+      "expected": false
+    },
+    {
+      "weekday": 6,
+      "minute": 1349,
+      "expected": false
+    },
+    {
+      "weekday": 6,
+      "minute": 1350,
+      "expected": false
+    },
+    {
+      "weekday": 6,
+      "minute": 1439,
+      "expected": false
+    },
+    {
+      "weekday": 7,
+      "minute": 0,
+      "expected": false
+    },
+    {
+      "weekday": 7,
+      "minute": 374,
+      "expected": false
+    },
+    {
+      "weekday": 7,
+      "minute": 375,
+      "expected": false
+    },
+    {
+      "weekday": 7,
+      "minute": 376,
+      "expected": false
+    },
+    {
+      "weekday": 7,
+      "minute": 1349,
+      "expected": false
+    },
+    {
+      "weekday": 7,
+      "minute": 1350,
+      "expected": true
+    },
+    {
+      "weekday": 7,
+      "minute": 1439,
+      "expected": true
+    }
+  ]
+}

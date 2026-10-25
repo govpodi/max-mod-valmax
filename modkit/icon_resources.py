@@ -95,7 +95,7 @@ def prepare(binary, output, *, rcc=DEFAULT_RCC, assets_directory=None, extra_res
     originals = native_payloads(binary); anchors = registration_anchors(binary)
     additions = resource_payloads(assets_directory)
     extras = {} if extra_resources is None else extra_resources
-    if type(extras) is not dict or set(extras) - {":/valmax/ChatExportPanel.qml", ":/valmax/MessageRetentionController.qml", ":/valmax/ChatLockController.qml", ":/valmax/ValMAXAsyncListRow.qml", ":/valmax/ValMAXListWorkQueue.qml", ":/valmax/ValMAXWheelAdmission.qml", ":/valmax/optimization/OptimizationConfig.qml", ":/valmax/optimization/qmldir"}:
+    if type(extras) is not dict or set(extras) - {":/valmax/ChatExportPanel.qml", ":/valmax/MessageRetentionController.qml", ":/valmax/MessageRetentionArchive.qml", ":/valmax/MessageRetentionInline.qml", ":/valmax/MessageRetentionRange.qml", ":/valmax/MessageRetentionBubble.qml", ":/valmax/ChatLockController.qml", ":/valmax/ValMAXAsyncListRow.qml", ":/valmax/ValMAXListWorkQueue.qml", ":/valmax/ValMAXWheelAdmission.qml", ":/valmax/optimization/OptimizationConfig.qml", ":/valmax/optimization/qmldir"}:
         raise ValueError("Unsupported extra ValMAX resource")
     for path, payload in extras.items():
         if type(payload) is not bytes or not 1 <= len(payload) <= 1024 * 1024:

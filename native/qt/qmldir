@@ -1,0 +1,11 @@
+module ValMAX.Native
+plugin valmaxnativeplugin
+classname ValMAXNativePlugin
+singleton SettingsTransport 1.0 SettingsTransport.qml
+singleton RetentionTransport 1.0 RetentionTransport.qml
+singleton ChatLockTransport 1.0 ChatLockTransport.qml
+singleton SupportTransport 1.0 SupportTransport.qml
+singleton MDataTransport 1.0 MDataTransport.qml
+MDataTransferEntry 1.0 MDataTransferEntry.qml
+singleton ExportTransport 1.0 ExportTransport.qml
+singleton ExportMediaOwner 1.0 ExportMediaOwner.qml

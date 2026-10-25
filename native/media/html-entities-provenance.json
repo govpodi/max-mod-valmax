@@ -1,0 +1,11 @@
+{
+  "source": "https://github.com/python/cpython/blob/v3.14.6/Lib/html/entities.py",
+  "python": "3.14.6 (tags/v3.14.6:c63aec6, Jun 10 2026, 10:26:10) [MSC v.1944 64 bit (AMD64)]",
+  "entries": 2231,
+  "sourceSha256": "fa0b2845437aa3680aa6c33457d7a242dd303ed27c2a5073772d1c2b04d62473",
+  "canonicalDataSha256": "c73f5a2c86e09e2ac11024366cded2e8221b502554e756b346379ea4f38801a2",
+  "generatedSha256": "277f1eaf287c44c3878e5ee404ee9e4a812b36d08a8e7023bb8470d8b2997ee0",
+  "license": "../licenses/python-3.14.6-LICENSE.txt",
+  "licenseSha256": "935cf13e19f8c31b497d20b05d73623431a226b230c3599bc30fa3348979bc68",
+  "notice": "HTML5 named-character-reference data, from CPython under the PSF license. Not relicensed as ValMAX MIT code."
+}

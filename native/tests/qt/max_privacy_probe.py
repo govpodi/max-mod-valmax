@@ -1,0 +1,133 @@
+"""Direct static verifier in the actual MAX engine, anonymous and offline.
+
+Reuses only an identified earlier owned fixture. Network/credentials are denied
+before resume, children are gated, and the installed MAX is never touched.
+"""
+import ctypes
+import hashlib
+import json
+from pathlib import Path
+import shutil
+import uuid
+
+import max_engine_probe as base
+from max_ghost_probe import ExplicitEnvironment
+
+MONITOR = r'''
+const privacy={observed:false,hostVerified:0,hostRevoked:0,verifiedInstallation:false,
+ shutdownOk:false,verifierOwned:false};
+function privacyExport(name) {
+  const plugin=Process.findModuleByName('valmaxnativeplugin.dll');if(!plugin)return ptr(0);
+  for(const item of plugin.enumerateImports())
+    if(item.name===name&&String(item.module).toLowerCase()==='valmax_privacy.dll')return item.address;
+  return ptr(0);
+}
+function readStatus(value) {
+  return {loaded:true,error:value.add(8).readU32(),ready:value.add(12).readU32()===1,
+   role:value.add(16).readU32(),diskRules:value.add(20).readU32(),loadedRules:value.add(24).readU32(),
+   files:value.add(28).readU32(),modules:value.add(32).readU32(),patches:value.add(36).readU32(),required:value.add(40).readU32()};
+}
+function good(value) {return value.error===0&&value.ready&&value.role===1&&value.diskRules===63&&value.loadedRules===53
+  &&value.files===6&&value.modules===3&&value.patches===31&&value.required===53;}
+function observePrivacy() {
+  if(privacy.observed)return;
+  const address=privacyExport('valmax_privacy_status');if(address.isNull())return;
+  const plugin=Process.findModuleByName('valmaxnativeplugin.dll');
+  Interceptor.attach(address,{onEnter(args){
+    this.host=this.returnAddress.compare(plugin.base)>=0&&this.returnAddress.compare(plugin.base.add(plugin.size))<0;
+    this.out=args[0];
+  },onLeave(code){if(!this.host||code.toUInt32()!==0)return;
+    const value=readStatus(this.out);if(good(value))privacy.hostVerified++;
+    else if(!value.ready)privacy.hostRevoked++;
+  }});privacy.observed=true;
+}
+Process.attachModuleObserver({onAdded(module){if(module.name.toLowerCase()==='valmaxnativeplugin.dll')setTimeout(observePrivacy,0);}});
+function privacySnapshot() {
+  observePrivacy();const address=privacyExport('valmax_privacy_status');if(address.isNull())return {...privacy,loaded:false};
+  const value=Memory.alloc(112);value.writeByteArray(new Uint8Array(112));value.writeU32(112);value.add(4).writeU32(1);
+  const code=new NativeFunction(address,'uint',['pointer'])(value);
+  if(code!==0)return {...privacy,loaded:true,error:code};
+  const current=readStatus(value);
+  const expected=MONITOR.rust.replace(/valmax_core\.dll$/i,'valmax_privacy.dll').toLowerCase();
+  const kernel=Process.getModuleByName('kernelbase.dll');
+  const module=Memory.alloc(Process.pointerSize);module.writePointer(ptr(0));
+  const lookup=new NativeFunction(kernel.getExportByName('GetModuleHandleExW'),'uint',['uint','pointer','pointer']);
+  if(lookup(6,address,module)!==0){
+    const path=Memory.alloc(65536);
+    const size=new NativeFunction(kernel.getExportByName('GetModuleFileNameW'),'uint',['pointer','pointer','uint'])(module.readPointer(),path,32768);
+    if(size>0&&size<32768){privacy.verifierModulePath=path.readUtf16String(size).replace(/\\/g,'/').toLowerCase();privacy.verifierOwned=privacy.verifierModulePath===expected;}
+  }
+  if(good(current)&&privacy.hostVerified>=2){privacy.verifiedInstallation=true;privacy.confirmed={...current};}
+  if(privacy.verifiedInstallation&&!privacy.shutdownOk){
+    const shutdown=privacyExport('valmax_privacy_shutdown');
+    if(!shutdown.isNull())privacy.shutdownOk=new NativeFunction(shutdown,'uint',[])()===0;
+  }
+  return {...privacy,...current};
+}
+'''
+
+
+class PrivacyProbe(base.OwnedProbe):
+    def __init__(self, directory, output, namespace):
+        super().__init__(directory, output, namespace)
+        inherited = self.monitor_source.replace(
+            "  const kernel=Process.getModuleByName('kernelbase.dll');", "  if(state.plugin) {\n  const kernel=Process.getModuleByName('kernelbase.dll');", 1).replace(
+            "  for(const module of Process.enumerateModules())", "  }\n  for(const module of Process.enumerateModules())", 1)
+        self.monitor_source = MONITOR + inherited.replace(
+            "return {stats:{tracerHooks:0,transportHooks:0}", "return {privacy:privacySnapshot(),stats:{tracerHooks:0,transportHooks:0}", 1)
+        # Deliberately no Rust runtime configuration: privacy is independent.
+        self.device = ExplicitEnvironment(self.device, {})
+        self.privacy = {}
+
+    def consume_snapshot(self, pid, snapshot):
+        super().consume_snapshot(pid, snapshot)
+        if not self.sessions[pid]["service"]:
+            self.privacy = snapshot.get("privacy", {})
+
+
+def main():
+    ctypes.windll.kernel32.SetErrorMode(0x8003)
+    owner = json.loads((base.PROJECT / "analysis/native-migration-v1/privacy-native-proof.json").read_text())
+    # This completed failed-monitor fixture was generated by max_notification_probe;
+    # its exact pinned MAX bytes are unchanged. Do not modify the successful proof.
+    directory = Path("C:/ValMAXBuild/build/max-engine-probes/probe-800fc79010034de8bf9269b1fd0679fe").resolve(strict=True)
+    if directory.parent != base.BUILD_ROOT.resolve() or directory.is_symlink(): raise RuntimeError("invalid_fixture")
+    runtime = directory / "runtime"
+    for pin in owner["pins"]["files"]:
+        if hashlib.sha256((runtime / pin["relative"]).read_bytes()).hexdigest() != pin["sha256"]:
+            raise RuntimeError("fixture_privacy_pin_mismatch")
+    module = runtime / "qml/ValMAX/Native"
+    for name in ("qmldir", "SettingsTransport.qml", "ChatLockTransport.qml", "valmaxnativeplugin.dll"):
+        shutil.copy2(Path("C:/ValMAXBuild/build/qt-privacy-bridge/qml/ValMAX/Native") / name, module / name)
+    shutil.copy2("C:/ValMAXBuild/build/hooks/valmax_privacy.dll", runtime / "valmax_privacy.dll")
+    if hashlib.sha256((runtime / "valmax_privacy.dll").read_bytes()).hexdigest() != owner["dllSha256"]:
+        raise RuntimeError("fixture_verifier_mismatch")
+    build = json.loads((directory / "build-proof.json").read_text())
+    base.build_mod.verify(runtime / "mod-manifest.json")
+    output = directory / ("privacy-run-" + uuid.uuid4().hex); base.prepare_profile(output)
+    original = output / "profile/qt/11/MXMOD/config.json"
+    config = json.loads(original.read_text()); namespace = build["namespace"]
+    config.update(app_folder_name=namespace,single_instance_id=namespace.lower()+"_instance",
+        local_server_pipe_name=namespace.lower()+"_local_pipe",client_friendly_name="ValMAX Native OFFLINE QA",is_qrcode_login_first=False)
+    target = original.parent.with_name(namespace); target.mkdir(); (target / "config.json").write_text(json.dumps(config))
+    original.unlink(); original.parent.rmdir()
+    probe = PrivacyProbe(directory,output,namespace); result = probe.run(15)
+    verified = not result["guardFailed"] and all(probe.privacy.get(key) is True for key in
+        ("loaded","observed","verifiedInstallation","shutdownOk","verifierOwned"))
+    verified = verified and probe.privacy.get("hostRevoked",0)>0 and probe.privacy.get("ready") is False
+    verified = verified and all(probe.native.get(key) is True for key in ("bridge","rows","scroll","pool","pluginOwned","rust"))
+    proof = {"schema":1,"verified":verified,"fixture":str(directory),"run":str(output),"guardFailed":result["guardFailed"],
+        "native":probe.native,"privacy":probe.privacy,"guards":probe.guard_checks,"namespace":namespace,
+        "offline":True,"anonymous":True,"serviceRuntimeVerified":False,"noRustContextNeeded":True,
+        "installedCopyChanged":False,"realProfilesAccessed":False,"temporaryGuardIsDevToolOnly":True,
+        "mainProcessOnly":True,"noNetworkAbsenceGuarantee":True,
+        "hashes":{name:hashlib.sha256((runtime/name).read_bytes()).hexdigest() for name in
+            ("max.exe","core.dll","valmax_privacy.dll","valmax_core.dll","Qt6Core.dll","Qt6Qml.dll","Qt6Quick.dll")},
+        "pluginSha256":hashlib.sha256((module/"valmaxnativeplugin.dll").read_bytes()).hexdigest()}
+    (base.PROJECT/"analysis/native-migration-v1/qt-privacy-max-proof.json").write_text(json.dumps(proof,indent=2))
+    print(json.dumps({key:proof[key] for key in ("verified","fixture","guardFailed","privacy","native")}))
+    return 0 if verified else 1
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

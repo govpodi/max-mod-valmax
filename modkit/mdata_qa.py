@@ -21,7 +21,7 @@ def main():
     fonts=args.output/"fonts";fonts.mkdir(exist_ok=True)
     for name in ("arial.ttf","arialbd.ttf"):shutil.copyfile(Path(r"C:\Windows\Fonts")/name,fonts/name)
     os.environ["QT_QPA_FONTDIR"]=str(fonts.resolve())
-    from PySide6.QtCore import QObject,Property,Slot,QEventLoop,QMetaObject,QTimer,QUrl,Qt,QtMsgType,Q_ARG,qInstallMessageHandler,qVersion
+    from PySide6.QtCore import QObject,Property,Signal,Slot,QEventLoop,QMetaObject,QTimer,QUrl,Qt,QtMsgType,Q_ARG,qInstallMessageHandler,qVersion
     from PySide6.QtGui import QFont,QGuiApplication
     from PySide6.QtQml import QQmlEngine,QQmlComponent,qmlRegisterSingletonInstance,qmlRegisterType
     from PySide6.QtQuick import QQuickItem
@@ -47,12 +47,15 @@ def main():
         @Slot()
         def closeMessenger(self):self.close_calls+=1
     class FakeApplication(QObject):
-        @Property("QVariantList",constant=True)
-        def accountModel(self):return [{"accountId":rid,"dependency":{"commonDependency":{"selfInfo":{"id":rid,"name":name}}}} for rid,name in (("42","Личный аккаунт"),("7","Работа"))]
+        accountModelChanged=Signal()
+        def __init__(self):super().__init__();self.rows=[("42","Личный аккаунт"),("7","Работа"),("9","Третий")]
+        @Property("QVariantList",notify=accountModelChanged)
+        def accountModel(self):return [{"accountId":rid,"dependency":{"commonDependency":{"selfInfo":{"id":rid,"name":name}}}} for rid,name in self.rows]
+        def removeAccount(self,rid):self.rows=[row for row in self.rows if row[0]!=rid];self.accountModelChanged.emit()
     class FakeQmlUtils(QObject):
         @Slot(str,result=str)
         def contactIdString(self,value):return value
-    state={"schema":1,"available":True,"state":"idle","action":None,"error":None,"profiles":2,"backupAvailable":True}
+    state={"schema":1,"available":True,"state":"idle","action":None,"error":None,"profiles":3,"backupAvailable":True}
     flags={"ack":"valid","preview":"valid","post_stall":False,"get_stall":False}
     release_post,release_get=threading.Event(),threading.Event()
     traffic=[]
@@ -80,7 +83,7 @@ def main():
                 self.reply(200,preview);return
             action="export" if self.path=="/mdata/export-selected" else "import" if self.path=="/mdata/import-confirmed" else value["action"]
             result={"schema":1,"state":"waiting_for_exit","accepted":True,"action":action}
-            if action=="export":result.update(state="done",result="exported",profiles=1 if self.path=="/mdata/export-selected" else 2)
+            if action=="export":result.update(state="done",result="exported",profiles=len(value["accountIds"]) if self.path=="/mdata/export-selected" else len(fake_application.rows))
             if flags["ack"]=="not_accepted":result["accepted"]=False
             elif flags["ack"]=="wrong_action":result["action"]="different"
             elif flags["ack"]=="wrong_state":result["state"]="waiting_for_exit" if action=="export" else "done"
@@ -223,6 +226,7 @@ ApplicationWindow {
         return items
     def posts():return [r for r in traffic if r["method"]=="POST"]
     def gets():return [r for r in traffic if r["method"]=="GET"]
+    def value_of(value):return value.toVariant() if hasattr(value,"toVariant") else value
     def open_dialog(action="export",file="file:///D:/Synthetic-MData.mdata"):
         assert QMetaObject.invokeMethod(page,"openPasswordDialog",Qt.DirectConnection,Q_ARG("QVariant",action),Q_ARG("QVariant",file));settle();return page.property("activeDialog")
     def confirm(dialog):assert QMetaObject.invokeMethod(dialog,"confirmClicked",Qt.DirectConnection);settle()
@@ -276,11 +280,37 @@ ApplicationWindow {
     dialog=open_dialog();secret(dialog);confirm(dialog)
     assert posts()[-1]["path"]=="/mdata/export-selected" and posts()[-1]["accountIds"]==["42"] and delegate.close_calls==0
     assert QMetaObject.invokeMethod(named("mdataExportAccount_7"),"clicked",Qt.DirectConnection);settle()
-    dialog=open_dialog();assert dialog.property("exportAccountName")=="Работа";secret(dialog);confirm(dialog)
+    dialog=open_dialog();assert dialog is not None,(page.property("exportScope"),value_of(page.property("selectedExportAccounts")),page.property("statusText"),warnings)
+    assert dialog.property("exportAccountName")=="Работа";secret(dialog);confirm(dialog)
     assert posts()[-1]["path"]=="/mdata/export-selected" and posts()[-1]["accountIds"]==["7"] and delegate.close_calls==0
+    assert QMetaObject.invokeMethod(named("mdataExportAccount_42"),"clicked",Qt.DirectConnection);settle()
+    assert page.property("exportScope")=="subset"
+    assert named("mdataExportAccount_7").property("text").endswith(" · выбран")
+    assert named("mdataExportAccount_42").property("text").endswith(" · выбран")
+    dialog=open_dialog();assert value_of(dialog.property("exportAccountIds"))==["7","42"]
+    assert any(item.property("text")=="Выбрано аккаунтов: 2\nID: 7, 42" and item.property("qaPlainText") is True for item in visual_items())
+    screen("mdata-subset-light-650")
+    secret(dialog);confirm(dialog)
+    assert posts()[-1]["path"]=="/mdata/export-selected" and posts()[-1]["accountIds"]==["7","42"] and delegate.close_calls==0
+    assert QMetaObject.invokeMethod(named("mdataExportAccount_7"),"clicked",Qt.DirectConnection);settle()
+    assert page.property("exportScope")=="one"
+    assert QMetaObject.invokeMethod(named("mdataExportAccount_42"),"clicked",Qt.DirectConnection);settle()
+    dialog=open_dialog();assert dialog.property("exportAccountName")=="Личный аккаунт"
+    secret(dialog);confirm(dialog)
+    assert posts()[-1]["path"]=="/mdata/export-selected" and posts()[-1]["accountIds"]==["42"]
+    assert QMetaObject.invokeMethod(named("mdataExportAccount_7"),"clicked",Qt.DirectConnection);settle()
+    assert QMetaObject.invokeMethod(named("mdataExportAccount_9"),"clicked",Qt.DirectConnection);settle()
+    assert page.property("exportScope")=="subset"
+    assert QMetaObject.invokeMethod(page,"toggleExportAccount",Qt.DirectConnection,Q_ARG("QVariant","999"),Q_ARG("QVariant","Fourth"));settle()
+    dialog=open_dialog();assert value_of(dialog.property("exportAccountIds"))==["42","7","9"]
+    cancel(dialog)
+    fake_application.removeAccount("9");settle()
+    assert "9" not in value_of(page.property("modelExportAccountIds"))
+    post_count=len(posts());assert open_dialog() is None and len(posts())==post_count and delegate.close_calls==0
     assert QMetaObject.invokeMethod(named("mdataExportAll"),"clicked",Qt.DirectConnection);settle()
-    assert page.property("exportScope")=="all"
-    checks.append("real native-model synthetic delegates select current/specific/all export scope; current and specific use selected-only route with canonical IDs; default all retains old export contract")
+    dialog=open_dialog();secret(dialog);confirm(dialog)
+    assert posts()[-1]["path"]=="/mdata" and posts()[-1]["accountIds"] is None and delegate.close_calls==0
+    checks.append("real native-model synthetic delegates select current/one/subset/all export scope; two of three use exact selected-only IDs, a removed account never falls back to all, and legacy all retains its route")
     reset();dialog=open_dialog("import")
     assert dialog.property("restoreMode")=="add" and not named("mdataPasswordConfirmation").isVisible()
     assert dialog.property("subtitle")=="Сначала проверим MData и покажем аккаунты. Вход выполняется только после отдельного подтверждения."

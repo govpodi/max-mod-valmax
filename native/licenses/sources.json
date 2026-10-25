@@ -1,0 +1,15 @@
+{
+  "schema": 1,
+  "completeInstallerLicenseInventory": false,
+  "components": [
+    {
+      "name": "Frida Gum",
+      "version": "17.23.3",
+      "source": "https://github.com/frida/frida-gum/tree/17.23.3",
+      "licenseFile": "frida-gum-COPYING.txt",
+      "licenseSource": "https://raw.githubusercontent.com/frida/frida-gum/17.23.3/COPYING",
+      "licenseSha256": "00764fcc23f0f2ac6d2619a1f9192e55176ecaaa525e76a47aaabc5d87fb087f",
+      "notes": "C-only devkit; static transitive dependency notices and relinking materials must be included in final package inventory. No GumJS or Frida server is used by native/hooks."
+    }
+  ]
+}

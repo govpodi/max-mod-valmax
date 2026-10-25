@@ -1,0 +1,8 @@
+add_library(valmax_profile_client STATIC profile_client.cpp profile_client.h)
+target_link_libraries(valmax_profile_client PUBLIC valmax_transfer_mutex)
+target_compile_options(valmax_profile_client PRIVATE /W4 /WX /permissive- /utf-8)
+add_executable(valmax_profile_client_test profile_client.cpp transfer_mutex.cpp ../tests/launcher/profile_client_test.cpp)
+target_compile_definitions(valmax_profile_client_test PRIVATE WIN32_LEAN_AND_MEAN NOMINMAX VALMAX_TRANSFER_TESTING)
+target_include_directories(valmax_profile_client_test PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}")
+target_compile_options(valmax_profile_client_test PRIVATE /W4 /WX /permissive- /utf-8)
+add_test(NAME profile_client_synthetic_abi COMMAND valmax_profile_client_test)

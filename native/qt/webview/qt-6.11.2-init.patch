@@ -1,0 +1,348 @@
+--- a/src/plugins/windows/qwebview2webview.cpp
++++ b/src/plugins/windows/qwebview2webview.cpp
+@@ -46,13 +46,18 @@
+ {
+ }
+ 
+-void QWebview2WebViewSettingsPrivate::init(ICoreWebView2Controller* viewController)
+-{
+-    if (viewController != nullptr) {
+-        m_webviewController = viewController;
+-        HRESULT hr = m_webviewController->get_CoreWebView2(&m_webview);
+-        Q_ASSERT_SUCCEEDED(hr);
+-    }
++bool QWebview2WebViewSettingsPrivate::init(ICoreWebView2Controller* viewController)
++{
++    if (!viewController) return false;
++    m_webviewController = viewController;
++    const HRESULT hr = m_webviewController->get_CoreWebView2(&m_webview);
++    return SUCCEEDED(hr) && m_webview;
++}
++
++void QWebview2WebViewSettingsPrivate::clear()
++{
++    m_webview.Reset();
++    m_webviewController.Reset();
+ }
+ 
+ bool QWebview2WebViewSettingsPrivate::doTestAttribute(WebAttribute attribute) const
+@@ -122,7 +127,7 @@
+ 
+     ComPtr<ICoreWebView2Settings> settings;
+     HRESULT hr = m_webview->get_Settings(&settings);
+-    Q_ASSERT_SUCCEEDED(hr);
++    if (FAILED(hr) || !settings) return;
+     hr = settings->put_IsScriptEnabled(enabled);
+     Q_ASSERT_SUCCEEDED(hr);
+ }
+@@ -160,6 +165,13 @@
+ 
+ void QWebView2WebViewPrivate::initialize(HWND hWnd)
+ {
++    const QString fixedRuntime = qEnvironmentVariable("WEBVIEW2_BROWSER_EXECUTABLE_FOLDER");
++    if (!QDir::isAbsolutePath(fixedRuntime)
++        || !QFileInfo(fixedRuntime + QStringLiteral("/msedgewebview2.exe")).isFile()
++        || !m_dataDirectoryPins.prepare(qEnvironmentVariable("WEBVIEW2_USER_DATA_FOLDER"))) {
++        initializationFailed();
++        return;
++    }
+     connect(m_window, &QWindow::widthChanged, this,
+             &QWebView2WebViewPrivate::updateWindowGeometry, Qt::QueuedConnection);
+     connect(m_window, &QWindow::heightChanged, this,
+@@ -168,52 +180,66 @@
+             &QWebView2WebViewPrivate::updateWindowGeometry, Qt::QueuedConnection);
+ 
+     QPointer<QWebView2WebViewPrivate> thisPtr = this;
+-    const QString userDataFolder = QStandardPaths::writableLocation(QStandardPaths::AppLocalDataLocation) % QDir::separator() % QLatin1StringView("WebView2");
++    QTimer::singleShot(10000, this, [this] {
++        if (!m_initializationComplete && !m_initializationFailed)
++            initializationFailed();
++    });
++    const QString userDataFolder = qEnvironmentVariable("WEBVIEW2_USER_DATA_FOLDER");
+     using W2ControllerCallback = ICoreWebView2CreateCoreWebView2ControllerCompletedHandler;
+     auto controllerCallback = Microsoft::WRL::Callback<W2ControllerCallback>(
+             [thisPtr, this](HRESULT result, ICoreWebView2Controller *controller) -> HRESULT {
+-                if (thisPtr.isNull())
++                if (thisPtr.isNull()) {
++                    if (controller) controller->Close();
+                     return S_FALSE;
+-
+-                if (!controller)
++                }
++
++                if (m_initializationFailed) {
++                    if (controller) controller->Close();
+                     return S_FALSE;
++                }
++                if (FAILED(result) || !controller) {
++                    if (controller) controller->Close();
++                    return thisPtr.isNull() ? E_FAIL : initializationFailed();
++                }
+                 HRESULT hr;
+                 m_webviewController = controller;
+                 hr = m_webviewController->get_CoreWebView2(&m_webview);
+-                Q_ASSERT_SUCCEEDED(hr);
++                if (FAILED(hr) || !m_webview) return initializationFailed();
+ 
+                 ComPtr<ICoreWebView2_2> webview2;
+                 hr = m_webview->QueryInterface(IID_PPV_ARGS(&webview2));
+-                Q_ASSERT_SUCCEEDED(hr);
++                if (FAILED(hr) || !webview2) return initializationFailed();
+                 hr = webview2->get_CookieManager(&m_cookieManager);
+-                Q_ASSERT_SUCCEEDED(hr);
+-
+-                m_settings->init(m_webviewController.Get());
++                if (FAILED(hr) || !m_cookieManager) return initializationFailed();
++
++                if (!m_settings->init(m_webviewController.Get())) return initializationFailed();
+ 
+                 // Add a few settings for the webview
+                 ComPtr<ICoreWebView2Settings> settings;
+                 hr = m_webview->get_Settings(&settings);
+-                Q_ASSERT_SUCCEEDED(hr);
++                if (FAILED(hr) || !settings) return initializationFailed();
+                 hr = settings->put_IsScriptEnabled(m_settings->javaScriptEnabled());
+-                Q_ASSERT_SUCCEEDED(hr);
++                if (FAILED(hr)) return initializationFailed();
+                 hr = settings->put_AreDefaultScriptDialogsEnabled(TRUE);
+-                Q_ASSERT_SUCCEEDED(hr);
++                if (FAILED(hr)) return initializationFailed();
+                 hr = settings->put_IsWebMessageEnabled(TRUE);
+-                Q_ASSERT_SUCCEEDED(hr);
++                if (FAILED(hr)) return initializationFailed();
+ 
+                 // Schedule an async task to navigate to the url
+                 // Because this is a callback and it might be triggered with a delay
+                 if (!m_url.isEmpty() && m_url.isValid() && !m_url.scheme().isEmpty()) {
+                     hr = m_webview->Navigate((wchar_t *)m_url.toString().utf16());
+-                    Q_ASSERT_SUCCEEDED(hr);
++                    if (FAILED(hr)) return initializationFailed();
+                 } else if (!m_initData.m_html.isEmpty()) {
+                     hr = m_webview->NavigateToString((wchar_t *)m_initData.m_html.utf16());
+-                    Q_ASSERT_SUCCEEDED(hr);
++                    if (FAILED(hr)) return initializationFailed();
+                 }
+                 if (m_initData.m_cookies.size() > 0) {
+                     for (auto it = m_initData.m_cookies.constBegin();
+-                         it != m_initData.m_cookies.constEnd(); ++it)
++                         it != m_initData.m_cookies.constEnd(); ++it) {
+                         setCookie(it->domain, it->name, it.value().value);
++                        if (thisPtr.isNull() || m_initializationFailed) return S_FALSE;
++                    }
+                 }
+                 if (!m_initData.m_httpUserAgent.isEmpty()) {
+                     ComPtr<ICoreWebView2Settings2> settings2;
+@@ -233,61 +259,63 @@
+                 EventRegistrationToken token;
+                 hr = m_webview->add_NavigationStarting(
+                         Microsoft::WRL::Callback<ICoreWebView2NavigationStartingEventHandler>(
+-                                [this](ICoreWebView2 *webview,
++                                [thisPtr](ICoreWebView2 *webview,
+                                        ICoreWebView2NavigationStartingEventArgs *args) -> HRESULT {
+-                                    return this->onNavigationStarting(webview, args);
++                                    return thisPtr.isNull() ? S_FALSE : thisPtr->onNavigationStarting(webview, args);
+                                 })
+                                 .Get(),
+                         &token);
+-                Q_ASSERT_SUCCEEDED(hr);
++                if (FAILED(hr)) return initializationFailed();
+ 
+                 hr = m_webview->add_NavigationCompleted(
+                         Microsoft::WRL::Callback<ICoreWebView2NavigationCompletedEventHandler>(
+-                                [this](ICoreWebView2 *webview,
++                                [thisPtr](ICoreWebView2 *webview,
+                                        ICoreWebView2NavigationCompletedEventArgs *args) -> HRESULT {
+-                                    return this->onNavigationCompleted(webview, args);
++                                    return thisPtr.isNull() ? S_FALSE : thisPtr->onNavigationCompleted(webview, args);
+                                 })
+                                 .Get(),
+                         &token);
+-                Q_ASSERT_SUCCEEDED(hr);
+-
+-                m_webview->add_WebResourceRequested(
++                if (FAILED(hr)) return initializationFailed();
++
++                hr = m_webview->add_WebResourceRequested(
+                         Microsoft::WRL::Callback<ICoreWebView2WebResourceRequestedEventHandler>(
+-                                [this](ICoreWebView2 *webview,
++                                [thisPtr](ICoreWebView2 *webview,
+                                        ICoreWebView2WebResourceRequestedEventArgs *args)
+                                         -> HRESULT {
+-                                    return this->onWebResourceRequested(webview, args);
++                                    return thisPtr.isNull() ? S_FALSE : thisPtr->onWebResourceRequested(webview, args);
+                                 })
+                                 .Get(),
+                         &token);
++                if (FAILED(hr)) return initializationFailed();
+ 
+                 hr = m_webview->add_ContentLoading(
+                         Microsoft::WRL::Callback<ICoreWebView2ContentLoadingEventHandler>(
+-                                [this](ICoreWebView2 *webview,
++                                [thisPtr](ICoreWebView2 *webview,
+                                        ICoreWebView2ContentLoadingEventArgs *args) -> HRESULT {
+-                                    return this->onContentLoading(webview, args);
++                                    return thisPtr.isNull() ? S_FALSE : thisPtr->onContentLoading(webview, args);
+                                 })
+                                 .Get(),
+                         &token);
+-                Q_ASSERT_SUCCEEDED(hr);
++                if (FAILED(hr)) return initializationFailed();
+ 
+                 hr = m_webview->add_NewWindowRequested(
+                         Microsoft::WRL::Callback<ICoreWebView2NewWindowRequestedEventHandler>(
+-                                [this](ICoreWebView2 *webview,
++                                [thisPtr](ICoreWebView2 *webview,
+                                        ICoreWebView2NewWindowRequestedEventArgs *args) -> HRESULT {
+-                                    return this->onNewWindowRequested(webview, args);
++                                    return thisPtr.isNull() ? S_FALSE : thisPtr->onNewWindowRequested(webview, args);
+                                 })
+                                 .Get(),
+                         &token);
+-                Q_ASSERT_SUCCEEDED(hr);
++                if (FAILED(hr)) return initializationFailed();
+ 
+                 ComPtr<ICoreWebView2_22> webview22;
+                 hr = m_webview->QueryInterface(IID_PPV_ARGS(&webview22));
+-                Q_ASSERT_SUCCEEDED(hr);
++                if (FAILED(hr) || !webview22) return initializationFailed();
+                 hr = webview22->AddWebResourceRequestedFilterWithRequestSourceKinds(
+                         L"file://*", COREWEBVIEW2_WEB_RESOURCE_CONTEXT_ALL,
+                         COREWEBVIEW2_WEB_RESOURCE_REQUEST_SOURCE_KINDS_ALL);
+-                Q_ASSERT_SUCCEEDED(hr);
++                if (FAILED(hr)) return initializationFailed();
++                m_initializationComplete = true;
+                 this->updateWindowGeometry();
+                 return S_OK;
+             });
+@@ -295,15 +323,49 @@
+     auto environmentCallback = Microsoft::WRL::Callback<W2EnvironmentCallback>(
+             [hWnd, thisPtr, controllerCallback, this](HRESULT result,
+                                                       ICoreWebView2Environment *env) -> HRESULT {
+-                env->CreateCoreWebView2Controller(hWnd, controllerCallback.Get());
+-                return S_OK;
++                if (thisPtr.isNull() || m_initializationFailed)
++                    return S_FALSE;
++                if (FAILED(result) || !env)
++                    return initializationFailed();
++                const HRESULT hr = env->CreateCoreWebView2Controller(hWnd, controllerCallback.Get());
++                if (thisPtr.isNull()) return S_FALSE;
++                return FAILED(hr) ? initializationFailed() : S_OK;
+             });
+-    CreateCoreWebView2EnvironmentWithOptions(nullptr, userDataFolder.toStdWString().c_str(),
+-                                             nullptr, environmentCallback.Get());
++    const HRESULT hr = CreateCoreWebView2EnvironmentWithOptions(nullptr, userDataFolder.toStdWString().c_str(),
++                                                               nullptr, environmentCallback.Get());
++    if (!thisPtr.isNull() && FAILED(hr)) initializationFailed();
++}
++
++// ValMAX: finite failure on missing/corrupt/unavailable native browser.
++HRESULT QWebView2WebViewPrivate::initializationFailed()
++{
++    if (m_initializationFailed) return E_FAIL;
++    m_initializationFailed = true;
++    m_isLoading = false;
++    m_progress = 0;
++    QPointer<QWebView2WebViewPrivate> alive(this);
++    QPointer<QWebView> view(q_ptr);
++    const auto info = QWebViewFactory::LoadingInfo::create(
++        m_url, QWebViewLoadingInfo::LoadStatus::Failed,
++        QStringLiteral("Не удалось открыть вкладку бизнеса. Попробуйте ещё раз."));
++    const auto controller = m_webviewController;
++    m_settings->clear();
++    m_cookieManager.Reset();
++    m_webview.Reset();
++    m_webviewController.Reset();
++    if (controller) controller->Close();
++    if (alive.isNull() || view.isNull()) return E_FAIL;
++    emit view->loadProgressChanged(0);
++    if (alive.isNull() || view.isNull()) return E_FAIL;
++    emit view->loadingChanged(info);
++    return E_FAIL;
+ }
+ 
+ QWebView2WebViewPrivate::~QWebView2WebViewPrivate()
+ {
++    m_initializationFailed = true;
++    m_settings->clear();
++    if (m_webviewController) m_webviewController->Close();
+     m_webviewController = nullptr;
+     m_webview = nullptr;
+ }
+@@ -577,6 +639,7 @@
+ 
+ HRESULT QWebView2WebViewPrivate::onNavigationStarting(ICoreWebView2* webview, ICoreWebView2NavigationStartingEventArgs* args)
+ {
++    if (m_initializationFailed) return S_FALSE;
+     wchar_t *uri;
+     HRESULT hr = args->get_Uri(&uri);
+     Q_ASSERT_SUCCEEDED(hr);
+@@ -590,6 +653,7 @@
+ 
+ HRESULT QWebView2WebViewPrivate::onNavigationCompleted(ICoreWebView2* webview, ICoreWebView2NavigationCompletedEventArgs* args)
+ {
++    if (m_initializationFailed) return S_FALSE;
+     m_isLoading = false;
+     m_progress = 100;
+ 
+@@ -618,6 +682,7 @@
+ 
+ HRESULT QWebView2WebViewPrivate::onWebResourceRequested(ICoreWebView2* sender, ICoreWebView2WebResourceRequestedEventArgs* args)
+ {
++    if (m_initializationFailed) return S_FALSE;
+     ComPtr<ICoreWebView2WebResourceRequest> request;
+     ComPtr<ICoreWebView2WebResourceResponse> response;
+     HRESULT hr = args->get_Request(&request);
+@@ -644,6 +709,7 @@
+ 
+ HRESULT QWebView2WebViewPrivate::onContentLoading(ICoreWebView2* webview, ICoreWebView2ContentLoadingEventArgs* args)
+ {
++    if (m_initializationFailed) return S_FALSE;
+     m_isLoading = true;
+     m_progress = 0;
+     emit q_ptr->loadingChanged(QWebViewFactory::LoadingInfo::create(
+@@ -654,6 +720,7 @@
+ 
+ HRESULT QWebView2WebViewPrivate::onNewWindowRequested(ICoreWebView2* webview, ICoreWebView2NewWindowRequestedEventArgs* args)
+ {
++    if (m_initializationFailed) return S_FALSE;
+     Q_UNUSED(webview);
+     // This blocks the spawning of new windows we don't control
+     // FIXME actually handle new windows when QWebView has the API for them
+--- a/src/plugins/windows/qwebview2webview_p.h
++++ b/src/plugins/windows/qwebview2webview_p.h
+@@ -8,6 +8,7 @@
+ #include <private/qwebview_p.h>
+ 
+ #include <QMap>
++#include "user_data_preflight.h"
+ #include <QPointer>
+ #include <QtCore/qurl.h>
+ #include <webview2.h>
+@@ -23,7 +24,8 @@
+ public:
+     explicit QWebview2WebViewSettingsPrivate();
+ 
+-    void init(ICoreWebView2Controller* viewController);
++    bool init(ICoreWebView2Controller* viewController);
++    void clear();
+ 
+     bool localStorageEnabled() const;
+     bool javaScriptEnabled() const;
+@@ -98,6 +100,7 @@
+     HRESULT onNewWindowRequested(ICoreWebView2* webview, ICoreWebView2NewWindowRequestedEventArgs* args);
+     void updateWindowGeometry();
+     void initialize(HWND hWnd);
++    HRESULT initializationFailed();
+ 
+ protected:
+     QWebViewSettingsPrivate *settings() const override;
+@@ -109,6 +112,9 @@
+     QWebview2WebViewSettingsPrivate *m_settings;
+     QWindow *m_window;
+     bool m_isLoading;
++    bool m_initializationComplete = false;
++    bool m_initializationFailed = false;
++    ValmaxWebViewDataPins m_dataDirectoryPins;
+     int m_progress;
+     QUrl m_url;
+     QWebViewInitData m_initData;

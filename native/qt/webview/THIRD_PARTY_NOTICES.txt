@@ -1,0 +1,33 @@
+ValMAX native business WebView component
+
+Qt WebView 6.11.2
+Copyright (C) 2025 The Qt Company Ltd.
+The Qt backend sources are available under LGPL-3.0-only (also offered by Qt
+under GPL or a commercial license). Their original copyright/SPDX headers are
+preserved. This distribution uses a dynamically replaceable Qt plugin.
+The ValMAX initialization and lifetime changes are identified in
+qt-6.11.2-init.patch. The accompanying corresponding-source archive contains
+the Qt module, modified backend, extra helper, build instructions, and Qt
+license texts. ValMAX's MIT license does not replace the Qt license.
+Upstream: https://github.com/qt/qtwebview/tree/v6.11.2
+
+Microsoft.Web.WebView2 SDK 1.0.4258.31
+Copyright (C) Microsoft Corporation. All rights reserved.
+WebView2LoaderStatic.lib is linked into the plugin. The SDK's LICENSE.txt and
+NOTICE.txt are included unmodified under Microsoft-WebView2-SDK/.
+Package: https://www.nuget.org/packages/Microsoft.Web.WebView2/1.0.4258.31
+
+Microsoft Edge WebView2 Fixed Version Runtime 155.0.4283.60 (x64)
+This is the separate official Microsoft runtime, distributed unmodified.
+It is not covered by ValMAX's MIT license. Preserve its full directory and
+included third-party license resources; do not strip DLLs or license files.
+The release packager must include applicable Microsoft redistribution terms
+alongside this notice. This file does not grant additional rights.
+Distribution documentation:
+https://learn.microsoft.com/en-us/microsoft-edge/webview2/concepts/distribution
+Official download and terms:
+https://developer.microsoft.com/en-us/microsoft-edge/webview2/
+
+The generated source archive and notices must accompany a release of the
+modified Qt backend. Do not package the timeout-test DLL or synthetic test
+programs; those deliberately contain a fake COM loader.

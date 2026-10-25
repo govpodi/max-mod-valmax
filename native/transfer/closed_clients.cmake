@@ -1,0 +1,6 @@
+add_library(valmax_closed_clients STATIC "${CMAKE_CURRENT_LIST_DIR}/closed_clients.cpp" "${CMAKE_CURRENT_LIST_DIR}/closed_clients.h")
+target_compile_features(valmax_closed_clients PUBLIC cxx_std_20)
+target_compile_definitions(valmax_closed_clients PUBLIC WIN32_LEAN_AND_MEAN NOMINMAX)
+target_include_directories(valmax_closed_clients PUBLIC "${CMAKE_CURRENT_LIST_DIR}")
+target_link_libraries(valmax_closed_clients PUBLIC bcrypt)
+target_compile_options(valmax_closed_clients PRIVATE /W4 /WX /permissive- /utf-8)

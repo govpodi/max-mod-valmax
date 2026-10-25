@@ -13,8 +13,8 @@ Component {
         property var pendingRequest: null
         property var activeDialog: null
         property string exportScope: "all"
-        property string selectedExportAccountId: ""
-        property string selectedExportAccountName: ""
+        property var selectedExportAccounts: []
+        property var modelExportAccountIds: []
         readonly property string currentExportAccountId: currentAccountId()
         readonly property bool busy: pendingRequest !== null || operationState === "waiting_for_exit" || operationState === "working"
         readonly property real gap: UiKit.DesignSystem.SpacingCommon._M
@@ -79,10 +79,50 @@ Component {
             try { return String(root.selfInfo.name).slice(0, 128); }
             catch (_) { return ""; }
         }
+        function exportAccountSelected(id) {
+            if (exportScope !== "one" && exportScope !== "subset") return false;
+            return Array.isArray(selectedExportAccounts) && selectedExportAccounts.some(function(row) { return row.id === id; });
+        }
+        function rememberExportAccount(id) {
+            if (!validAccountId(id)) return;
+            var ids = modelExportAccountIds.slice();
+            ids.push(id);
+            modelExportAccountIds = ids;
+        }
+        function forgetExportAccount(id) {
+            var ids = modelExportAccountIds.slice();
+            var index = ids.indexOf(id);
+            if (index >= 0) ids.splice(index, 1);
+            modelExportAccountIds = ids;
+        }
+        function toggleExportAccount(id, name) {
+            if (busy || !validAccountId(id)) return;
+            var rows = (exportScope === "one" || exportScope === "subset") && Array.isArray(selectedExportAccounts) ? selectedExportAccounts.slice() : [];
+            var index = rows.findIndex(function(row) { return row.id === id; });
+            if (index >= 0) {
+                if (rows.length === 1) return;
+                rows.splice(index, 1);
+            } else {
+                if (rows.length === 3) return;
+                rows.push({id: id, name: name});
+            }
+            selectedExportAccounts = rows;
+            exportScope = rows.length === 1 ? "one" : "subset";
+        }
         function selectedExportIds() {
             if (exportScope === "all") return [];
-            var id = exportScope === "current" ? currentExportAccountId : selectedExportAccountId;
-            return validAccountId(id) ? [id] : null;
+            if (exportScope === "current") return validAccountId(currentExportAccountId) ? [currentExportAccountId] : null;
+            if (exportScope !== "one" && exportScope !== "subset") return null;
+            var rows = selectedExportAccounts;
+            if (!Array.isArray(rows) || rows.length < 1 || rows.length > 3
+                    || (exportScope === "one") !== (rows.length === 1)) return null;
+            var ids = [];
+            for (var j = 0; j < rows.length; ++j) {
+                var selectedId = rows[j] && rows[j].id;
+                if (!validAccountId(selectedId) || modelExportAccountIds.indexOf(selectedId) < 0 || ids.indexOf(selectedId) >= 0) return null;
+                ids.push(selectedId);
+            }
+            return ids;
         }
         function unicodeLength(value, limit) {
             // QJSEngine's Array.from(string) iterates UTF-16 code units in
@@ -113,7 +153,8 @@ Component {
             if (busy || !available || activeDialog !== null) return;
             var selected = action === "export" ? selectedExportIds() : [];
             if (selected === null) { showError("Выбери аккаунт для MData заново.", null); return; }
-            activeDialog = passwordDialogComponent.createObject(Overlay.overlay, {transferAction: action, selectedFile: file, exportAccountIds: selected, exportAccountName: exportScope === "current" ? currentAccountName() : selectedExportAccountName});
+            var accountName = action !== "export" ? "" : exportScope === "current" ? currentAccountName() : exportScope === "one" ? selectedExportAccounts[0].name : "";
+            activeDialog = passwordDialogComponent.createObject(Overlay.overlay, {transferAction: action, selectedFile: file, exportAccountIds: selected.slice(), exportAccountName: accountName});
             activeDialog.open();
         }
         function submit(dialog) {
@@ -337,7 +378,7 @@ Component {
                         padding: mdataPage.gap
                         background: Rectangle { color: mdataPage.maxwellColorTokens.colorBackgroundCard; radius: UiKit.DesignSystem.BorderRadiusCommon._S; border.color: mdataPage.maxwellColorTokens.colorDividerPrimary }
                     }
-                    MDataText { Layout.fillWidth: true; visible: passwordDialog.transferAction === "export"; text: passwordDialog.exportAccountIds.length ? "Выбранный аккаунт: " + (passwordDialog.exportAccountName || "Без имени") + "\nID: " + passwordDialog.exportAccountIds.join(", ") : "Все сохранённые аккаунты"; typography: Typography.FontUtil.Styles.Description; color: mdataPage.maxwellColorTokens.colorTextSecondary }
+                    MDataText { Layout.fillWidth: true; visible: passwordDialog.transferAction === "export"; text: passwordDialog.exportAccountIds.length === 0 ? "Все сохранённые аккаунты" : passwordDialog.exportAccountIds.length === 1 ? "Выбранный аккаунт: " + (passwordDialog.exportAccountName || "Без имени") + "\nID: " + passwordDialog.exportAccountIds[0] : "Выбрано аккаунтов: " + passwordDialog.exportAccountIds.length + "\nID: " + passwordDialog.exportAccountIds.join(", "); typography: Typography.FontUtil.Styles.Description; color: mdataPage.maxwellColorTokens.colorTextSecondary }
                     Repeater {
                         model: passwordDialog.previewAccounts
                         delegate: ColumnLayout {
@@ -374,6 +415,8 @@ Component {
                     Repeater {
                         id: exportAccounts
                         model: typeof application !== "undefined" && application.accountModel ? application.accountModel : null
+                        onItemAdded: function(index, item) { mdataPage.rememberExportAccount(item.localId); }
+                        onItemRemoved: function(index, item) { mdataPage.forgetExportAccount(item.localId); }
                         delegate: MDataButton {
                             required property var dependency
                             required property var accountId
@@ -381,9 +424,9 @@ Component {
                             readonly property string nativeName: String(dependency.commonDependency.selfInfo.name).slice(0, 128)
                             objectName: "mdataExportAccount_" + localId
                             Layout.fillWidth: true
-                            text: nativeName + (mdataPage.exportScope === "one" && mdataPage.selectedExportAccountId === localId ? " · выбран" : "")
+                            text: nativeName + (mdataPage.exportAccountSelected(localId) ? " · выбран" : "")
                             enabled: !mdataPage.busy && mdataPage.validAccountId(localId)
-                            onClicked: { mdataPage.selectedExportAccountId = localId; mdataPage.selectedExportAccountName = nativeName; mdataPage.exportScope = "one"; }
+                            onClicked: mdataPage.toggleExportAccount(localId, nativeName)
                         }
                     }
                 }

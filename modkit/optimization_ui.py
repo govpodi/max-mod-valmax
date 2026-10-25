@@ -133,12 +133,17 @@ def transform_menu(source):
 
 
 def transform_export_panel(source):
-    """Add the SDK pill at the start of the existing export-dialog body."""
+    """Replace the plain beta warning with the native SDK pill and same warning."""
     if type(source) is not str or PANEL_MARKER in source:
         raise ValueError("Export panel BETA requires untouched export panel")
     source = source.replace("\r\n", "\n")
+    warning = '''            UiKit.MeText { objectName: "valmaxExportBetaWarning"; Layout.fillWidth: true; text: exportDialog.nativeApi2ExportAvailable && exportDialog.exportMode === "api2-text"
+                ? "Бета: архив чата может быть неполным. Фото, видео и голосовые сохраняются, когда доступны (до 4 ГиБ на файл). Отдельный раздел содержит только входящие сообщения, полученные и локально сохранённые после включения функции; прежние и недоступные удаления не восстановятся. Возможны повторы и пропуски."
+                : "Бета: архив чата может быть неполным. В режиме «История из клиента» сохраняются показанные клиентом сообщения и доступные вложения. Локально сохранённые удаления в этот архив не входят; возможны пропуски."; wrapMode: Text.WordWrap; color: exportDialog.colors.colorTextAttention; typography: ExportTypography.FontUtil.Styles.Description }
+'''
+    source = once(source, warning, "")
     anchor = '''        dialogContentItem: ColumnLayout {
-            spacing: UiKit.DesignSystem.SpacingCommon._M
+            spacing: 8
 '''
     return once(source, anchor, anchor + '''            // VALMAX_EXPORT_PANEL_BETA
             RowLayout {
@@ -153,8 +158,11 @@ def transform_export_panel(source):
                     Accessible.name: "BETA · функция тестируется"
                 }
                 UiKit.MeText {
+                    objectName: "valmaxExportBetaExplanation"
                     Layout.fillWidth: true
-                    text: "Скачивание чата пока тестируется"
+                    text: exportDialog.nativeApi2ExportAvailable && exportDialog.exportMode === "api2-text"
+                        ? "Архив чата может быть неполным. Фото, видео и голосовые сохраняются, когда доступны (до 4 ГиБ на файл). Отдельный раздел содержит только входящие сообщения, полученные и локально сохранённые после включения функции; прежние и недоступные удаления не восстановятся. Возможны повторы и пропуски."
+                        : "Архив чата может быть неполным. В режиме «История из клиента» сохраняются показанные клиентом сообщения и доступные вложения. Локально сохранённые удаления в этот архив не входят; возможны пропуски."
                     wrapMode: Text.WordWrap
                     typography: ExportTypography.FontUtil.Styles.Description
                     color: exportDialog.colors.colorTextSecondary

@@ -267,14 +267,22 @@ def transform_export_panel(source):
         readonly property var valmaxChatLocks: parent && parent.Window.window ? parent.Window.window.valmaxChatLockController : null
         readonly property bool valmaxExportAllowed: valmaxChatLocks && !valmaxChatLocks.isLocked(ownId, chatIdText)
         property bool valmaxExportLockInitialized: false
-        Component.onCompleted: valmaxExportLockInitialized = true
-        onOpened: if (!valmaxExportAllowed) exportDialog.close()
         onValmaxExportAllowedChanged: {
             if (valmaxExportLockInitialized && !valmaxExportAllowed) {
                 destinationDialog.close();
                 if (busy) cancelExport();
                 exportDialog.close();
             }
+        }
+''')
+    source = once(source, "        Component.onCompleted: scopeArmed = true\n", '''        Component.onCompleted: {
+            scopeArmed = true
+            valmaxExportLockInitialized = true
+        }
+''')
+    source = once(source, "        onOpened: if (selectedScope && !validSelectedScope()) invalidateSelectedScope()\n", '''        onOpened: {
+            if (!valmaxExportAllowed) exportDialog.close()
+            else if (selectedScope && !validSelectedScope()) invalidateSelectedScope()
         }
 ''')
     source = once(source, "        function startExport(directory) {\n", '''        function startExport(directory) {

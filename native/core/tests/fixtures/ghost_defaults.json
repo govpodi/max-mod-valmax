@@ -1,0 +1,15 @@
+{
+  "canonical": "{\"schema\":1,\"settings\":{\"enabled\":false,\"hideOnline\":false,\"hideRead\":true,\"hideStories\":false,\"hideTyping\":true}}",
+  "snapshot": {
+    "schema": 1,
+    "revision": "47ca84aabf7756b144758d492fc7e8e02fb9afdac7422dc3fd36359233c7e32e",
+    "settings": {
+      "enabled": false,
+      "hideTyping": true,
+      "hideRead": true,
+      "hideOnline": false,
+      "hideStories": false
+    }
+  },
+  "sourceSha256": "a74b67b53812757c680f9461d5803e7071ece146e70a372513b39b147539e984"
+}

@@ -1,0 +1,67 @@
+ValMAX
+Ваше общение. Ваши правила.
+ВАЛ — Возможности · Автоматизация · Личный контроль.
+
+Запуск и настройки
+
+Открывай ValMAX обычным ярлыком. Если окно скрыто в трее, повторное открытие
+ярлыка возвращает его на экран. Чтобы полностью закрыть клиент перед
+обновлением, выбери «Выход» в меню его значка в трее.
+
+Возможности мода находятся в «Настройках». Пункты с плашкой BETA ещё проходят
+тестирование. В разделе «Оптимизация» можно включать отдельные улучшения;
+если изменение требует перезапуска, это будет указано на странице.
+
+Аккаунты и MData
+
+Программа и данные аккаунтов хранятся отдельно. Данные ValMAX используют
+прежнюю папку MXMOD в LocalAppData. Обычное удаление программы не удаляет
+эту папку. Не переноси её в каталог установки и не смешивай с папкой ONEME.
+
+Чтобы создать переносимый файл аккаунтов, открой «Настройки → MData», выбери
+аккаунты, место сохранения и пароль. Для входа используй «Войти с MData»
+на экране авторизации или в меню «Пуск». Следуй подтверждениям утилиты;
+запуск утилиты сам по себе ещё не означает успешный импорт.
+
+MData содержит данные для доступа к аккаунтам. Храни файл и пароль у себя;
+не прикладывай их к сообщениям об ошибках и не публикуй.
+
+Обновление
+
+Установщик проверяет, что клиент закрыт. При управляемом обновлении прежний
+каталог программы сохраняется рядом как резервная копия. Не запускай старую
+и новую копии одновременно. Резервная копия программы не заменяет MData
+и не является резервной копией данных аккаунтов.
+
+Связь с разработчиком: https://t.me/VALMAX_dev
+Канал проекта: https://t.me/VALMAX_github
+Проект и выпуски: https://github.com/govpodi/max-mod-valmax
+
+--------------------------------------------------------------------------
+
+ValMAX — Your conversations. Your rules.
+VAL — Versatility · Automation · Local control.
+
+Open ValMAX using its shortcut. Opening it again restores a hidden tray window.
+Before updating, choose Exit from the tray menu to close the client completely.
+
+Mod features are in Settings. BETA labels identify features under testing.
+The Optimization page shows when a change requires restarting the client.
+
+Account data uses the existing MXMOD folder in LocalAppData, separately from
+the application. Uninstalling the program leaves that folder in place.
+Keep it outside the installation folder and separate from ONEME.
+
+Use Settings → MData to export selected accounts into a password-protected
+file. Choose Sign in with MData on the login screen or in the Start menu to
+import it. Follow the utility's confirmations: starting the utility is not
+confirmation that an import succeeded. Keep the file and password private;
+never attach them to issue reports or publish them.
+
+A managed update keeps the previous application folder as a sibling backup.
+Do not run old and new copies simultaneously. That program backup is not an
+account-data backup and does not replace MData.
+
+Developer: https://t.me/VALMAX_dev
+Project channel: https://t.me/VALMAX_github
+Project and releases: https://github.com/govpodi/max-mod-valmax

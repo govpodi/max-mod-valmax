@@ -61,23 +61,56 @@ def transform(source):
     result = once(result, "import QmlSingletonesModule\n", "import QmlSingletonesModule\nimport QtQuick.Window\n")
     result = once(result, "    signal finished\n", "    signal finished\n    property bool valmaxExportOpening: false\n")
     anchor = '    UiKit.ActionMenuItem {\n        visible: !root.isBot && !root.chatIsBlocked && root.inContactList'
-    item = '''    // VALMAX_CHAT_EXPORT
+    item = '''    function valmaxExportScope() {
+        try {
+            const model = application.accountModel;
+            const owner = root.commonDependency;
+            const propertiesContext = root.chatPropertiesContext;
+            const properties = propertiesContext.get();
+            const nativeChatId = root.chatId;
+            const ownId = String(QmlUtils.contactIdString(owner.selfInfo.id));
+            const chatId = String(QmlUtils.chatIdString(nativeChatId));
+            const propertyChatId = String(QmlUtils.chatIdString(properties.chatId));
+            const contactId = String(QmlUtils.contactIdString(root.contactId));
+            const propertyContactId = String(QmlUtils.contactIdString(properties.dialogContactId));
+            const title = root.chatName;
+            const accountKey = owner.selfInfo.accountId;
+            if (root.chatType !== Chat.Type.Dialog || !/^-?[0-9]{1,20}$/.test(ownId)
+                    || !/^-?[0-9]{1,20}$/.test(chatId) || chatId !== propertyChatId
+                    || !/^-?[0-9]{1,20}$/.test(contactId)
+                    || contactId !== propertyContactId || typeof title !== "string"
+                    || properties.isPreventCopyingEnabled !== false
+                    || accountKey === undefined || accountKey === null
+                    || model.currentAccountId !== accountKey
+                    || model.activeAccountDependency.commonDependency !== owner) return null;
+            return {owner: owner, propertiesContext: propertiesContext, accountKey: accountKey,
+                ownId: ownId, nativeChatId: nativeChatId, chatId: chatId,
+                contactId: contactId, title: title};
+        } catch (_) { return null; }
+    }
+    // VALMAX_CHAT_EXPORT
     UiKit.ActionMenuItem {
         text: "Скачать чат"
         iconSource: "qrc:/valmax/icons/chat-export.svg"
         enabled: !root.chatPropertiesContext.get().isPreventCopyingEnabled
         onTriggered: {
             if (root.valmaxExportOpening) return;
+            const scope = root.valmaxExportScope();
+            if (!scope) {
+                try { root.commonDependency.snackbarManager.showError("Чат или аккаунт изменился. Откройте меню снова."); } catch (_) {}
+                return;
+            }
             root.valmaxExportOpening = true;
             let opened = false;
             try {
                 // The persistent MeWindow Loader owns the panel's QML context.
                 const window = Overlay.overlay.Window.window;
                 opened = window.openValMAXChatExport({
-                commonDependency: root.commonDependency,
-                nativeChatId: root.chatId,
-                nativeChatProperties: root.chatPropertiesContext,
-                chatTitle: root.chatName
+                commonDependency: scope.owner,
+                nativeChatId: scope.nativeChatId,
+                nativeChatProperties: scope.propertiesContext,
+                chatTitle: scope.title,
+                selectedScope: scope
             });
             } catch (_) {}
             if (!opened) {
