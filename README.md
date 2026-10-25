@@ -38,7 +38,9 @@
 
 ## Установка
 
-1. В [GitHub Releases](https://github.com/govpodi/max-mod-valmax/releases) откройте выпуск `v8.9.0`, скачайте `ValMAX-8.9.0-Setup.exe` и `SHA256SUMS.txt`. Сверьте SHA-256 установщика.
+Исходники `8.9.0` в `main` — кандидат к выпуску. Пока `v8.9.0` не опубликован отдельно, устанавливайте последний доступный бета-выпуск.
+
+1. В [GitHub Releases](https://github.com/govpodi/max-mod-valmax/releases) откройте опубликованный выпуск, скачайте его установщик с окончанием `-Setup.exe` и `SHA256SUMS.txt`. Сверьте SHA-256 установщика.
 2. Полностью закройте ValMAX через значок в трее → «Выход» и сохраните возможность отката. Для бизнес-вкладки и мини-приложений нужен [Microsoft Edge WebView2 Runtime](https://developer.microsoft.com/en-us/microsoft-edge/webview2/); установщик проверяет его наличие до обновления.
 3. Запустите установщик и откройте ValMAX через ярлык. Отдельный Python не нужен. Первый запуск может занять до минуты.
 
