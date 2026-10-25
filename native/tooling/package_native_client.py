@@ -809,7 +809,9 @@ def bound_qt_source_asset(runtime, rows, assembly, material_binding, qt_source_m
                 assembly.get("transferSourcePackageManifestSha256")
             and transfer_manifest.get("redistributionMaterialsComplete") is False
             and isinstance(transfer_manifest.get("distributionBlockers"), list)
-            and any("separate local prototype asset" in item
+            and any("separate byte-bound asset" in item or
+                    (receipt.get("manifestDistribution") == "local-prototype-only"
+                     and "separate local prototype asset" in item)
                     for item in transfer_manifest["distributionBlockers"])
             and sha(runtime / "transfer/package-manifest.json") ==
                 assembly.get("transferPackageManifestSha256"),
@@ -1285,16 +1287,18 @@ def preview_information(version, webview2_mode="fixed", qt_source_mode="inline",
     if qt_source_mode == "separate-asset":
         require(isinstance(qt_source_asset, dict)
                 and qt_source_asset.get("mode") == "separate-asset"
-                and qt_source_asset.get("manifestDistribution") == "local-prototype-only"
+                and qt_source_asset.get("manifestDistribution") in ("local-prototype-only", "public-beta-asset")
+                and qt_source_asset.get("availabilityDraftIncluded") is
+                    (qt_source_asset["manifestDistribution"] == "local-prototype-only")
                 and isinstance(qt_source_asset.get("assetName"), str)
                 and PurePosixPath(qt_source_asset["assetName"]).name == qt_source_asset["assetName"]
                 and isinstance(qt_source_asset.get("assetSha256"), str)
                 and re.fullmatch(r"[0-9a-f]{64}", qt_source_asset["assetSha256"]),
-                "local preview requires exact prototype Qt source asset identity")
+                "local preview requires exact Qt source asset identity")
         asset_ru = ("Исходники Qt вынесены в отдельный локальный ZIP " + qt_source_asset["assetName"] +
-                    " (SHA-256 " + qt_source_asset["assetSha256"] + "). Публичная публикация этого прототипа не подтверждена.\n")
+                    " (SHA-256 " + qt_source_asset["assetSha256"] + "). Публикация этого файла вместе с установщиком пока не подтверждена.\n")
         asset_en = ("Qt sources are in a separate local ZIP " + qt_source_asset["assetName"] +
-                    " (SHA-256 " + qt_source_asset["assetSha256"] + "). Publication of this prototype is unverified.\n")
+                    " (SHA-256 " + qt_source_asset["assetSha256"] + "). Publication of this file alongside the installer is unverified.\n")
     return (
         "ValMAX — локальная нативная тестовая сборка\nВерсия: " + version + "\n\n"
         "Эта сборка предназначена для ручной проверки перенесённых функций. Полный перенос ещё не завершён.\n\n"
@@ -1320,6 +1324,9 @@ def preview_information(version, webview2_mode="fixed", qt_source_mode="inline",
 
 def qt_source_availability(asset):
     require(isinstance(asset, dict) and asset.get("mode") == "separate-asset"
+            and asset.get("manifestDistribution") in ("local-prototype-only", "public-beta-asset")
+            and asset.get("availabilityDraftIncluded") is
+                (asset["manifestDistribution"] == "local-prototype-only")
             and isinstance(asset.get("assetName"), str)
             and PurePosixPath(asset["assetName"]).name == asset["assetName"]
             and isinstance(asset.get("assetSha256"), str)
@@ -1327,9 +1334,9 @@ def qt_source_availability(asset):
             "verified separate Qt source asset required")
     prototype = asset.get("manifestDistribution") == "local-prototype-only"
     ru_delivery = ("Это локальная проверка упаковки. Архив лежит в source-assets рядом с payload; публичная публикация не подтверждена.\n"
-                   if prototype else "Загрузите файл вместе с установщиком и проверьте SHA-256 перед использованием.\n")
+                   if prototype else "На странице релиза проверьте, что файл опубликован рядом с установщиком, и сверьте SHA-256 перед использованием.\n")
     en_delivery = ("This is a local packaging proof. The asset is in source-assets beside payload; public publication is unverified.\n"
-                   if prototype else "Download the asset alongside the installer and verify its SHA-256 before use.\n")
+                   if prototype else "On the release page, verify that this file is published beside the installer and check its SHA-256 before use.\n")
     return (
         "Исходники Qt 6.11.2 для этой сборки находятся в отдельном ZIP-файле, а не внутри установщика.\n"
         "Файл: " + asset["assetName"] + "\nSHA-256: " + asset["assetSha256"] + "\n"
@@ -1354,15 +1361,17 @@ def beta_information(version, webview2_mode="fixed", qt_source_mode="inline", qt
     asset_ru = asset_en = ""
     if qt_source_mode == "separate-asset":
         require(isinstance(qt_source_asset, dict)
+                and qt_source_asset.get("manifestDistribution") == "public-beta-asset"
+                and qt_source_asset.get("availabilityDraftIncluded") is False
                 and isinstance(qt_source_asset.get("assetName"), str)
                 and PurePosixPath(qt_source_asset["assetName"]).name == qt_source_asset["assetName"]
                 and isinstance(qt_source_asset.get("assetSha256"), str)
                 and re.fullmatch(r"[0-9a-f]{64}", qt_source_asset["assetSha256"]),
                 "separate Qt source asset identity required for BETA notice")
-        asset_ru = ("Исходники Qt 6.11.2 распространяются отдельным файлом " + qt_source_asset["assetName"] +
-                    ". SHA-256: " + qt_source_asset["assetSha256"] + ". Загрузите его рядом с установщиком.\n")
-        asset_en = ("Qt 6.11.2 sources are distributed as a separate file " + qt_source_asset["assetName"] +
-                    ". SHA-256: " + qt_source_asset["assetSha256"] + ". Download it alongside the installer.\n")
+        asset_ru = ("Исходники Qt 6.11.2 должны быть опубликованы отдельным файлом " + qt_source_asset["assetName"] +
+                    " рядом с установщиком. SHA-256: " + qt_source_asset["assetSha256"] + ". Проверьте его наличие на странице релиза.\n")
+        asset_en = ("Qt 6.11.2 sources must be published as a separate file " + qt_source_asset["assetName"] +
+                    " beside the installer. SHA-256: " + qt_source_asset["assetSha256"] + ". Verify its presence on the release page.\n")
     return (
         "ValMAX — публичная BETA-сборка\nВерсия: " + version + "\n\n"
         "Это рабочая тестовая версия. Проверен базовый сценарий установленного клиента; полная проверка всех функций ещё не завершена. Возможны ошибки.\n\n"

@@ -15,6 +15,26 @@ import zipfile
 
 SHA256 = re.compile(r"[0-9a-f]{64}\Z")
 QT_ARCHIVE = re.compile(r"qt[a-z0-9]+-everywhere-src-6\.11\.2\.tar\.xz\Z")
+PUBLIC_BETA_AVAILABILITY = (
+    "ValMAX Qt 6.11.2 source asset for public BETA packaging.\n"
+    "The source archives and notices in this ZIP are listed in manifest.json.\n"
+    "Publish this ZIP alongside the matching ValMAX installer and compare its SHA-256 "
+    "with QT-SOURCE-AVAILABILITY.txt in that installer.\n"
+    "This file does not confirm publication or whole-client license completeness.\n"
+).encode("utf8")
+ASSET_MODES = {
+    "local-prototype-only": ("local-qt-source-bundle-prototype", "SOURCE-AVAILABILITY-DRAFT.txt"),
+    "public-beta-asset": ("qt-source-bundle-public-beta", "SOURCE-AVAILABILITY.txt"),
+}
+ASSET_MANIFEST_FIELDS = frozenset({
+    "basedOnFullBundle", "basedOnFullBundleSha256", "createdUtc", "distribution",
+    "duplicateBytesSavedBeforeVariant", "excludedNoticeSubtree", "excludedSourceArchive",
+    "kind", "legalCompleteness", "originalPackageManifestSha256",
+    "originalSourceArchiveCount", "originalUniqueArchiveCount", "qtVersion",
+    "retainedModules", "retainedNoticeBytes", "retainedNoticeFileCount",
+    "retainedNoticeFiles", "retainedSourceArchiveBytes", "retainedSourceArchiveCount",
+    "retainedSourceArchives", "schema", "variant", "version", "publicationStatus",
+})
 
 
 def require(value, reason):
@@ -65,12 +85,19 @@ def verify_external_qt_source_asset(plan_entries, archive_path, manifest_path):
     require(regular(manifest_path).st_size <= 2 << 20, "Qt source manifest size bound exceeded")
     raw_manifest = manifest_path.read_bytes()
     manifest = json.loads(raw_manifest)
+    distribution = manifest.get("distribution") if isinstance(manifest, dict) else None
+    require(distribution in ASSET_MODES, "unsupported Qt source bundle distribution")
+    expected_kind, availability_name = ASSET_MODES[distribution]
     require(isinstance(manifest, dict)
-            and manifest.get("kind") == "local-qt-source-bundle-prototype"
+            and set(manifest) <= ASSET_MANIFEST_FIELDS
+            and manifest.get("kind") == expected_kind
             and manifest.get("variant") == "p16-integrated-slim-no-qtwebengine"
             and manifest.get("qtVersion") == "6.11.2"
-            and manifest.get("distribution") == "local-prototype-only"
-            and manifest.get("legalCompleteness") == "not-assessed",
+            and manifest.get("legalCompleteness") == "not-assessed"
+            and ((distribution == "local-prototype-only"
+                  and manifest.get("publicationStatus") is None)
+                 or (distribution == "public-beta-asset"
+                     and manifest.get("publicationStatus") == "pending-upload")),
             "unsupported or overstated Qt source bundle manifest")
     source_rows = manifest.get("retainedSourceArchives")
     notice_rows = manifest.get("retainedNoticeFiles")
@@ -84,7 +111,7 @@ def verify_external_qt_source_asset(plan_entries, archive_path, manifest_path):
                 and "/sources/" in name}
     require(qt_paths, "no Qt source archives were planned for the runtime")
     declared_paths, unique_names = {}, set()
-    expected_zip = {"manifest.json", "SOURCE-AVAILABILITY-DRAFT.txt"}
+    expected_zip = {"manifest.json", availability_name}
     notice_differences = []
     with zipfile.ZipFile(archive_path) as bundle:
         names = bundle.namelist()
@@ -150,8 +177,13 @@ def verify_external_qt_source_asset(plan_entries, archive_path, manifest_path):
         require(manifest.get("retainedSourceArchiveBytes") == sum(row["bytes"] for row in source_rows)
                 and manifest.get("retainedNoticeBytes") == sum(row["bytes"] for row in notice_rows),
                 "Qt source bundle byte totals differ")
-        require(0 < len(bundle.read("SOURCE-AVAILABILITY-DRAFT.txt")) <= 1 << 20,
-                "Qt source availability draft missing")
+        availability = bundle.read(availability_name)
+        if distribution == "local-prototype-only":
+            require(0 < len(availability) <= 1 << 20,
+                    "Qt source availability draft missing")
+        else:
+            require(availability == PUBLIC_BETA_AVAILABILITY,
+                    "final Qt source availability differs")
     require(set(notice_differences) == {
         "mod/licenses/STAGING-MATERIALS.json",
         "mod/licenses/WebView/qtwebview-6.11.2-valmax-source.zip",
@@ -163,7 +195,7 @@ def verify_external_qt_source_asset(plan_entries, archive_path, manifest_path):
                "assetBytes": archive_size, "assetSha256": sha(archive_path),
                "manifestSha256": hashlib.sha256(raw_manifest).hexdigest(),
                "manifestDistribution": manifest["distribution"],
-               "availabilityDraftIncluded": True,
+               "availabilityDraftIncluded": distribution == "local-prototype-only",
                "qtVersion": "6.11.2", "sourceArchiveCount": len(source_rows),
                "omittedRuntimeCopies": omitted, "omittedRuntimeBytes": sum(row["bytes"] for row in omitted),
                "noticeFilesRetained": len(notice_rows),

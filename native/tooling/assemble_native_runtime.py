@@ -1450,7 +1450,7 @@ def assemble(args):
             "qtSourceDistribution": qt_source_asset,
             "redistributionMaterialsComplete": False,
             "distributionBlockers": [*manifest.get("distributionBlockers", []),
-                "Qt corresponding sources are in a separate local prototype asset; publication and whole-helper materials status remain unverified."]}
+                "Qt corresponding sources are in a separate byte-bound asset; publication with the installer and whole-helper materials status remain unverified."]}
         require(len(manifest["files"]) - len(slimmer_transfer["files"]) == len(transfer_omitted),
                 "transfer package Qt source inventory differs")
         transfer_bytes = canonical(slimmer_transfer) + b"\n"

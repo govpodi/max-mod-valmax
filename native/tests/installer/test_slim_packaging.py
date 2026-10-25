@@ -15,7 +15,8 @@ ROOT = Path(__file__).resolve().parents[3]
 sys.path.insert(0, str(ROOT / "native/tooling"))
 sys.path.insert(0, str(ROOT / "native/launcher"))
 import package_native_client as package
-from qt_source_asset import verify_external_qt_source_asset
+from prepare_public_qt_source_asset import prepare as prepare_public_qt_source_asset
+from qt_source_asset import PUBLIC_BETA_AVAILABILITY, verify_external_qt_source_asset
 from launcher_generate_pins import REQUIRED, EVERGREEN_REQUIRED, generate, inventory
 from webview2_bootstrapper import load_pin as webview2_bootstrapper_pin
 from webview2_bootstrapper import verify as verify_webview2_bootstrapper
@@ -96,7 +97,7 @@ class SlimPackaging(unittest.TestCase):
         self.assertIn('#define NativeWebView2BootstrapperSha256 "' + pin["sha256"] + '"',
                       (output / "payload/native-release-state.iss").read_text("utf8"))
 
-    def source_fixture(self):
+    def source_fixture(self, distribution="local-prototype-only", availability=None):
         archive_name = "qtbase-everywhere-src-6.11.2.tar.xz"
         source_paths = [
             "mod/licenses/shared-component-materials/Qt/source-materials/sources/" + archive_name,
@@ -120,19 +121,25 @@ class SlimPackaging(unittest.TestCase):
                       "sourcePathsInP16": source_paths, "archiveTest": "passed"}
         notice_rows = [{"path": name, "bytes": len(data), "sha256": digest(data)}
                        for name, data in notice_data.items()]
-        manifest = {"kind": "local-qt-source-bundle-prototype",
+        public = distribution == "public-beta-asset"
+        manifest = {"kind": "qt-source-bundle-public-beta" if public
+                    else "local-qt-source-bundle-prototype",
                     "variant": "p16-integrated-slim-no-qtwebengine", "qtVersion": "6.11.2",
-                    "distribution": "local-prototype-only", "legalCompleteness": "not-assessed",
+                    "distribution": distribution, "legalCompleteness": "not-assessed",
                     "retainedSourceArchives": [source_row], "retainedSourceArchiveCount": 1,
                     "retainedSourceArchiveBytes": len(source_bytes),
                     "retainedNoticeFiles": notice_rows, "retainedNoticeFileCount": len(notice_rows),
                     "retainedNoticeBytes": sum(row["bytes"] for row in notice_rows)}
+        if public:
+            manifest["publicationStatus"] = "pending-upload"
         manifest_path = self.root / "manifest.json"
         manifest_path.write_text(json.dumps(manifest), encoding="utf8")
         zip_path = self.root / "qt-synthetic.zip"
         with zipfile.ZipFile(zip_path, "w", zipfile.ZIP_DEFLATED) as bundle:
             bundle.write(manifest_path, "manifest.json")
-            bundle.writestr("SOURCE-AVAILABILITY-DRAFT.txt", b"synthetic draft")
+            bundle.writestr("SOURCE-AVAILABILITY.txt" if public else "SOURCE-AVAILABILITY-DRAFT.txt",
+                            availability if availability is not None else
+                            (PUBLIC_BETA_AVAILABILITY if public else b"synthetic draft"))
             bundle.writestr("sources/" + archive_name, source_bytes)
             for name, data in notice_data.items():
                 bundle.writestr(name, data)
@@ -155,10 +162,105 @@ class SlimPackaging(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "asset differs from planned runtime source"):
             verify_external_qt_source_asset(plan, archive, manifest)
 
+    def test_public_beta_asset_requires_final_availability_and_exact_sources(self):
+        plan, archive, manifest, _, paths = self.source_fixture("public-beta-asset")
+        result, omitted = verify_external_qt_source_asset(plan, archive, manifest)
+        self.assertEqual(omitted, set(paths))
+        self.assertEqual(result["manifestDistribution"], "public-beta-asset")
+        self.assertIs(result["availabilityDraftIncluded"], False)
+        self.assertEqual(result["assetSha256"], digest(archive.read_bytes()))
+        public = {"mode": "separate-asset", "assetName": "qt-sources.zip",
+                  "assetSha256": result["assetSha256"], "manifestDistribution": "public-beta-asset",
+                  "availabilityDraftIncluded": False}
+        preview = package.preview_information("8.9.0-native.preview.20", "evergreen",
+                                              "separate-asset", public).decode("utf-8-sig")
+        self.assertIn("Публикация этого файла", preview)
+        self.assertNotIn("публикация этого прототипа", preview)
+        notice = package.qt_source_availability(public).decode("utf-8-sig")
+        self.assertIn("проверьте, что файл опубликован", notice)
+        beta = package.beta_information("8.9.0-native.preview.20", "evergreen",
+                                        "separate-asset", public).decode("utf-8-sig")
+        self.assertIn("должны быть опубликованы", beta)
+
+    def test_public_beta_asset_rejects_draft_or_unapproved_availability(self):
+        plan, archive, manifest, _, _ = self.source_fixture("public-beta-asset", b"synthetic draft")
+        with self.assertRaisesRegex(ValueError, "final Qt source availability differs"):
+            verify_external_qt_source_asset(plan, archive, manifest)
+        plan, archive, manifest, _, _ = self.source_fixture("public-beta-asset")
+        with zipfile.ZipFile(archive, "a") as bundle:
+            bundle.writestr("SOURCE-AVAILABILITY-DRAFT.txt", b"stale draft")
+        with self.assertRaisesRegex(ValueError, "unlisted or missing members"):
+            verify_external_qt_source_asset(plan, archive, manifest)
+
+    def test_public_beta_asset_rejects_unbound_or_overstated_manifest(self):
+        plan, archive, manifest, _, _ = self.source_fixture("public-beta-asset")
+        data = json.loads(manifest.read_text("utf8"))
+        data["publicationStatus"] = "published"
+        manifest.write_text(json.dumps(data), encoding="utf8")
+        with self.assertRaisesRegex(ValueError, "unsupported or overstated"):
+            verify_external_qt_source_asset(plan, archive, manifest)
+        data["publicationStatus"] = "pending-upload"
+        data["kind"] = "local-qt-source-bundle-prototype"
+        manifest.write_text(json.dumps(data), encoding="utf8")
+        with self.assertRaisesRegex(ValueError, "unsupported or overstated"):
+            verify_external_qt_source_asset(plan, archive, manifest)
+        data["kind"] = "qt-source-bundle-public-beta"
+        data["published"] = True
+        manifest.write_text(json.dumps(data), encoding="utf8")
+        with self.assertRaisesRegex(ValueError, "unsupported or overstated"):
+            verify_external_qt_source_asset(plan, archive, manifest)
+        data.pop("published")
+        data["retainedNoticeBytes"] += 1
+        manifest.write_text(json.dumps(data), encoding="utf8")
+        with self.assertRaisesRegex(ValueError, "ZIP manifest differs"):
+            verify_external_qt_source_asset(plan, archive, manifest)
+
+    def test_local_prototype_rejects_publication_claim(self):
+        plan, archive, manifest, _, _ = self.source_fixture()
+        data = json.loads(manifest.read_text("utf8"))
+        data["publicationStatus"] = "published"
+        manifest.write_text(json.dumps(data), encoding="utf8")
+        with self.assertRaisesRegex(ValueError, "unsupported or overstated"):
+            verify_external_qt_source_asset(plan, archive, manifest)
+
+    def test_prepare_public_asset_dry_run_then_exact_readback(self):
+        plan, archive, manifest, _, paths = self.source_fixture()
+        public_archive = self.root / "public-qt-sources.zip"
+        public_manifest = self.root / "public-qt-manifest.json"
+        dry_run = prepare_public_qt_source_asset(archive, manifest, public_archive, public_manifest)
+        self.assertTrue(dry_run["ready"])
+        self.assertFalse(dry_run["applied"])
+        self.assertFalse(public_archive.exists())
+        self.assertFalse(public_manifest.exists())
+        receipt = prepare_public_qt_source_asset(archive, manifest, public_archive, public_manifest, True)
+        self.assertTrue(receipt["applied"])
+        result, omitted = verify_external_qt_source_asset(plan, public_archive, public_manifest)
+        self.assertEqual(omitted, set(paths))
+        self.assertEqual(result["assetSha256"], receipt["archiveSha256"])
+        self.assertEqual(result["manifestSha256"], receipt["manifestSha256"])
+        self.assertIs(result["availabilityDraftIncluded"], False)
+        with zipfile.ZipFile(public_archive) as bundle:
+            self.assertEqual(bundle.read("SOURCE-AVAILABILITY.txt"), PUBLIC_BETA_AVAILABILITY)
+            self.assertNotIn("SOURCE-AVAILABILITY-DRAFT.txt", bundle.namelist())
+
+    def test_prepare_public_asset_rejects_source_drift_without_output(self):
+        _, archive, manifest, _, _ = self.source_fixture()
+        public_archive = self.root / "public-qt-sources.zip"
+        public_manifest = self.root / "public-qt-manifest.json"
+        with zipfile.ZipFile(archive, "a") as bundle:
+            bundle.writestr("unlisted.txt", b"drift")
+        with self.assertRaisesRegex(ValueError, "prototype inventory differs"):
+            prepare_public_qt_source_asset(archive, manifest, public_archive, public_manifest, True)
+        self.assertFalse(public_archive.exists())
+        self.assertFalse(public_manifest.exists())
+
     def test_prototype_asset_cannot_pass_public_beta_materials_gate(self):
         receipt = {"mode": "separate-asset", "manifestDistribution": "local-prototype-only",
                    "availabilityDraftIncluded": True, "requiredTogetherWithInstaller": True,
                    "legalCompleteness": "not-assessed", "assetSha256": "a" * 64}
+        with self.assertRaisesRegex(ValueError, "separate Qt source asset identity required"):
+            package.beta_information("8.9.0-native.preview.20", "evergreen", "separate-asset",
+                                     {**receipt, "assetName": "qt-sources.zip"})
         limitations = package.beta_material_limitations("evergreen", "separate-asset")
         binding = {"status": {"completeForWholeClient": False,
                               "limitations": [item["statusText"] for item in limitations],
@@ -169,8 +271,9 @@ class SlimPackaging(unittest.TestCase):
 
     def test_evergreen_notices_name_system_runtime_and_external_asset(self):
         asset = {"mode": "separate-asset", "assetName": "qt-sources.zip", "assetSha256": "a" * 64,
-                 "manifestDistribution": "local-prototype-only"}
-        notice = package.beta_information("8.9.0-native.preview.17", "evergreen", "separate-asset", asset).decode("utf-8-sig")
+                 "manifestDistribution": "local-prototype-only", "availabilityDraftIncluded": True}
+        public = {**asset, "manifestDistribution": "public-beta-asset", "availabilityDraftIncluded": False}
+        notice = package.beta_information("8.9.0-native.preview.17", "evergreen", "separate-asset", public).decode("utf-8-sig")
         self.assertIn("Microsoft Edge WebView2 Evergreen Runtime", notice)
         self.assertIn("qt-sources.zip", notice)
         self.assertNotIn("Microsoft Fixed Version Runtime", notice)
