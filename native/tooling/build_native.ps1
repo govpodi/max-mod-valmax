@@ -7,19 +7,30 @@ param(
 $ErrorActionPreference = 'Stop'
 $projectRoot = (Resolve-Path (Join-Path $PSScriptRoot '..\..')).Path
 . (Join-Path $PSScriptRoot 'native_env.ps1')
+# The toolchain paths in native_env.ps1 may use C: junctions, but mutable build
+# outputs must stay on E: so a full native build does not fill the system disk.
+$buildRoot = 'E:/ValMAXBuild/build'
+$env:CARGO_TARGET_DIR = 'E:/ValMAXBuild/target'
+$env:TEMP = 'E:/ValMAXBuild/tmp'
+$env:TMP = $env:TEMP
+foreach ($ownedDirectory in @($buildRoot, $env:CARGO_TARGET_DIR, $env:TEMP)) {
+    if (-not (Test-Path -LiteralPath $ownedDirectory -PathType Container)) {
+        throw "Missing ValMAX E: build directory: $ownedDirectory"
+    }
+}
 $runtimeInput = (Resolve-Path -LiteralPath $RuntimeRoot).Path
 $cmake = 'D:/ValMAX/tools/native/python/Scripts/cmake.exe'
 $python = 'D:/CodexLabs/max-mod-26.35.1/venv/Scripts/python.exe'
 $ninja = 'D:/ValMAX/tools/native/python/Scripts/ninja.exe'
-$hooksBuild = 'C:/ValMAXBuild/build/hooks-all-features'
-$qtBuild = 'C:/ValMAXBuild/build/qt-all-features'
+$hooksBuild = Join-Path $buildRoot 'hooks-all-features'
+$qtBuild = Join-Path $buildRoot 'qt-all-features'
 $CoreProof = (Resolve-Path -LiteralPath $CoreProof).Path
 $coreEvidence = Get-Content -LiteralPath $CoreProof -Raw | ConvertFrom-Json
 $expectedCoreSha = [string]$coreEvidence.dll.sha256
 if ($expectedCoreSha -cnotmatch '^[a-f0-9]{64}$') { throw 'CoreProof must contain a canonical SHA-256 digest.' }
 # Every proven core has a separate immutable input directory. Never replace the
 # historical f29 snapshot or silently reuse it for another validation proof.
-$inputs = Join-Path 'C:/ValMAXBuild/build' "all-feature-inputs-$expectedCoreSha"
+$inputs = Join-Path $buildRoot "all-feature-inputs-$expectedCoreSha"
 function Invoke-CheckedNative([scriptblock]$Command) {
     & $Command
     if ($LASTEXITCODE -ne 0) { throw "Native build command failed: $LASTEXITCODE" }

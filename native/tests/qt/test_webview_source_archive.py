@@ -20,7 +20,7 @@ if args.fixture:
     fixture = args.fixture
     fixture.mkdir(parents=True, exist_ok=False)
 else:
-    fixture = Path(tempfile.mkdtemp(prefix="qt-webview-source-", dir="C:/ValMAXBuild/build"))
+    fixture = Path(tempfile.mkdtemp(prefix="qt-webview-source-", dir="E:/ValMAXBuild/build"))
 with zipfile.ZipFile(archive) as source:
     for member in source.namelist():
         if member.startswith(("/", "\\")) or ".." in Path(member).parts or ":" in member:
