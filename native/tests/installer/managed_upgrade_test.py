@@ -1,6 +1,7 @@
-"""Run the real Inno fixture installer against its separate AppId and D root.
+"""Run the real Inno fixture installer against its separate AppId and work root.
 
-The product installer is never invoked. Artifacts and preserved trees stay on D.
+The product installer is never invoked. Artifacts and preserved trees stay under
+the explicitly selected build root.
 Only the exact test registry namespaces below may be removed by this harness.
 """
 from __future__ import annotations
@@ -81,8 +82,8 @@ def inventory(path):
 
 
 class Fixture:
-    def __init__(self, process_executable):
-        self.root = Path('D:/ValMAXBuild/fixtures') / ('installer-upgrade-' + uuid.uuid4().hex)
+    def __init__(self, process_executable, work_root):
+        self.root = work_root / 'fixtures' / ('installer-upgrade-' + uuid.uuid4().hex)
         self.root.mkdir(parents=True, exist_ok=False)
         self.app = self.root / 'app'
         self.log_index = 0
@@ -95,7 +96,7 @@ class Fixture:
         self.process_executable = process_executable
         self.owns_registry = False
         self.environment = os.environ.copy()
-        self.environment.update(TEMP='D:/ValMAXBuild/tmp', TMP='D:/ValMAXBuild/tmp')
+        self.environment.update(TEMP=str(work_root / 'tmp'), TMP=str(work_root / 'tmp'))
 
     def check(self, name, condition):
         if not condition:
@@ -153,7 +154,9 @@ class Fixture:
                 stamp.write_text('#define NativeDistributionMode "' + mode + '"\n'
                                  '#define NativeReleaseEligible ' + str(eligible) + '\n'
                                  '#define NativeReleaseBlockerCount ' + str(blockers) + '\n'
-                                 '#define NativePackageManifestSha256 "' + digest + '"\n')
+                                 '#define NativePackageManifestSha256 "' + digest + '"\n'
+                                 '#define NativeWebView2Mode "fixed"\n'
+                                 '#define NativeQtSourceMode "inline"\n')
             elif stamp.exists():
                 stamp.unlink()
             command = [str(ISCC), '/Qp', '/O-', '/DPayload=' + str(payload),
@@ -456,11 +459,17 @@ def main():
     parser = argparse.ArgumentParser()
     parser.add_argument('--report', type=Path, required=True)
     parser.add_argument('--process-executable', type=Path, required=True)
+    parser.add_argument('--work-root', type=Path, required=True)
     args = parser.parse_args()
+    work_root = args.work_root.resolve(strict=True)
+    if not args.work_root.is_absolute() or not work_root.is_dir() or work_root.name != 'ValMAXBuild':
+        raise ValueError('An existing absolute ValMAXBuild work root is required')
+    if not (work_root / 'build').is_dir() or not (work_root / 'tmp').is_dir():
+        raise ValueError('The work root must contain build and tmp directories')
     process_executable = args.process_executable.resolve(strict=True)
-    if not process_executable.is_relative_to(Path('D:/ValMAXBuild/build').resolve()) or process_executable.name != 'ValMAX.exe':
-        raise ValueError('The owned fixture process must be built under D:/ValMAXBuild/build')
-    fixture = Fixture(process_executable)
+    if not process_executable.is_relative_to((work_root / 'build').resolve()) or process_executable.name != 'ValMAX.exe':
+        raise ValueError('The owned fixture process must be built under the selected work root')
+    fixture = Fixture(process_executable, work_root)
     error = None
     try:
         fixture.execute()

@@ -112,24 +112,25 @@ uninstaller из backup-каталога:** его журнал содержит
 ## Проверки без настоящей установки
 
 `native/tests/installer/managed_upgrade_test.py` компилирует и запускает настоящий
-Inno installer только с отдельным fixture AppId и жёстко заданным каталогом
-`D:/ValMAXBuild/fixtures/installer-*`. В этом режиме отсутствуют ярлыки и
+Inno installer только с отдельным fixture AppId и явно выбранным `--work-root`.
+При ночной проверке каталог — `E:/ValMAXBuild/fixtures/installer-*`. В этом режиме отсутствуют ярлыки и
 postinstall-запуск. Payload синтетический; MAX, профили и WinCred не участвуют.
 Реальные тестовые процессы — отдельные программы, выполняющие только Sleep.
 
 Сборка fixture процесса: MSVC x64 `/W4 /WX /O2 /MT` для
 `native/tests/installer/fixture_process.cpp`, с объектами/EXE в
-`D:/ValMAXBuild/build/installer-fixture-process-20261021`.
+`E:/ValMAXBuild/build/installer-fixture-process-nightly`.
 
 Пример запуска из корня проекта с build-only Python:
 
 ```powershell
-$env:TEMP = 'D:\ValMAXBuild\tmp'
+$env:TEMP = 'E:\ValMAXBuild\tmp'
 $env:TMP = $env:TEMP
 & 'D:\CodexLabs\max-mod-26.35.1\venv\Scripts\python.exe' `
   native\tests\installer\managed_upgrade_test.py `
-  --process-executable D:\ValMAXBuild\build\installer-fixture-process-20261021\ValMAX.exe `
-  --report D:\ValMAX\analysis\native-migration-v1\native-installer-upgrade-webengine-proof-20261021.json
+  --work-root E:\ValMAXBuild `
+  --process-executable E:\ValMAXBuild\build\installer-fixture-process-nightly\ValMAX.exe `
+  --report E:\ValMAXBuild\analysis\native-installer-upgrade-nightly.json
 ```
 
 Тест проверяет реальную установку/обновление/удаление, rollback после копирования
