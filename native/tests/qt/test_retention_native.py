@@ -54,6 +54,11 @@ class NativeRetentionSettings(unittest.TestCase):
         if match is None:
             raise AssertionError("Actual generated active-state expression missing")
         cls.active_expression = match.group(1)
+        missed = re.search(r'RetentionText \{ objectName: "retentionMissed"; Layout.fillWidth: true; '
+                           r'visible: ([^;]+); text: ([^;]+); typography:', cls.panel)
+        if missed is None:
+            raise AssertionError("Actual generated missed-event warning missing")
+        cls.missed_visible, cls.missed_text = missed.groups()
 
     def evaluate(self, source):
         result = self.engine.evaluate(source)
@@ -84,6 +89,30 @@ class NativeRetentionSettings(unittest.TestCase):
         self.assertFalse(self.active(status(True)))
         self.assertFalse(self.active(status(False)))
         self.assertFalse(self.active(status(True), trusted=False))
+
+    def test_dropped_callbacks_show_incomplete_archive_warning(self):
+        value = status(True)
+        value["capabilities"].update(capture=True, lookup=True)
+        value["runtime"].update(ready=True, applied=True, enabled=True, error=None,
+                                queue={"queued": 0, "inFlight": 0, "pending": 0,
+                                       "captured": 5, "marked": 2, "missing": 0,
+                                       "missed": 2, "failures": 0})
+        self.assertTrue(self.accepts(value))
+        self.assertTrue(self.active(value))
+        def warning(missed, trusted):
+            setup = "var retentionPage=" + json.dumps({
+                "runtimeTrusted": trusted, "runtime": {"queue": {"missed": missed}}}) + ";"
+            visible = self.evaluate("(function(){" + setup + "return ("
+                                    + self.missed_visible + ");})()").toBool()
+            label = self.evaluate("(function(){" + setup + "return ("
+                                  + self.missed_text + ");})()").toString()
+            return visible, label
+        self.assertFalse(warning(0, True)[0])
+        visible, label = warning(2, True)
+        self.assertTrue(visible)
+        self.assertIn("(2)", label)
+        self.assertIn("может быть неполным", label)
+        self.assertFalse(warning(2, False)[0])
 
     def test_capture_disabled_rejects_fabricated_ready_applied_enabled(self):
         for field in ("ready", "applied", "enabled"):

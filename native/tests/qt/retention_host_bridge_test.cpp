@@ -141,6 +141,11 @@ int main()
             && acknowledgements.back().worker_ready == 0
             && acknowledgements.back().revision[0] == uint8_t('a'),
             "successful disable binds saved revision")) return 1;
+        host.bounded_skips = 2;
+        host.worker.missed = 3;
+        bridge.refresh();
+        if (!check(acknowledgements.back().missed == 5,
+            "bounded callback skips reach the native status receipt")) return 1;
         host.worker.error = valmax::retention::pilot::AsyncError::Storage;
         host.worker.ready = false;
         bridge.refresh();

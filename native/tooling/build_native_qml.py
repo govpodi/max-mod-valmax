@@ -375,6 +375,10 @@ def native_retention_settings_panel(panel: str) -> str:
         '                RetentionText { objectName: "retentionPending"; Layout.fillWidth: true; '
         'visible: retentionPage.runtimeTrusted && retentionPage.runtime !== null && retentionPage.runtime.queue !== undefined && retentionPage.runtime.queue.pending > 0; '
         'text: retentionPage.runtime && retentionPage.runtime.queue ? "В очереди локальной записи на устройстве: " + retentionPage.runtime.queue.pending + ". Эти сообщения ещё не входят в архив." : ""; '
+        'typography: Typography.FontUtil.Styles.Description; color: retentionPage.maxwellColorTokens.colorTextAttention }\n'
+        '                RetentionText { objectName: "retentionMissed"; Layout.fillWidth: true; '
+        'visible: retentionPage.runtimeTrusted && retentionPage.runtime !== null && retentionPage.runtime.queue !== undefined && retentionPage.runtime.queue.missed > 0; '
+        'text: retentionPage.runtime && retentionPage.runtime.queue ? "Часть событий в этом запуске пропущена (" + retentionPage.runtime.queue.missed + "). Локальный архив может быть неполным." : ""; '
         'typography: Typography.FontUtil.Styles.Description; color: retentionPage.maxwellColorTokens.colorTextAttention }', 1)
     if "127.0.0.1" in panel or "XMLHttpRequest" in panel:
         raise ValueError("Legacy retention settings transport remained")

@@ -151,7 +151,10 @@ void RetentionHostBridge::publish() const
     value.captured = bounded(host.worker.captured);
     value.marked = bounded(host.worker.marked);
     value.missing = bounded(host.worker.missing);
-    value.missed = bounded(host.worker.missed);
+    // Oversized borrowed-row callbacks are intentionally skipped without
+    // revoking later capture. Include them in the count-only receipt so the
+    // native status cannot silently report a loss-free run.
+    value.missed = bounded(host.worker.missed + host.bounded_skips);
     value.failures = bounded(host.worker.failures);
     value.queued = bounded(host.worker.queued);
     value.in_flight = bounded(host.worker.in_flight);
