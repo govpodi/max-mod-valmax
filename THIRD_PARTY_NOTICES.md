@@ -55,8 +55,11 @@ Lottie в этом наборе остаются шесть корневых DLL
   upstream исходники**: точное дерево, изменения и процесс сборки десяти
   FFmpeg DLL готового MAX/ONEME runtime пока не подтверждены. Все пять
   одноимённых FFmpeg DLL официального Qt 6.11.2 Multimedia имеют другие
-  SHA-256, поэтому исходники Qt не доказывают их соответствие. В прежнем
-  аудите нет `swscale-8.dll`.
+  SHA-256, поэтому исходники Qt не доказывают их соответствие. Старый аудит
+  уведомлений не охватывал `swscale-8.dll`. Отдельный справочный реестр FFmpeg
+  уже сверяет SHA-256 всех десяти DLL, включая обе копии `swscale-8.dll`, с
+  локально извлечённым MAX MSI и runtime; он не доказывает точное соответствие
+  исходников и патчей этим DLL.
 - Тексты COPYING/LICENSE [OpenSSL 3.5.4](https://openssl-library.org/source/license/index.html)
   и [WinSparkle 0.9.3](https://github.com/vslavik/winsparkle/blob/v0.9.3/COPYING)
   сверяются с указанными upstream версиями. Установленный WinSparkle DLL
@@ -99,8 +102,12 @@ The MIT license covers original ValMAX work only. Generated `modkit/ui_privacy.p
 The native C++/Rust runtime does not bundle Python, PyInstaller, PySide or the
 former local server. Python is used at build/test time. Native components have
 separate version/hash-bound materials; those for one component do not establish
-coverage for the whole MAX client. The applicability of the collected current
-WebView2 Fixed Version terms to this runtime's historical version is not proven.
+coverage for the whole MAX client. The compact 8.9.0 candidate uses the system
+WebView2 Evergreen Runtime. Clean-PC, missing-runtime and offline installation
+behavior remains unverified. WebView2 Fixed Version terms concern earlier
+previews and do not establish the applicable terms for this candidate. The
+separate Qt source ZIP is currently a local prototype; publication alongside
+the installer and complete license scope have not been verified.
 
 Preview.15 removed seven Qt Lottie binaries and their QML module directory after
 two pinned recording indicators switched to Qt Quick. The preview.16 package
@@ -114,7 +121,11 @@ notices and linked Rust object review remain open.
 
 Official upstream FFmpeg 7.1.3 and 7.1.5 source archives are reference
 materials. The exact source tree, modifications and build process corresponding
-to the ten bundled FFmpeg DLLs are not proven. Five same-named FFmpeg DLLs in
+to the ten bundled FFmpeg DLLs are not proven. A separate reference manifest
+binds SHA-256 for all ten DLLs, including both `swscale-8.dll` copies, to the
+locally extracted MAX MSI and candidate runtime. The earlier upstream notice
+audit omitted `swscale-8.dll`; the ten-image inventory does not supply its exact
+corresponding source. Five same-named FFmpeg DLLs in
 the official Qt 6.11.2 Multimedia archive have different SHA-256 hashes from
 the candidate runtime. These collected materials do not certify completeness
 for the whole client or exact FFmpeg source/build correspondence.
