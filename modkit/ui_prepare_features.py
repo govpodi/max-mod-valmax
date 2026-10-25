@@ -8,15 +8,20 @@ from pathlib import Path
 import pprint
 
 from ui_multi_resource_patch import RESOURCES, read_source, make_resource_spec, PRESERVED_COMPILED_RESOURCES
+from recording_indicator_ui import RESOURCE_PATHS as NATIVE_RECORDING_RESOURCES
 from ui_prepare_privacy import prepare_source
+
+FEATURE_RESOURCES = tuple(path for path in RESOURCES if path not in NATIVE_RECORDING_RESOURCES)
 
 
 def prepare(binary: bytes, *, icon_bundle: bytes) -> tuple[dict[str, bytes], dict]:
     from quick_replies_ui import transform_sources
-    if len(RESOURCES) != 32 or set(RESOURCES) & set(PRESERVED_COMPILED_RESOURCES):
-        raise ValueError("Expected 32 modified resources; compiled bubbles stay native")
+    if (len(RESOURCES) != 34 or len(FEATURE_RESOURCES) != 32
+            or set(NATIVE_RECORDING_RESOURCES) - set(RESOURCES)
+            or set(RESOURCES) & set(PRESERVED_COMPILED_RESOURCES)):
+        raise ValueError("Expected 32 feature and two native-only recording resources")
     originals = {path.rsplit("/", 1)[1]: read_source(binary, path).decode("utf8").replace("\r\n", "\n")
-                 for path in RESOURCES}
+                 for path in FEATURE_RESOURCES}
     privacy, _ = prepare_source(binary, Path(__file__).with_name("ui_privacy_panel.qml").read_bytes())
     originals["LeadingSettingsBar.qml"] = privacy.decode("utf8")
     transformed = transform_sources(originals)
@@ -85,8 +90,8 @@ def prepare(binary: bytes, *, icon_bundle: bytes) -> tuple[dict[str, bytes], dic
     if set(transformed) != set(originals) or any(type(value) is not str for value in transformed.values()):
         raise ValueError("Unexpected source transform contract")
     sources = {path: transformed[path.rsplit("/", 1)[1]].replace("\r\n", "\n").encode("utf8")
-               for path in RESOURCES}
-    if set(sources) != set(RESOURCES) or set(sources) & set(PRESERVED_COMPILED_RESOURCES):
+               for path in FEATURE_RESOURCES}
+    if set(sources) != set(FEATURE_RESOURCES) or set(sources) & set(PRESERVED_COMPILED_RESOURCES):
         raise ValueError("Compiled preservation resource selection mismatch")
     spec, evidence = make_resource_spec(binary, sources, icon_bundle=icon_bundle)
     evidence["preservedCompiledResources"] = list(PRESERVED_COMPILED_RESOURCES)

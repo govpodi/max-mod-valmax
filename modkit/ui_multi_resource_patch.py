@@ -24,6 +24,8 @@ RESOURCES = {
     ":/qt/qml/OneMeUi/LeadingListBar.qml": (0x300adae, 0x267c9a0, "business_list", 0x2f323a0, 0x2f333a0, 1, 1),
     ":/qt/qml/OneMeUi/LeadingSettingsBar.qml": (0x300a542, 0x267ca00, "leading", 0x2f323a0, 0x2f333a0, 1, 1),
     ":/qt/qml/OneMeUi/BaseSendPanel.qml": (0x300ac22, 0x2676ff0, "quick_replies_base", 0x2f323a0, 0x2f333a0, 1, 1),
+    ":/qt/qml/OneMeUi/InputAudioRecorderPanel.qml": (0x300b814, 0x2675ba0, "recording_audio_indicator", 0x2f323a0, 0x2f333a0, 1, 1),
+    ":/qt/qml/OneMeUi/InputVideoRecorderPanel.qml": (0x300b856, 0x2675c10, "recording_video_indicator", 0x2f323a0, 0x2f333a0, 1, 1),
     ":/qt/qml/OneMeUi/MessageTextInput.qml": (0x3009ba2, 0x2675370, "quick_replies_input", 0x2f323a0, 0x2f333a0, 1, 1),
     ":/qt/qml/OneMeUi/BaseMessageSendPanel.qml": (0x3009caa, 0x2676f80, "quick_replies_attachments", 0x2f323a0, 0x2f333a0, 1, 1),
     ":/qt/qml/OneMeUi/AccountButton.qml": (0x300a298, 0x267f230, "account_button", 0x2f323a0, 0x2f333a0, 0, 1),

@@ -14,35 +14,61 @@
 
 Семь иконок `assets/valmax-icons/icons/*.svg`, их редактируемые варианты и `source/geometry.json` описаны в [каталоге иконок](assets/valmax-icons/README.md) как заново нарисованная геометрия ValMAX. Они входят в область оригинальных ресурсов проекта.
 
-## Нативная сборка разработчика
+## Нативная Beta и материалы
 
-В проверенной локальной C++/Rust preview-сборке нет установленного Python,
-PyInstaller, PySide или прежнего локального сервера. Python остаётся инструментом
-сборки и проверки. Таблица ниже описывает прежний payload 8.8.1 и инструменты;
-она не является перечнем зависимостей нового нативного runtime.
+В нативном C++/Rust runtime нет Python, PyInstaller, PySide или прежнего локального
+сервера. Python остаётся инструментом сборки и проверки. Таблица ниже описывает
+прежний payload 8.8.1 и инструменты; она не является перечнем зависимостей
+нового runtime.
 
-Для нативных компонентов ведутся отдельные материалы Rust, Qt, VC runtime,
-WebView2 и Gum с привязкой к версиям и SHA-256. Источники и license texts одного
-помощника не подменяют материалы всех компонентов исходного MAX. Полная привязка
-MAX, части Qt и сторонних библиотек исходного клиента пока не установлена;
-собранные текущие условия WebView2 Fixed Version не подтверждают применимость
-исторической редакции к конкретному runtime. Нативная сборка остаётся сборкой
-разработчика, готовность пользовательского распространения не подтверждена.
-Для следующей сборки отдельно получены полные официальные исходные архивы
-Qt 6.11.2 для Lottie, Multimedia, Positioning, SVG и WebChannel и 48 исходных
-текстов лицензий. Восемь корневых Qt DLL и четыре копии в сервисе побайтно
-сверены с официальными бинарными архивами. Это закрывает только проверенный
-набор этих модулей; остальные компоненты и право на распространение MAX
-требуют отдельной проверки.
-Для следующего staging также проверены пять плагинов **QtImageFormats**
-(`qicns`, `qtga`, `qtiff`, `qwbmp`, `qwebp`): их байты совпали с официальным
-бинарным архивом Qt 6.11.2. При передаче связанных квитанций сборщик добавляет
+Для нативных компонентов подготовлены отдельные материалы Rust, Qt, VC runtime,
+WebView2 и Gum с привязкой к версиям и SHA-256. Материалы одного компонента не
+подменяют материалы всего исходного клиента. Полная привязка части MAX/Qt и
+сторонних библиотек пока не установлена; собранные текущие условия WebView2
+Fixed Version не подтверждают применимость исторической редакции к конкретному
+runtime.
+
+Для Qt 6.11.2 получены официальные исходные архивы Multimedia, Positioning,
+SVG и WebChannel и исходные тексты лицензий. Из набора проверенных Qt-бинарников
+preview.15 исключает семь файлов Qt Lottie и его `qmldir`: два индикатора записи
+заменены на Qt Quick. Восемь корневых Qt DLL и четыре копии в сервисе исходного
+аудита были побайтно сверены с официальными бинарными архивами; после исключения
+Lottie в этом наборе остаются шесть корневых DLL и две копии в сервисе.
+Проверка файлов не заменяет проверку записи аудио и видео в установленном
+клиенте.
+
+Пять плагинов **QtImageFormats** (`qicns`, `qtga`, `qtiff`, `qwbmp`, `qwebp`)
+побайтно совпали с официальным бинарным архивом Qt 6.11.2. Для них подготовлены
 [официальный архив исходников QtImageFormats](https://download.qt.io/archive/qt/6.11/6.11.2/submodules/qtimageformats-everywhere-src-6.11.2.tar.xz),
 восемь оригинальных текстов лицензий/правил и уведомления `COPYRIGHT` libtiff
-и `COPYING` libwebp с их Qt attribution. Наличие этих файлов не доказывает,
-что обе библиотеки статически включены в каждый плагин, не закрывает условия
-лицензирования всего runtime и не предоставляет права на компоненты MAX.
-Техническое состояние: [перенос runtime](docs/native-migration.md).
+и `COPYING` libwebp с Qt attribution. Эти файлы не устанавливают, какие
+дополнительные кодеки статически включены в каждый плагин.
+
+Для других компонентов подготовлены привязанные к версиям материалы:
+
+- Официальные исходные архивы [FFmpeg 7.1.3 и 7.1.5](https://ffmpeg.org/download.html),
+  их подписи и license notices сверены с указанными версиями. Это **справочные
+  upstream исходники**: точное дерево, изменения и процесс сборки десяти
+  FFmpeg DLL готового MAX/ONEME runtime пока не подтверждены. Все пять
+  одноимённых FFmpeg DLL официального Qt 6.11.2 Multimedia имеют другие
+  SHA-256, поэтому исходники Qt не доказывают их соответствие. В прежнем
+  аудите нет `swscale-8.dll`.
+- Тексты COPYING/LICENSE [OpenSSL 3.5.4](https://openssl-library.org/source/license/index.html)
+  и [WinSparkle 0.9.3](https://github.com/vslavik/winsparkle/blob/v0.9.3/COPYING)
+  сверяются с указанными upstream версиями. Установленный WinSparkle DLL
+  отличается от официального файла той же версии на 23 байта в секции кода.
+- [COPYING Frida Gum 17.23.3](https://github.com/frida/frida-gum/blob/17.23.3/COPYING)
+  привязывается к проверенному devkit. Состав статически включённых объектов
+  и уведомлений их зависимостей пока не установлен.
+- 70 точных архивов crates.io и 139 исходных license/notice файлов для Windows
+  MSVC графа Rust сверяются с `Cargo.lock` и доказательством сборки конкретного
+  `valmax_core.dll`. Это не определяет, какой код остался после линковки, и не
+  закрывает проверку встроенного C/ASM.
+
+Этот перечень сохраняет происхождение и обозначает незакрытые условия. Он не
+утверждает, что материалы всего клиента полны или что справочные upstream
+архивы точно соответствуют FFmpeg DLL. Техническое состояние:
+[перенос runtime](docs/native-migration.md).
 
 ## Python-компоненты прежней версии и инструменты сборки
 
@@ -66,17 +92,24 @@ Qt 6.11.2 для Lottie, Multimedia, Positioning, SVG и WebChannel и 48 исх
 
 The MIT license covers original ValMAX work only. Generated `modkit/ui_privacy.py` includes modified MAX QML and an RCC retaining 546 original MAX icons. `modkit/config.defaults.json` is the full embedded MAX configuration template. These materials, MAX/Qt binaries, and third-party dependencies retain their respective rights and terms. Preserve upstream notices. The legacy installer payload includes the full `THIRD-PARTY-NOTICES.txt`; the table above is a summary, not a replacement.
 
-The C++/Rust developer runtime prepared on 21 October 2026 does not bundle the
-Python interpreter, PyInstaller, PySide or the former local server. Python is
-used at build/test time. Its native components have separate version/hash-bound
-materials; helper materials do not establish coverage for every original MAX
-component. Complete MAX/third-party provenance and the historical applicability
-of the collected current WebView2 Fixed Version terms remain unestablished.
-This developer assembly is not a verified end-user distribution.
+The native C++/Rust runtime does not bundle Python, PyInstaller, PySide or the
+former local server. Python is used at build/test time. Native components have
+separate version/hash-bound materials; those for one component do not establish
+coverage for the whole MAX client. The applicability of the collected current
+WebView2 Fixed Version terms to this runtime's historical version is not proven.
 
-Five QtImageFormats plugins have been matched byte for byte to the official
-Qt 6.11.2 binary archive. With the matching receipts, the next staging build
-includes the corresponding source archive, original Qt license texts, and
-libtiff/libwebp copyright and attribution files. This does not establish which
-optional codecs are linked into those plugins, whole-client license compliance,
-or rights to redistribute MAX components.
+Preview.15 omits seven Qt Lottie binaries and their QML module directory after
+two pinned recording indicators switch to Qt Quick. Five QtImageFormats plugins
+match the official Qt 6.11.2 binaries byte for byte, with matching source and
+libtiff/libwebp notices prepared; optional static codec content is not proven.
+Version-bound OpenSSL and WinSparkle notices, Frida Gum COPYING, and 70 Windows
+MSVC Rust crate archives with 139 original license/notice texts have also been
+prepared. The modified WinSparkle DLL's provenance, Gum static dependency
+notices and linked Rust object review remain open.
+
+Official upstream FFmpeg 7.1.3 and 7.1.5 source archives are reference
+materials. The exact source tree, modifications and build process corresponding
+to the ten bundled FFmpeg DLLs are not proven. Five same-named FFmpeg DLLs in
+the official Qt 6.11.2 Multimedia archive have different SHA-256 hashes from
+the candidate runtime. These collected materials do not certify completeness
+for the whole client or exact FFmpeg source/build correspondence.

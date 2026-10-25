@@ -5,9 +5,9 @@
 
 # ValMAX — a MAX mod for Windows
 
-An unofficial MAX modification for Windows x64, with added features for conversations and work. This checkout contains the **ValMAX 8.9.0-native.preview.14 BETA source candidate**, based on **MAX 26.35.1.80662**.
+An unofficial MAX modification for Windows x64, with added features for conversations and work. This checkout contains the **ValMAX 8.9.0-native.preview.15 BETA source**, based on **MAX 26.35.1.80662**.
 
-**Status:** local test candidate. A public preview.14 installer and checksums have not been published. Complete server history, the full installed-client lifecycle and redistribution materials remain unverified (`releaseEligible=false`). [Preview.14 status and limitations](docs/NATIVE_PREVIEW_14.md).
+**Status:** BETA. Chat export saves available history and media, but the server has not confirmed that all older messages can be retrieved. Deleted-message retention works only after you enable it. [Changes and limitations](CHANGELOG.md).
 
 **VAL** — **V**ersatility · **A**utomation · **L**ocal control.
 
@@ -30,7 +30,7 @@ In Russian, **ВАЛ** stands for «Возможности · Автоматиз
 ## Other features
 
 - **Ghost mode.** Filter switches for typing, message read receipts, online status and story views. Off by default.
-- **Deleted messages · BETA.** Keeps messages already received by the client when a deletion is observed, marking them in the conversation. Off by default.
+- **Deleted messages · BETA.** Keeps messages already received by the client when a deletion is observed; a trash-icon bubble appears in the conversation. Off by default.
 - **Chat PIN.** A local access restriction for a selected chat, with its preview hidden.
 - **Privacy.** Disables verified diagnostics and statistics modules and masks logs.
 - **Media search.** `@pic query` and `@vid query` search Wikimedia Commons after you click Find. The creator, license and source link are added to the draft with the file.
@@ -40,10 +40,8 @@ In Russian, **ВАЛ** stands for «Возможности · Автоматиз
 
 ## Installation
 
-The public preview.14 installer has not been released. Local testing requires an installer with a separate verified SHA-256 receipt. [Published releases](https://github.com/govpodi/max-mod-valmax/releases).
-
-1. Fully exit ValMAX from the tray menu.
-2. Compare the installer SHA-256 with its receipt and preserve a rollback path.
+1. [Download ValMAX 8.9.0-native.preview.15 for Windows x64](https://github.com/govpodi/max-mod-valmax/releases/download/v8.9.0-native.preview.15/ValMAX-8.9.0-native.preview.15-Setup.exe) and its [SHA-256 checksums](https://github.com/govpodi/max-mod-valmax/releases/download/v8.9.0-native.preview.15/SHA256SUMS.txt) from [GitHub Releases](https://github.com/govpodi/max-mod-valmax/releases).
+2. Fully exit ValMAX from the tray menu and preserve a rollback path. Compare the installer SHA-256 with the checksum.
 3. Run the installer, then open ValMAX through its shortcut. No separate Python installation is needed. The first launch may take up to a minute.
 
 <details>
@@ -54,6 +52,7 @@ The public preview.14 installer has not been released. Local testing requires an
 - Selecting a quick reply immediately adds its attachments to the draft; uploads may start before you press Send. Quick replies and media search results are sent manually.
 - MData excludes conversations, media, cache and the 2FA password. The server may require another sign-in check. Store the MData archive and its password separately.
 - The PIN restricts access locally. It does not encrypt the message database or close previously opened media windows. HTML chat copies are not password-protected; unavailable attachments and incomplete history are noted in the export report.
+- Export downloads available photos, videos and voice messages sequentially, with pacing and a 4 GiB per-file limit. Some attachments may be unavailable. Deleted-message retention covers events observed after the feature was enabled; older retained bubbles may have approximate positions in the timeline.
 - Privacy settings do not provide full anonymity: the server receives your connection address and data required to operate your account. Ghost mode shows active status after the client confirms its filters.
 - The local ghost-mode unread counter adjustment is BETA and lasts for the current run. After a restart, message deletion or changed read marks from another device, the counter may show the server's remaining unread count again. Full resynchronization still needs validation.
 - ValMAX uses a profile separate from the official MAX client. Updating an older modified build preserves MXMOD data. MAX's built-in updater is disabled; public builds and checksums appear in GitHub Releases after verification.

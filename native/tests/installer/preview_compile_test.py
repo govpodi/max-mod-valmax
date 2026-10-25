@@ -1,4 +1,4 @@
-"""Compile-check explicit local-preview/release gates; never emit or run Setup."""
+"""Compile-check explicit local-preview/public-BETA/release gates; never emit or run Setup."""
 from __future__ import annotations
 import argparse
 from datetime import datetime, timezone
@@ -34,11 +34,34 @@ def main():
     (payload / "native-package.json").write_text(json.dumps({"synthetic": True, "version": VERSION}))
     warning = payload / "native-preview.txt"
     warning.write_bytes("ValMAX native preview\nЛокальная проверка компиляции; Setup не создаётся.\n".encode("utf-8-sig"))
+    beta_warning = payload / "native-beta.txt"
+    beta_warning_bytes = "ValMAX public BETA\nCompile-only synthetic notice; Setup is not emitted.\n".encode("utf-8-sig")
+    beta_warning.write_bytes(beta_warning_bytes)
+    beta_material_info = payload / "native-beta-materials.json"
+    beta_material_info.write_bytes(b'{"synthetic":true,"wholeClientMaterialsVerified":false}\n')
+    ffmpeg = payload / "materials/FFmpeg"
+    ffmpeg.mkdir(parents=True)
+    source713 = ffmpeg / "ffmpeg-7.1.3.tar.xz"
+    source715 = ffmpeg / "ffmpeg-7.1.5.tar.xz"
+    signature713 = ffmpeg / "ffmpeg-7.1.3.tar.xz.asc"
+    signature715 = ffmpeg / "ffmpeg-7.1.5.tar.xz.asc"
+    configuration = ffmpeg / "build-configurations.json"
+    source713.write_bytes(b"owned inert FFmpeg 7.1.3 source compile fixture")
+    source715_bytes = b"owned inert FFmpeg 7.1.5 source compile fixture"
+    source715.write_bytes(source715_bytes)
+    signature713.write_bytes(b"owned inert FFmpeg 7.1.3 signature compile fixture")
+    signature715_bytes = b"owned inert FFmpeg 7.1.5 signature compile fixture"
+    signature715.write_bytes(signature715_bytes)
+    configuration.write_bytes(b'{"synthetic":true,"exactCorrespondingSourceProven":false}\n')
     manifest_sha, warning_sha = sha(payload / "native-package.json"), sha(warning)
+    beta_warning_sha = sha(beta_warning)
+    beta_material_sha, source713_sha, source715_sha, signature713_sha, signature715_sha, config_sha = (
+        sha(beta_material_info), sha(source713), sha(source715),
+        sha(signature713), sha(signature715), sha(configuration))
     source_paths = (TEMPLATE, ROOT / "native/installer/managed-upgrade.iss",
                     ROOT / "native/tooling/package_native_client.py", Path(__file__))
     sources = {p.relative_to(ROOT).as_posix(): sha(p) for p in source_paths}
-    # (mode, eligible, blocker count, manifest hash, info hash, marker version, compile version)
+    # (mode, eligible, blocker count, manifest hash, info hash, marker version, compile version[, BETA core])
     cases = [
         ("missing-state", None, False),
         ("developer-staging", ("developer-staging", 0, 5, manifest_sha, None, None, VERSION), False),
@@ -57,7 +80,52 @@ def main():
         ("preview-mismatched-version", ("local-preview", 0, 7, manifest_sha, warning_sha, VERSION, "8.9.0-native.preview.2"), False),
         ("local-preview-compile-only", ("local-preview", 0, 7, manifest_sha, warning_sha, VERSION, VERSION), True),
         ("local-preview-with-materials-ready", ("local-preview", 0, 6, manifest_sha, warning_sha, VERSION, VERSION), True),
+        ("beta-missing-info-pin", ("public-beta", 1, 0, manifest_sha, None, VERSION, VERSION, 1), False),
+        ("beta-missing-version-pin", ("public-beta", 1, 0, manifest_sha, beta_warning_sha, None, VERSION, 1), False),
+        ("beta-missing-core-pin", ("public-beta", 1, 0, manifest_sha, beta_warning_sha, VERSION, VERSION), False),
+        ("beta-failed-core", ("public-beta", 1, 0, manifest_sha, beta_warning_sha, VERSION, VERSION, 0), False),
+        ("beta-ineligible", ("public-beta", 0, 0, manifest_sha, beta_warning_sha, VERSION, VERSION, 1), False),
+        ("beta-unresolved-blocker", ("public-beta", 1, 1, manifest_sha, beta_warning_sha, VERSION, VERSION, 1), False),
+        ("beta-wrong-info", ("public-beta", 1, 0, manifest_sha, "0" * 64, VERSION, VERSION, 1), False),
+        ("beta-missing-notice", ("public-beta", 1, 0, manifest_sha, beta_warning_sha, VERSION, VERSION, 1), False),
+        ("beta-missing-materials-pin", ("public-beta", 1, 0, manifest_sha, beta_warning_sha, VERSION, VERSION, 1), False),
+        ("beta-wrong-materials", ("public-beta", 1, 0, manifest_sha, beta_warning_sha, VERSION, VERSION, 1), False),
+        ("beta-missing-source715-pin", ("public-beta", 1, 0, manifest_sha, beta_warning_sha, VERSION, VERSION, 1), False),
+        ("beta-missing-source715", ("public-beta", 1, 0, manifest_sha, beta_warning_sha, VERSION, VERSION, 1), False),
+        ("beta-wrong-source713", ("public-beta", 1, 0, manifest_sha, beta_warning_sha, VERSION, VERSION, 1), False),
+        ("beta-missing-signature713-pin", ("public-beta", 1, 0, manifest_sha, beta_warning_sha, VERSION, VERSION, 1), False),
+        ("beta-missing-signature715", ("public-beta", 1, 0, manifest_sha, beta_warning_sha, VERSION, VERSION, 1), False),
+        ("beta-wrong-signature713", ("public-beta", 1, 0, manifest_sha, beta_warning_sha, VERSION, VERSION, 1), False),
+        ("beta-wrong-signature715", ("public-beta", 1, 0, manifest_sha, beta_warning_sha, VERSION, VERSION, 1), False),
+        ("beta-wrong-config", ("public-beta", 1, 0, manifest_sha, beta_warning_sha, VERSION, VERSION, 1), False),
+        ("beta-wrong-manifest", ("public-beta", 1, 0, "0" * 64, beta_warning_sha, VERSION, VERSION, 1), False),
+        ("beta-unmarked-version", ("public-beta", 1, 0, manifest_sha, beta_warning_sha, "8.9.0", "8.9.0", 1), False),
+        ("beta-mismatched-version", ("public-beta", 1, 0, manifest_sha, beta_warning_sha, VERSION, "8.9.0-native.preview.2", 1), False),
+        ("public-beta-compile-only", ("public-beta", 1, 0, manifest_sha, beta_warning_sha, VERSION, VERSION, 1), True),
     ]
+    beta_errors = {
+        "beta-missing-info-pin": "Public BETA information must be pinned",
+        "beta-missing-version-pin": "A public BETA version is required",
+        "beta-missing-core-pin": "Public BETA installed core smoke must be pinned",
+        "beta-failed-core": "A blocked or untested public BETA cannot become a user installer",
+        "beta-ineligible": "A blocked or untested public BETA cannot become a user installer",
+        "beta-unresolved-blocker": "A blocked or untested public BETA cannot become a user installer",
+        "beta-wrong-info": "Public BETA information belongs to another package",
+        "beta-missing-notice": "Public BETA information is missing",
+        "beta-missing-materials-pin": "Public BETA materials summary must be pinned",
+        "beta-wrong-materials": "Public BETA materials summary belongs to another package",
+        "beta-missing-source715-pin": "FFmpeg 7.1.5 source must be pinned",
+        "beta-missing-source715": "Both versioned FFmpeg source archives are required",
+        "beta-wrong-source713": "FFmpeg 7.1.3 source belongs to another package",
+        "beta-missing-signature713-pin": "FFmpeg 7.1.3 signature must be pinned",
+        "beta-missing-signature715": "Both versioned FFmpeg source signatures are required",
+        "beta-wrong-signature713": "FFmpeg 7.1.3 signature belongs to another package",
+        "beta-wrong-signature715": "FFmpeg 7.1.5 signature belongs to another package",
+        "beta-wrong-config": "FFmpeg build configurations belong to another package",
+        "beta-wrong-manifest": "Native eligibility include belongs to another package manifest",
+        "beta-unmarked-version": "The public BETA product version must be visibly marked",
+        "beta-mismatched-version": "The public BETA product version must be visibly marked",
+    }
     results = []
     environment = os.environ.copy()
     environment.update(TEMP="E:/ValMAXBuild/tmp", TMP="E:/ValMAXBuild/tmp")
@@ -68,24 +136,62 @@ def main():
                 stamp.unlink()  # Only this harness's generated file in its fresh build.
             version = VERSION
         else:
-            mode, eligible, blockers, digest, info, marked, version = values
+            mode, eligible, blockers, digest, info, marked, version = values[:7]
+            beta_core = values[7] if len(values) == 8 else None
             text = ('#define NativeDistributionMode "' + mode + '"\n'
                     '#define NativeReleaseEligible ' + str(eligible) + '\n'
                     '#define NativeReleaseBlockerCount ' + str(blockers) + '\n'
                     '#define NativePackageManifestSha256 "' + digest + '"\n')
-            if info is not None:
-                text += '#define NativePreviewInfoSha256 "' + info + '"\n'
-            if marked is not None:
-                text += '#define NativePreviewVersion "' + marked + '"\n'
+            if mode == "public-beta":
+                if info is not None:
+                    text += '#define NativeBetaInfoSha256 "' + info + '"\n'
+                if marked is not None:
+                    text += '#define NativeBetaVersion "' + marked + '"\n'
+                if beta_core is not None:
+                    text += '#define NativeBetaCoreTested ' + str(beta_core) + '\n'
+                if label != "beta-missing-materials-pin":
+                    value = "0" * 64 if label == "beta-wrong-materials" else beta_material_sha
+                    text += '#define NativeBetaMaterialsInfoSha256 "' + value + '"\n'
+                text += '#define NativeBetaSource713Sha256 "' + (
+                    "0" * 64 if label == "beta-wrong-source713" else source713_sha) + '"\n'
+                if label != "beta-missing-source715-pin":
+                    text += '#define NativeBetaSource715Sha256 "' + source715_sha + '"\n'
+                if label != "beta-missing-signature713-pin":
+                    text += '#define NativeBetaSource713SignatureSha256 "' + (
+                        "0" * 64 if label == "beta-wrong-signature713" else signature713_sha) + '"\n'
+                text += '#define NativeBetaSource715SignatureSha256 "' + (
+                    "0" * 64 if label == "beta-wrong-signature715" else signature715_sha) + '"\n'
+                text += '#define NativeBetaBuildConfigSha256 "' + (
+                    "0" * 64 if label == "beta-wrong-config" else config_sha) + '"\n'
+            else:
+                if info is not None:
+                    text += '#define NativePreviewInfoSha256 "' + info + '"\n'
+                if marked is not None:
+                    text += '#define NativePreviewVersion "' + marked + '"\n'
             stamp.write_text(text, encoding="utf8")
         command = [str(ISCC), "/Qp", "/O-", "/DPayload=" + str(payload), "/DOutput=" + str(output),
                    "/DProductVersion=" + version, str(TEMPLATE)]
+        if label == "beta-missing-notice":
+            beta_warning.unlink()
+        if label == "beta-missing-source715":
+            source715.unlink()
+        if label == "beta-missing-signature715":
+            signature715.unlink()
         result = subprocess.run(command, env=environment, capture_output=True, timeout=60,
                                 creationflags=subprocess.CREATE_NO_WINDOW)
+        if label == "beta-missing-notice":
+            beta_warning.write_bytes(beta_warning_bytes)
+        if label == "beta-missing-source715":
+            source715.write_bytes(source715_bytes)
+        if label == "beta-missing-signature715":
+            signature715.write_bytes(signature715_bytes)
         log = output / (label + ".log")
-        log.write_bytes(result.stdout + result.stderr)
+        messages = result.stdout + result.stderr
+        log.write_bytes(messages)
         if (result.returncode == 0) != accepted:
             raise AssertionError("unexpected compile gate result: " + label + "; inspect " + str(log))
+        if label in beta_errors and beta_errors[label] not in messages.decode("utf8", errors="replace"):
+            raise AssertionError("wrong BETA compile gate rejection: " + label + "; inspect " + str(log))
         results.append({"case": label, "accepted": accepted, "exitCode": result.returncode,
                         "log": str(log), "logSha256": sha(log)})
     if list(output.glob("*.exe")):

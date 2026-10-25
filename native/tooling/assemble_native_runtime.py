@@ -60,6 +60,33 @@ QT_IMAGEFORMATS_THIRDPARTY = frozenset({
     "src/3rdparty/libtiff/COPYRIGHT", "src/3rdparty/libtiff/qt_attribution.json",
     "src/3rdparty/libwebp/COPYING", "src/3rdparty/libwebp/qt_attribution.json",
 })
+QT_LOTTIE_RUNTIME_FILES = frozenset({
+    "mod/Qt6Lottie.dll", "mod/Qt6LottieVectorImageGenerator.dll",
+    "mod/max-service/Qt6Lottie.dll", "mod/max-service/Qt6LottieVectorImageGenerator.dll",
+    "mod/max-service/vectorimageformats/qlottievectorimage.dll",
+    "mod/plugins/vectorimageformats/qlottievectorimage.dll",
+    "mod/qml/Qt/labs/lottieqt/lottieplugin.dll",
+})
+QT_LOTTIE_QMLDIR = "mod/qml/Qt/labs/lottieqt/qmldir"
+QT_LOTTIE_RECORDER_REPLACEMENTS = {
+    ":/qt/qml/OneMeUi/InputAudioRecorderPanel.qml": "368f3669ae1c01179031513d58e45ad1054a15e1514cfb80784a3af97ec9d9e3",
+    ":/qt/qml/OneMeUi/InputVideoRecorderPanel.qml": "eb6467ba2e9c9b59996f01708bd5f1e2344bd59d642fbe86c1f9bd155483c46f",
+}
+BASELINE_FFMPEG_DLLS = frozenset({
+    "avcodec-61.dll", "avformat-61.dll", "avutil-59.dll",
+    "swresample-5.dll", "swscale-8.dll",
+})
+BASELINE_OPENSSL_DLLS = frozenset({"libcrypto-3-x64.dll", "libssl-3-x64.dll"})
+BASELINE_NOTICE_MEMBERS = {
+    "ffmpeg-7.1.3/COPYING.LGPLv2.1": "FFmpeg/COPYING.LGPLv2.1",
+    "ffmpeg-7.1.3/COPYING.GPLv2": "FFmpeg/COPYING.GPLv2",
+    "ffmpeg-7.1.3/COPYING.LGPLv3": "FFmpeg/COPYING.LGPLv3",
+    "ffmpeg-7.1.3/COPYING.GPLv3": "FFmpeg/COPYING.GPLv3",
+    "ffmpeg-7.1.3/LICENSE.md": "FFmpeg/LICENSE.md",
+    "openssl-3.5.4/LICENSE.txt": "OpenSSL/LICENSE.txt",
+    "WinSparkle-0.9.3/COPYING": "WinSparkle/COPYING",
+    "WinSparkle-0.9.3/COPYING.expat": "WinSparkle/COPYING.expat",
+}
 
 
 def require(value, reason):
@@ -494,6 +521,308 @@ def add_qt_imageformats_materials(plan, audit_path, notices_path):
             "targetsExecuted": False}
 
 
+def planned_sha(plan, path):
+    row = plan.entries.get(path.casefold())
+    require(row is not None and row["path"] == path, "planned runtime image missing: " + path)
+    return row["sha256"]
+
+
+def omit_qt_lottie(plan, qml, qml_root):
+    """Drop only the pinned Qt Lottie runtime after native recorder replacement."""
+    source_hashes = qml.get("sourceHashes", {})
+    require(isinstance(source_hashes, dict), "native QML source hashes required")
+    selected = {}
+    for resource, digest in QT_LOTTIE_RECORDER_REPLACEMENTS.items():
+        path = Path(qml_root) / relative(resource.rsplit("/", 1)[1])
+        require(source_hashes.get(resource) == digest and sha(path) == digest,
+                "exact native Qt Quick recording replacement required: " + resource)
+        source = path.read_text("utf8")
+        require(source.count("VALMAX_QTQUICK_RECORDING_PULSE") == 1
+                and "Qt.labs.lottieqt" not in source and "LottieAnimation" not in source,
+                "Qt Lottie recording import remained: " + resource)
+        selected[resource] = digest
+    for resource in source_hashes:
+        if resource.endswith((".qml", ".js")):
+            source = (Path(qml_root) / relative(resource.rsplit("/", 1)[1])).read_text("utf8")
+            require("Qt.labs.lottieqt" not in source,
+                    "Qt Lottie import remained in generated QML: " + resource)
+
+    expected = QT_LOTTIE_RUNTIME_FILES | {QT_LOTTIE_QMLDIR}
+    for destination in expected:
+        planned_sha(plan, destination)
+    found = {row["path"] for row in plan.entries.values()
+             if row["path"].startswith("mod/qml/Qt/labs/lottieqt/")
+             or Path(row["path"]).name.casefold().startswith("qt6lottie")
+             or Path(row["path"]).name.casefold() in {"qlottievectorimage.dll", "lottieplugin.dll"}}
+    require(found == expected, "unexpected Qt Lottie runtime file set")
+    removed = {destination: plan.entries.pop(destination.casefold())["sha256"]
+               for destination in sorted(expected)}
+    return {"omittedRuntimeFiles": sorted(QT_LOTTIE_RUNTIME_FILES),
+            "omittedQmldir": QT_LOTTIE_QMLDIR,
+            "omittedBaselineHashes": removed,
+            "nativeRecorderResources": selected,
+            "installedRecorderSmoke": False}
+
+
+def require_no_lottie_pe_imports(closure):
+    require(not [edge for edge in closure["edges"] if "lottie" in edge["import"].casefold()],
+            "Qt Lottie PE import remains after runtime omission")
+    return closure["images"]
+
+
+def audit_qt_lottie_runtime(mod, expected_pe_inventory):
+    """Run the independent packed-QML and all-PE scanner on staged bytes."""
+    gate = ROOT / "native/tests/qt/verify_recording_no_lottie.py"
+    spec = importlib.util.spec_from_file_location("valmax_no_qt_lottie_gate", gate)
+    require(spec is not None and spec.loader is not None, "Qt Lottie scanner unavailable")
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    result = module.verify_runtime(mod, expected_pe_inventory=expected_pe_inventory)
+    require(result.get("verified") is True and result.get("syntheticOnly") is False
+            and result.get("exactPeInventoryMatched") is True
+            and result.get("peScanned") == len(expected_pe_inventory) == 318
+            and result.get("lottieFiles") == result.get("lottieImports") == 0,
+            "staged Qt Lottie scanner did not verify the real runtime")
+    result["scannerSha256"] = sha(gate)
+    return result
+
+
+def add_baseline_upstream_notices(plan, audit_path, patched_winsparkle_sha):
+    """Copy verified upstream notices without claiming binary/source identity."""
+    audit = read_json(audit_path)
+    require(audit.get("schema") == "valmax.baseline-third-party-materials-audit.v1"
+            and audit.get("summary", {}).get("wholeClientMaterialsComplete") is False
+            and audit.get("ffmpegAndOpenSsl", {}).get("exactBuildConfigAndPatchesForStagedDllsKnown") is False
+            and audit.get("winSparkle", {}).get("exactCorrespondingSourceForStagedDllEstablished") is False,
+            "limited baseline upstream audit required")
+    expected = BASELINE_FFMPEG_DLLS | BASELINE_OPENSSL_DLLS | {"WinSparkle.dll"}
+    for name in expected:
+        planned_sha(plan, "mod/" + name)
+    observed = {}
+    for row in audit["ffmpegAndOpenSsl"]["stagedDlls"]:
+        name = row["name"]
+        require(name in BASELINE_FFMPEG_DLLS | BASELINE_OPENSSL_DLLS and name not in observed
+                and row["family"] == ("openssl" if name in BASELINE_OPENSSL_DLLS else "ffmpeg")
+                and row["staged"]["sha256"] == planned_sha(plan, "mod/" + name),
+                "baseline FFmpeg/OpenSSL image differs from audit")
+        observed[name] = row
+    missing_audit = sorted((BASELINE_FFMPEG_DLLS | BASELINE_OPENSSL_DLLS) - set(observed))
+    require(set(missing_audit) <= {"swscale-8.dll"}, "baseline third-party audit unexpectedly incomplete")
+    sparkle = audit["winSparkle"]
+    # The plan still carries the immutable baseline here; prepared WinSparkle
+    # bytes are applied later. Bind both images instead of comparing the
+    # audited patched DLL with the unpatched plan row.
+    require(sparkle["officialX64BinaryFromArchive"]["sha256"] == planned_sha(plan, "mod/WinSparkle.dll")
+            and sparkle["staged"]["sha256"] == patched_winsparkle_sha
+            and sparkle["comparison"]["sameBytes"] is False
+            and sparkle["comparison"]["differenceLocatedInTextSection"] is True,
+            "modified WinSparkle image/audit differs")
+    downloads = {row["name"]: row for row in audit["ffmpegAndOpenSsl"]["officialSourceDownloads"]}
+    require({"ffmpeg-7.1.3.tar.xz", "openssl-3.5.4.tar.gz"} <= set(downloads),
+            "versioned FFmpeg/OpenSSL archives missing")
+    anchor = next((row for row in audit["selectedLicenseTexts"]
+                   if row["member"] == "ffmpeg-7.1.3/LICENSE.md"), None)
+    require(anchor is not None, "upstream license extraction root missing")
+    source_root = Path(anchor["savedAs"]).parent.parent
+    require(source_root.name == "baseline-upstream-sources-20261025",
+            "unexpected upstream source collection root")
+    archive_paths = {}
+    for name, host in (("ffmpeg-7.1.3.tar.xz", "https://ffmpeg.org/releases/"),
+                       ("openssl-3.5.4.tar.gz", "https://github.com/openssl/openssl/releases/download/openssl-3.5.4/")):
+        row = downloads[name]
+        path = source_root / name
+        require(row["url"] == host + name and path.name == name and ordinary(path).st_size == row["bytes"]
+                and sha(path) == row["sha256"], "official versioned source archive changed: " + name)
+        archive_paths[name] = path
+    assets = {Path(row["path"]).name: row for row in sparkle["officialAssets"]}
+    require(set(assets) == {"WinSparkle-0.9.3.zip", "WinSparkle-0.9.3-src.zip"},
+            "exact WinSparkle 0.9.3 release assets required")
+    for name, row in assets.items():
+        path = Path(row["path"])
+        require(row["matchesOfficialReleaseSha256"] is True
+                and row["officialReleaseAssetUrl"] == "https://github.com/vslavik/winsparkle/releases/download/v0.9.3/" + name
+                and ordinary(path).st_size == row["bytes"] and sha(path) == row["sha256"],
+                "WinSparkle upstream archive changed: " + name)
+        archive_paths[name] = path
+    texts = audit["selectedLicenseTexts"]
+    require(isinstance(texts, list) and len(texts) == len(BASELINE_NOTICE_MEMBERS) + 1
+            and len({(row["archive"], row["member"]) for row in texts}) == len(texts),
+            "exact selected upstream notice set required")
+    members = {(row["archive"], row["member"]): row for row in texts}
+    require({member for _, member in members} == set(BASELINE_NOTICE_MEMBERS) | {"COPYING"},
+            "selected upstream notice member set changed")
+    for archive_name in {"ffmpeg-7.1.3.tar.xz", "openssl-3.5.4.tar.gz",
+                         "WinSparkle-0.9.3.zip", "WinSparkle-0.9.3-src.zip"}:
+        archive_path = archive_paths[archive_name]
+        rows = [row for row in texts if row["archive"] == archive_name]
+        if archive_name.endswith(".zip"):
+            with zipfile.ZipFile(archive_path) as source:
+                require(source.testzip() is None, "corrupt WinSparkle upstream archive")
+                original = {row["member"]: source.read(row["member"]) for row in rows}
+        else:
+            with tarfile.open(archive_path, "r:*") as source:
+                original = {}
+                for row in rows:
+                    member = source.getmember(row["member"])
+                    require(member.isfile(), "upstream notice is not a regular file")
+                    stream = source.extractfile(member)
+                    require(stream is not None, "upstream notice unreadable")
+                    original[row["member"]] = stream.read()
+        for row in rows:
+            data, copy = original[row["member"]], Path(row["savedAs"])
+            require(len(data) == row["bytes"] and hashlib.sha256(data).hexdigest() == row["sha256"]
+                    and ordinary(copy).st_size == row["bytes"] and sha(copy) == row["sha256"],
+                    "copied upstream notice differs from original archive")
+            destination = BASELINE_NOTICE_MEMBERS.get(row["member"])
+            if destination:
+                plan.add("mod/licenses/BaselineUpstream/" + destination,
+                         copy, row["sha256"], "verified-versioned-upstream-notice")
+    require(members[("WinSparkle-0.9.3-src.zip", "COPYING")]["sha256"]
+            == members[("WinSparkle-0.9.3.zip", "WinSparkle-0.9.3/COPYING")]["sha256"],
+            "WinSparkle source/binary notices differ")
+    return {"auditedRuntimeImagesMatched": len(observed) + 1,
+            "uncoveredRuntimeImages": missing_audit, "copiedNoticeFiles": len(BASELINE_NOTICE_MEMBERS),
+            "ffmpegExactCorrespondingSourceProven": False,
+            "opensslExactBuildRecipeProven": False,
+            "winSparkleModifiedBinarySourceProven": False,
+            "wholeClientMaterialsComplete": False}
+
+
+def add_gum_notice(plan, audit_path):
+    """Retain Gum's tagged COPYING while keeping static-link gaps explicit."""
+    audit = read_json(audit_path)
+    require(audit.get("schema") == 1 and audit.get("version") == "17.23.3"
+            and audit.get("readOnlySourceAudit") is True
+            and audit.get("legalReleaseOpinion") is False,
+            "limited Frida Gum materials receipt required")
+    receipt_path = Path(audit["receipt"]["path"])
+    require(sha(receipt_path) == audit["receipt"]["sha256"], "Gum devkit receipt changed")
+    receipt = read_json(receipt_path)
+    require(receipt["version"] == "17.23.3"
+            and receipt["source"] == "https://github.com/frida/frida/releases/download/17.23.3/frida-gum-devkit-17.23.3-windows-x86_64.tar.xz",
+            "wrong Frida Gum devkit receipt")
+    library = next((row for row in receipt["files"] if row["path"] == "frida-gum.lib"), None)
+    require(library is not None and sha(Path(receipt["directory"]) / "frida-gum.lib") == library["sha256"],
+            "Gum static library differs from archived devkit")
+    require(len(audit["officialLegalTexts"]) == 1, "one tagged Gum notice required")
+    notice = audit["officialLegalTexts"][0]
+    path = Path(notice["path"])
+    require(notice["source"] == "https://raw.githubusercontent.com/frida/frida-gum/17.23.3/COPYING"
+            and notice["sourceTag"] == "17.23.3"
+            and ordinary(path).st_size == notice["bytes"] and sha(path) == notice["sha256"],
+            "tagged Gum COPYING changed")
+    for name in ("valmax_ghost.dll", "valmax_notifications.dll"):
+        planned_sha(plan, "mod/" + name)
+    plan.add("mod/licenses/Gum/COPYING", path, notice["sha256"], "tagged-gum-notice")
+    return {"taggedNoticeCopied": True, "gumDevkitSha256": receipt["archiveSha256"],
+            "staticObjectAndTransitiveNoticeClosureProven": False,
+            "wholeClientMaterialsComplete": False}
+
+
+def add_native_rust_materials(plan, sbom_path, core_proof_path, core_sha):
+    """Bind Windows crate sources and notices to this compiled native core."""
+    sbom = read_json(sbom_path)
+    core = read_json(core_proof_path)
+    require(sbom.get("schema") == "valmax-rust-core-windows-target-sbom-v1"
+            and sbom.get("target") == "x86_64-pc-windows-msvc"
+            and sbom.get("p14BinaryBound") is False
+            and sbom.get("completeForWholeClient") is False
+            and isinstance(sbom.get("packages"), list) and sbom["packages"]
+            and core.get("dll", {}).get("sha256") == core_sha
+            and planned_sha(plan, "mod/valmax_core.dll") == core_sha,
+            "exact native Rust core and provisional Windows SBOM required")
+    source_paths = {
+        "cargoLockSha256": "native/Cargo.lock",
+        "workspaceCargoTomlSha256": "native/Cargo.toml",
+        "coreCargoTomlSha256": "native/core/Cargo.toml",
+    }
+    snapshot = core["sourceSnapshotAtReportTime"]
+    require(isinstance(snapshot, dict) and len(snapshot) >= 50
+            and all(name in source_paths.values() or name.startswith("native/core/")
+                    for name in snapshot),
+            "compiled-core source snapshot inventory differs")
+    for name, digest in snapshot.items():
+        require(sha(ROOT / relative(name)) == digest,
+                "compiled-core source changed after proof: " + name)
+    for key, name in source_paths.items():
+        digest = sbom["sourceInputs"][key]
+        require(snapshot.get(name) == digest and sha(ROOT / relative(name)) == digest,
+                "Rust SBOM manifests differ from compiled core proof: " + name)
+    base = Path(sbom_path).parent
+    for name, key in (("cargo-metadata-windows.json", "windowsCargoMetadataSha256"),
+                      ("cargo-tree-windows.txt", "windowsCargoTreeSha256")):
+        path = base / name
+        require(sha(path) == sbom["sourceInputs"][key], "Windows Cargo resolution changed")
+        plan.add("mod/licenses/RustCore/" + name, path, sbom["sourceInputs"][key],
+                 "windows-rust-resolution")
+    lock = tomllib.loads((ROOT / "native/Cargo.lock").read_text("utf8"))
+    registry = {(p["name"], p["version"]): p["checksum"] for p in lock["package"]
+                if p.get("source") == "registry+https://github.com/rust-lang/crates.io-index"}
+    packages = sbom["packages"]
+    require(len(packages) == sbom["graph"]["reachableRegistryCrates"]
+            == sbom["sourceArchives"]["count"]
+            and sbom["sourceArchives"]["allMatchCargoLockChecksums"] is True
+            and not sbom["cratesMissingSeparateIndexedLicenseText"]
+            and not sbom["declaredLicenseFileNotIndexed"],
+            "incomplete Windows Rust source inventory")
+    seen, license_paths, source_bytes = set(), set(), 0
+    for package in packages:
+        name, version = package["name"], package["version"]
+        pair = name, version
+        require(pair not in seen and re.fullmatch(r"[A-Za-z0-9_-]+", name)
+                and re.fullmatch(r"[A-Za-z0-9.+_-]+", version)
+                and registry.get(pair) == package["checksumFromCargoLock"]
+                and package["roles"] and set(package["roles"]) <= {"target", "host"}
+                and package["p13ReleaseFingerprintNameObserved"] is True
+                and package["declaredLicenseFileIndexed"] is True
+                and package["indexedLicenseNoticeFiles"],
+                "Rust crate identity, checksum or notice gap")
+        seen.add(pair)
+        source_name = f"crate-sources/{name}-{version}.crate"
+        require(package["copiedCrateSource"] == source_name,
+                "Rust source archive path differs from Cargo identity")
+        archive_path = base / relative(source_name)
+        require(ordinary(archive_path).st_size == package["crateBytes"]
+                and sha(archive_path) == registry[pair],
+                "Rust crate archive differs from Cargo.lock")
+        plan.add("mod/licenses/RustCore/" + source_name, archive_path,
+                 registry[pair], "windows-rust-crate-source")
+        source_bytes += package["crateBytes"]
+        with tarfile.open(archive_path, "r:gz") as archive:
+            for notice in package["indexedLicenseNoticeFiles"]:
+                member_name = f"{name}-{version}/" + relative(notice["member"]).as_posix()
+                member = archive.getmember(member_name)
+                require(member.isfile() and member.size == notice["bytes"],
+                        "Rust crate notice is not a matching regular member")
+                stream = archive.extractfile(member)
+                require(stream is not None, "Rust crate notice unreadable")
+                data = stream.read()
+                copy_name = relative(notice["copy"]).as_posix()
+                require(copy_name.startswith(f"license-texts/{name}-{version}/")
+                        and copy_name not in license_paths
+                        and len(data) == notice["bytes"]
+                        and hashlib.sha256(data).hexdigest() == notice["sha256"],
+                        "Rust crate notice differs from archived source")
+                license_paths.add(copy_name)
+                copy_path = base / relative(copy_name)
+                require(ordinary(copy_path).st_size == notice["bytes"]
+                        and sha(copy_path) == notice["sha256"],
+                        "Rust crate notice copy changed")
+                plan.add("mod/licenses/RustCore/" + copy_name, copy_path,
+                         notice["sha256"], "windows-rust-original-notice")
+    require(source_bytes == sbom["sourceArchives"]["totalBytes"],
+            "Rust source archive byte total differs")
+    plan.add("mod/licenses/RustCore/windows-msvc-dependency-sbom.json",
+             sbom_path, sha(sbom_path), "windows-rust-resolution")
+    return {"nativeCoreSha256": core_sha,
+            "cargoLockSha256": sbom["sourceInputs"]["cargoLockSha256"],
+            "sourceArchives": len(packages), "licenseTexts": len(license_paths),
+            "sourceArchiveBytes": source_bytes,
+            "resolvedDependencyGraphBoundToCoreProof": True,
+            "linkedObjectAndBundledCAsmLicenseReviewComplete": False,
+            "wholeClientMaterialsComplete": False}
+
+
 def patched_files(baseline, native_specs):
     merged = {}
     for spec in [*(entry for name in ("accounts", "privacy", "isolation")
@@ -596,7 +925,9 @@ def write_exact_or_new(path, data):
         write_new(path, data)
 
 
-def materials_status(helper, baseline_rows, browser, native_core, remaining_qt=None, imageformats=None):
+def materials_status(helper, baseline_rows, browser, native_core, remaining_qt=None,
+                     imageformats=None, baseline_notices=None, gum_notice=None,
+                     native_rust=None, lottie_omission=None):
     rust = read_json(helper / "licenses/Rust/rust-crates.json")
     packages = {(p["name"], p["version"]) for p in rust["packages"]}
     lock = tomllib.loads((ROOT / "native/Cargo.lock").read_text("utf8"))
@@ -606,21 +937,38 @@ def materials_status(helper, baseline_rows, browser, native_core, remaining_qt=N
     limitations = [
         "The baseline MAX runtime contains no license/notice files; applicable MAX and bundled third-party redistribution materials have not been assembled.",
         "Modified Qt WebView source and original SDK notices are included; applicable Microsoft Fixed Version Runtime redistribution terms have not been independently collected here.",
-        "Rust crate license files are reused by exact name/version and retain origin; no claim that a helper receipt is a receipt for the new common core.",
     ]
     if remaining_qt is None:
-        limitations.insert(1, "Copied Qt materials are complete for the standalone helper, not every Qt module bundled by MAX (including multimedia/lottie/positioning/svg/webchannel). Whole-runtime applicability remains unverified.")
+        limitations.insert(1, "Copied Qt materials are complete for the standalone helper, not every Qt module bundled by MAX (including multimedia/positioning/svg/webchannel). Whole-runtime applicability remains unverified.")
+    elif lottie_omission:
+        limitations.insert(1, "Six additional root Qt DLLs and two service copies remain after Qt Lottie was omitted. Their official 6.11.2 source/license texts are staged; other bundled Qt plugins and third-party materials still require whole-client review.")
     else:
         limitations.insert(1, "Eight additional root Qt DLLs and four service copies now match official 6.11.2 binary archives and carry corresponding source/license texts; other bundled Qt plugins and third-party material scope still require whole-client review.")
     if imageformats is None:
         limitations.insert(1, "Five QtImageFormats plugins lack staged corresponding sources and original codec notices.")
     else:
         limitations.insert(1, "Five QtImageFormats plugins now match official 6.11.2 binaries and carry corresponding sources and original libtiff/libwebp notices; actual codec linkage and whole-client license scope remain unverified.")
+    if baseline_notices is None:
+        limitations.append("FFmpeg, OpenSSL and WinSparkle notices are not staged with exact runtime-image checks; corresponding FFmpeg source/build provenance is unknown.")
+    else:
+        limitations.append("Versioned FFmpeg/OpenSSL/WinSparkle notices now match audited runtime images; FFmpeg corresponding source/build, modified WinSparkle provenance and any unaudited family image remain unresolved.")
+    if gum_notice is None:
+        limitations.append("The Frida Gum static dependency has no tagged notice in this native staging.")
+    else:
+        limitations.append("The tagged Frida Gum COPYING is retained, but static object and transitive dependency notice closure remain unverified.")
+    if native_rust is None:
+        limitations.append("Rust crate license files are reused from the helper by name/version only; its receipt is not a receipt for the new common core.")
+    else:
+        limitations.append("Windows Rust crate archives and original notices match Cargo.lock and the exact compiled-core proof; linked-object and bundled C/ASM license review remain open.")
     return {"completeForWholeClient": False, "commonCoreSha256": native_core,
             "helperMaterialsKeptIndependent": True,
             "copiedQtCorrespondingSourceModules": qt["modules"],
             "additionalQtMaterialProof": remaining_qt,
             "additionalQtImageFormatsMaterialProof": imageformats,
+            "baselineUpstreamNoticeProof": baseline_notices,
+            "gumTaggedNoticeProof": gum_notice,
+            "nativeRustSourceGraphProof": native_rust,
+            "qtLottieRuntimeOmission": lottie_omission,
             "commonRustCargoLockSha256": sha(ROOT / "native/Cargo.lock"),
             "commonRustCargoLockMatchesWindowsNotices": sha(ROOT / "native/Cargo.lock") == rust["cargoLockSha256"],
             "crossPlatformLockEntriesAbsentFromWindowsTargetMaterials": missing_crates,
@@ -651,6 +999,8 @@ def assemble(args):
     baseline_rows = verify_inventory(args.baseline, layout["layout"])
     qml, unresolved = generated_sources(args.qml)
     input_refs["nativeQml"] = {"path": str(args.qml / "native-qml-proof.json"), "sha256": sha(args.qml / "native-qml-proof.json")}
+    lottie_gate = ROOT / "native/tests/qt/verify_recording_no_lottie.py"
+    input_refs["qtLottieRuntimeGate"] = {"path": str(lottie_gate), "sha256": sha(lottie_gate)}
     prepared = patched_files(args.baseline, literal_specs(args.qml / "ui_native.py"))
     build = receipt("ordinaryBuild", args.plugin_proof)
     runtime_proof = receipt("ordinaryRuntime", args.plugin_runtime_proof)
@@ -670,6 +1020,14 @@ def assemble(args):
     require(pair.get("verified") is True and pair.get("sourceSnapshotMatches") is True
             and pair.get("importLibrarySymbolsMatch") is True
             and pair["hashes"]["dll"] == build["coreSha256"], "verified matching core pair required")
+    core_source_proof = Path(pair["sourceProof"])
+    core_source = read_json(core_source_proof)
+    require(sha(core_source_proof) == pair["sourceProofSha256"]
+            and core_source["dll"]["sha256"] == build["coreSha256"]
+            and all(sha(ROOT / relative(name)) == digest
+                    for name, digest in core_source["sourceSnapshotAtReportTime"].items()),
+            "compiled-core source proof changed")
+    input_refs["ordinaryCoreSource"] = {"path": str(core_source_proof), "sha256": sha(core_source_proof)}
     for name, digest in build["sourceHashes"].items():
         require(sha(ROOT / relative(name)) == digest, "ordinary source snapshot changed")
     for name, digest in build["artifacts"].items():
@@ -765,8 +1123,28 @@ def assemble(args):
     # helper proofs as proof that the whole MAX runtime is distributable.
     for row in inventory(helper_root / "licenses"):
         plan.add("mod/licenses/shared-component-materials/" + row["path"], helper_root / "licenses" / relative(row["path"]), row["sha256"], "helper-materials-reused-with-limits")
+    baseline_notices = None
+    if args.baseline_upstream_audit:
+        receipt("baselineUpstreamAudit", args.baseline_upstream_audit)
+        sparkle_patches = [row for name, _, row in prepared if name == "WinSparkle.dll"]
+        require(len(sparkle_patches) == 1
+                and sparkle_patches[0]["baselineSha256"] == planned_sha(plan, "mod/WinSparkle.dll"),
+                "one baseline-pinned WinSparkle patch required")
+        baseline_notices = add_baseline_upstream_notices(
+            plan, args.baseline_upstream_audit, sparkle_patches[0]["sha256"])
+    gum_notice = None
+    if args.gum_materials_audit:
+        receipt("gumMaterialsAudit", args.gum_materials_audit)
+        gum_notice = add_gum_notice(plan, args.gum_materials_audit)
+    native_rust = None
+    if args.rust_windows_sbom:
+        receipt("nativeRustWindowsSbom", args.rust_windows_sbom)
+        native_rust = add_native_rust_materials(plan, args.rust_windows_sbom,
+                                                core_source_proof, build["coreSha256"])
+    lottie_omission = omit_qt_lottie(plan, qml, args.qml)
     material_status = materials_status(helper_root, baseline_rows, browser, build["coreSha256"],
-                                       qt_remaining, qt_imageformats)
+                                       qt_remaining, qt_imageformats, baseline_notices,
+                                       gum_notice, native_rust, lottie_omission)
     materials_bytes = json.dumps(material_status, indent=2).encode("utf8") + b"\n"
     warning = ("DEVELOPER STAGING ONLY - NOT A USER RELEASE\n"
                "No installed MAX or real profile was launched. No Python, external JS observer or local server is bundled.\n"
@@ -779,6 +1157,7 @@ def assemble(args):
     planned_paths = {row["path"]: Path(row["source"]) for row in plan.entries.values()}
     planned_patches = {"mod/" + name: data for name, data, _ in prepared}
     planned_closure = dependency_closure(output / "runtime", planned_rows, planned_paths, planned_patches)
+    require_no_lottie_pe_imports(planned_closure)
     print(json.dumps({"plannedPeImages": planned_closure["images"], "plannedMissingDependencies": planned_closure["missing"],
                       "plannedDependencyClosureVerified": planned_closure["verified"], "runtimeCopyStarted": False}), flush=True)
     if completion:
@@ -820,6 +1199,18 @@ def assemble(args):
                     for name in ("core.dll", "storage.dll")),
             "staged passive retention image pair differs from compiled pins")
     closure = dependency_closure(runtime, rows)
+    require_no_lottie_pe_imports(closure)
+    expected_mod_pe = {
+        row["path"][4:]: row["sha256"] for row in plan.entries.values()
+        if row["path"].startswith("mod/") and Path(row["path"]).suffix.lower() in {".exe", ".dll"}
+    }
+    for name, _, row in prepared:
+        if Path(name).suffix.lower() in {".exe", ".dll"}:
+            expected_mod_pe[name] = row["sha256"]
+    require(len(expected_mod_pe) == 318, "frozen p15 mod PE plan count changed")
+    lottie_runtime_audit = audit_qt_lottie_runtime(runtime / "mod", expected_mod_pe)
+    require(lottie_runtime_audit["recordingResources"] == lottie_omission["nativeRecorderResources"],
+            "packed native recording replacement hashes differ from selected resources")
     required = ["mod/" + name for name in qml["requiredNativeFiles"]]
     paths = {row["path"] for row in rows}
     require(set(required) <= paths, "generated native dependency missing")
@@ -852,6 +1243,11 @@ def assemble(args):
               "qtRuntimeCompletion": completion,
                "qtRemainingMaterials": qt_remaining,
                "qtImageFormatsMaterials": qt_imageformats,
+              "qtLottieOmission": lottie_omission,
+              "qtLottieRuntimeAudit": lottie_runtime_audit,
+              "baselineUpstreamNotices": baseline_notices,
+              "gumTaggedNotice": gum_notice,
+              "nativeRustMaterials": native_rust,
               "releaseBlockers": LIMITATIONS + [{"id": "whole_client_materials", "reason": text} for text in material_status["limitations"]],
               "baselineUnchanged": True, "independentCopies": True,
               "resumedExactUnreceiptedRuntime": args.resume_output,
@@ -889,6 +1285,9 @@ def main():
     parser.add_argument("--qt-imageformats-audit-proof", type=Path, help="Official QtImageFormats source/binary identity receipt for five exact runtime plugins.")
     parser.add_argument("--qt-imageformats-thirdparty-proof", type=Path, help="Original libtiff/libwebp notice receipt tied to the QtImageFormats audit.")
     parser.add_argument("--qt-sdk-supplement-proof", type=Path, help="Offline revalidated exact QtQuickWidgets/PrintSupport release dependencies.")
+    parser.add_argument("--baseline-upstream-audit", type=Path, help="Exact FFmpeg/OpenSSL/WinSparkle runtime identity and versioned upstream notices.")
+    parser.add_argument("--gum-materials-audit", type=Path, help="Tagged Frida Gum COPYING and the pinned static devkit.")
+    parser.add_argument("--rust-windows-sbom", type=Path, help="Windows MSVC crate archives and original notices bound to the compiled core proof.")
     parser.add_argument("--resume-output", action="store_true", help="Complete only an unreceipted runtime whose entire inventory already matches the exact planned copied/patched bytes.")
     result = assemble(parser.parse_args())
     print(json.dumps({key: result[key] for key in ("assembled", "runtime", "files", "bytes", "runtimeInventorySha256", "releaseEligible")} | {

@@ -1,10 +1,12 @@
 """Native packaging regressions: server leftovers, stale UI, dependency gaps."""
 import hashlib
+import io
 import json
 import copy
 from pathlib import Path
 import sys
 import tempfile
+import tarfile
 import unittest
 from unittest.mock import patch
 from datetime import datetime, timedelta, timezone
@@ -720,6 +722,417 @@ class NativePackaging(unittest.TestCase):
         report["artifactValidation"] = {"verified": True}
         report["nativeQmlCompatibility"] = {"verifiedNoLegacyReferences": True}
         return report
+
+    def beta_subject(self, inputs=None):
+        if inputs is None:
+            self.beta_launcher = self.root / "ValMAX.exe"
+            self.beta_launcher.write_bytes(b"owned installed outer launcher fixture")
+            return {"version": "8.9.0-native.preview.1", "launcherSha256": package.sha(self.beta_launcher),
+                    "runtimeInventorySha256": "b" * 64, "qmlProofSha256": "c" * 64}
+        self.beta_launcher = inputs["launcher"]
+        return {"version": "8.9.0-native.preview.1", "launcherSha256": inputs["launcherHash"],
+                "runtimeInventorySha256": package.inventory_digest(inputs["rows"]),
+                "qmlProofSha256": inputs["qmlResult"]["proofSha256"]}
+
+    def beta_smoke(self, subject):
+        self.now = datetime.now(timezone.utc).replace(microsecond=0)
+        smoke = self.root / "installed-beta-smoke.json"
+        smoke.write_text(json.dumps({"schema": 1, "kind": "native-public-beta-installed-smoke",
+            "status": "passed", "subject": subject,
+            "testedAt": self.now.strftime("%Y-%m-%dT%H:%M:%SZ"),
+            "clientExecuted": True, "scope": "installed-native-client",
+            "launchMode": "outer-installed-launcher",
+            "installedLauncher": {"path": str(self.beta_launcher), "sha256": subject["launcherSha256"]},
+            "scenarios": dict.fromkeys(package.PUBLIC_BETA_SCENARIOS, True),
+            "unresolvedCritical": []}), encoding="utf8")
+        return smoke
+
+    def beta_material_summary(self):
+        return {"verified": True, "materialsReceiptSha256": "d" * 64,
+                "assemblyReceiptSha256": "e" * 64, "evidenceSha256": "f" * 64,
+                "ffmpegReferenceBundleManifestSha256": "a" * 64,
+                "ffmpegAuditSha256": "b" * 64,
+                "ffmpegRuntimeManifestSha256": "c" * 64,
+                "ffmpegSignatureVerificationSha256": "d" * 64,
+                "completeForWholeClient": False, "exactCorrespondingSourceProven": False,
+                "knownLimitations": [{"id": item["id"], "reason": item["statusText"]}
+                                     for item in package.PUBLIC_BETA_MATERIAL_LIMITATIONS],
+                "sourceBundles": [{"version": version,
+                    "path": "materials/FFmpeg/ffmpeg-" + version + ".tar.xz",
+                    "size": 1, "sha256": "1" * 64,
+                    "signature": {"path": "materials/FFmpeg/ffmpeg-" + version + ".tar.xz.asc",
+                                  "size": 1, "sha256": "3" * 64}}
+                    for version in ("7.1.3", "7.1.5")],
+                "buildConfigurations": {"path": "materials/FFmpeg/build-configurations.json",
+                    "size": 1, "sha256": "2" * 64}}
+
+    def beta_material_fixture(self, inputs):
+        runtime = inputs["runtime"]
+        for name in sorted(package.PUBLIC_BETA_REQUIRED_NOTICE_PATHS):
+            target = runtime / name
+            target.parent.mkdir(parents=True, exist_ok=True)
+            target.write_bytes(("owned notice: " + name).encode())
+            inputs["rows"].append({"path": name, "size": target.stat().st_size, "sha256": package.sha(target)})
+        images, probes, matches = {}, {}, {}
+        for location, prefix in (("p14Main", "mod/"), ("p14Service", "mod/max-service/")):
+            images[location], matches[location] = {}, {}
+            libraries = {}
+            for name in sorted(package.PUBLIC_BETA_FFMPEG_NAMES):
+                target = runtime / prefix / name
+                target.parent.mkdir(parents=True, exist_ok=True)
+                target.write_bytes(("owned DLL fixture: " + prefix + name).encode())
+                row = {"path": prefix + name, "size": target.stat().st_size, "sha256": package.sha(target)}
+                inputs["rows"].append(row)
+                images[location][name] = {"sha256": row["sha256"], "sizeBytes": row["size"],
+                                          "productVersion": "n7.1.3" if location == "p14Main" else "7.1.5"}
+                libraries[name] = {"configuration": "--disable-gpl --disable-nonfree --enable-shared",
+                                   "license": "LGPL version 2.1 or later"}
+                matches[location][name] = True
+            probes[location] = {"libraries": libraries}
+        audit = self.root / "ffmpeg-audit.json"
+        audit.write_text(json.dumps({"originalMax": {"p14ImagesMatchCab": matches},
+                                     "images": images, "capabilityProbes": probes}), encoding="utf8")
+        bundle = self.root / "ffmpeg-bundle"
+        (bundle / "sources").mkdir(parents=True)
+        (bundle / "manifests").mkdir()
+        (bundle / "verification").mkdir()
+        (bundle / "manifests/ffmpeg-audit.json").write_bytes(audit.read_bytes())
+        source_refs = []
+        fingerprint = "FCF986EA15E6E293A5644F10B4322F04D67658D8"
+        for version in ("7.1.3", "7.1.5"):
+            source = self.root / ("ffmpeg-" + version + ".tar.xz")
+            with tarfile.open(source, "w:xz") as archive:
+                data = ("#define FF_VERSION \"" + version + "\"\n").encode()
+                info = tarfile.TarInfo("ffmpeg-" + version + "/libavcodec/version.h")
+                info.size = len(data)
+                archive.addfile(info, io.BytesIO(data))
+            signature = self.root / (source.name + ".asc")
+            signature.write_bytes(("owned synthetic signature " + version).encode())
+            (bundle / "sources" / source.name).write_bytes(source.read_bytes())
+            (bundle / "sources" / signature.name).write_bytes(signature.read_bytes())
+            source_refs.append({"version": version, "officialUrl": "https://ffmpeg.org/releases/" + source.name,
+                                "path": str(source), "bundleRelativePath": "sources/" + source.name,
+                                "bytes": source.stat().st_size, "sha256": package.sha(source),
+                                "signatureOfficialUrl": "https://ffmpeg.org/releases/" + source.name + ".asc",
+                                "signaturePath": str(signature), "signatureSha256": package.sha(signature),
+                                "signatureVerified": True, "signingKeyFingerprint": fingerprint,
+                                "correspondenceToValMAXDllsProven": False})
+        runtime_images = []
+        for location, prefix in (("p14Main", "mod/"), ("p14Service", "mod/max-service/")):
+            for name in sorted(package.PUBLIC_BETA_FFMPEG_NAMES):
+                runtime_path = prefix + name
+                row = next(row for row in inputs["rows"] if row["path"] == runtime_path)
+                runtime_images.append({"runtimePath": runtime_path, "bytes": row["size"],
+                    "sha256": row["sha256"], "productVersion": images[location][name]["productVersion"],
+                    "configuration": probes[location]["libraries"][name]["configuration"],
+                    "reportedLicense": probes[location]["libraries"][name]["license"],
+                    "matchesLocalMaxMsiCab": True, "exactCorrespondingSourceProven": False})
+        runtime_manifest = bundle / "manifests/valmax-ffmpeg-runtime.json"
+        runtime_manifest.write_text(json.dumps({"schema": "valmax.ffmpeg-runtime-reference.v1",
+            "imageCount": 10, "exactCorrespondingSourceProven": False, "images": runtime_images}), encoding="utf8")
+        signature_record = bundle / "verification/gpg-verification.json"
+        signature_record.write_text(json.dumps({"schema": "valmax.ffmpeg-upstream-signatures.v1",
+            "expectedFingerprintFromOfficialDownloadPage": fingerprint,
+            "signatures": [{"version": version, "signingKeyFingerprint": fingerprint,
+                            "validSigStatus": "[GNUPG:] VALIDSIG " + fingerprint}
+                           for version in ("7.1.3", "7.1.5")]}), encoding="utf8")
+        bundle_manifest = bundle / "manifest.json"
+        bundle_manifest.write_text(json.dumps({
+            "schema": "valmax.ffmpeg-public-beta-reference-bundle.v1",
+            "completeForWholeClient": False, "ffmpegExactCorrespondingSourceProven": False,
+            "ffmpegSourceProvenanceUnverified": True,
+            "knownLimitationIds": ["ffmpeg_source_provenance_unverified",
+                                   "ffmpeg_exact_patches_unconfirmed", "whole_client_materials_incomplete"],
+            "sourceBundles": source_refs,
+            "ffmpegAudit": {"path": str(audit), "sha256": package.sha(audit),
+                            "bundleRelativePath": "manifests/ffmpeg-audit.json", "copySha256": package.sha(audit)},
+            "runtimeManifest": {"bundleRelativePath": "manifests/valmax-ffmpeg-runtime.json",
+                                "sha256": package.sha(runtime_manifest), "imageCount": 10},
+            "signatureVerification": {"bundleRelativePath": "verification/gpg-verification.json",
+                                      "sha256": package.sha(signature_record)}}), encoding="utf8")
+        materials = {"completeForWholeClient": False,
+            "limitations": [item["statusText"] for item in package.PUBLIC_BETA_MATERIAL_LIMITATIONS],
+            "helperMaterialsKeptIndependent": True,
+            "additionalQtMaterialProof": {"runtimeImagesMatched": 12, "licenseTexts": 48, "runtimeDllsMatched": True},
+            "additionalQtImageFormatsMaterialProof": {"runtimeImagesMatched": 5, "copiedMaterialFiles": 13,
+                                                      "wholeClientMaterialsComplete": False},
+            "baselineUpstreamNoticeProof": {"copiedNoticeFiles": 8,
+                "uncoveredRuntimeImages": ["swscale-8.dll"], "ffmpegExactCorrespondingSourceProven": False},
+            "gumTaggedNoticeProof": {"taggedNoticeCopied": True},
+            "nativeRustSourceGraphProof": {"sourceArchives": 70, "licenseTexts": 139,
+                "resolvedDependencyGraphBoundToCoreProof": True, "wholeClientMaterialsComplete": False},
+            "qtLottieRuntimeOmission": {"omittedRuntimeFiles": ["fixture-" + str(i) for i in range(7)]},
+            "fixedBrowserFilesUnmodified": True}
+        inputs["materialBinding"] = {"status": materials, "sha256": "d" * 64}
+        subject = self.beta_subject(inputs)
+        evidence = self.root / "beta-materials-evidence.json"
+        evidence.write_text(json.dumps({"schema": 1, "kind": "native-public-beta-materials",
+            "subject": subject, "materialsReceiptSha256": "d" * 64,
+            "assemblyReceiptSha256": inputs["hookTargetIdentity"]["assemblyReceiptSha256"],
+            "knownLimitationIds": [item["id"] for item in package.PUBLIC_BETA_MATERIAL_LIMITATIONS],
+            "ffmpegReferenceBundle": {"path": str(bundle_manifest), "sha256": package.sha(bundle_manifest)},
+            "exactCorrespondingSourceProven": False,
+            "completeForWholeClient": False}), encoding="utf8")
+        return subject, evidence
+
+    def beta_report(self, subject, smoke, *, materials=None, rights=True,
+                    artifact_verified=True, qml_verified=True, identity=None, beta_materials=None):
+        identity = identity if identity is not None else {key: subject[key] for key in package.ARTIFACT_IDENTITY_KEYS}
+        materials = materials if materials is not None else {"completeForWholeClient": False,
+            "limitations": [item["statusText"] for item in package.PUBLIC_BETA_MATERIAL_LIMITATIONS]}
+        beta_materials = beta_materials if beta_materials is not None else self.beta_material_summary()
+        report = package.release_preflight(subject, smoke, mode="public-beta", now=self.now,
+                    artifact_identity=identity, materials=materials,
+                    artifact_verified=artifact_verified, qml_compatibility_verified=qml_verified,
+                    max_rights_attested=rights, beta_materials=beta_materials)
+        report["artifactValidation"] = {"verified": artifact_verified, "identity": identity,
+            "materialsReceiptSha256": beta_materials["materialsReceiptSha256"],
+            "hookTargetIdentity": {"assemblyReceiptSha256": beta_materials["assemblyReceiptSha256"]}}
+        report["nativeQmlCompatibility"] = {"verifiedNoLegacyReferences": qml_verified}
+        return report
+
+    def test_public_beta_installed_core_evidence_is_distinct_from_stable_regression(self):
+        subject = self.beta_subject()
+        smoke = self.beta_smoke(subject)
+        report = self.beta_report(subject, smoke)
+        self.assertTrue(report["releaseEligible"])
+        self.assertTrue(report["betaCoreTested"])
+        self.assertTrue(report["evidenceVerified"])
+        self.assertFalse(report["featureRuntimeTested"])
+        self.assertFalse(report["wholeClientMaterialsVerified"])
+        self.assertTrue(report["materialsDocumentedForBeta"])
+        self.assertEqual(report["blockers"], [])
+        self.assertEqual(report["installedSmokeSha256"], package.sha(smoke))
+        self.assertEqual({item["id"] for item in report["knownLimitations"]},
+                         {"retention_scope", "chat_export_history", "early_protection", "full_feature_regression"}
+                         | {item["id"] for item in package.PUBLIC_BETA_MATERIAL_LIMITATIONS})
+        package.require_distribution("public-beta", report, installer=True)
+
+    def test_public_beta_refuses_missing_rights_materials_or_exact_artifacts(self):
+        subject = self.beta_subject()
+        smoke = self.beta_smoke(subject)
+        cases = (
+            ({"rights": False}, "max_redistribution_attestation"),
+            ({"materials": {"completeForWholeClient": False, "limitations": []}}, "beta_materials"),
+            ({"materials": {"completeForWholeClient": True, "limitations": []}}, "beta_materials"),
+            ({"materials": {"completeForWholeClient": False, "limitations": ["unknown gap"]}}, "beta_materials"),
+            ({"artifact_verified": False}, "artifact_integrity"),
+            ({"qml_verified": False}, "artifact_integrity"),
+            ({"identity": {**{key: subject[key] for key in package.ARTIFACT_IDENTITY_KEYS},
+                           "qmlProofSha256": "e" * 64}}, "artifact_integrity"),
+        )
+        for changes, blocker in cases:
+            with self.subTest(changes=changes):
+                report = self.beta_report(subject, smoke, **changes)
+                self.assertFalse(report["releaseEligible"])
+                self.assertIn(blocker, {item["id"] for item in report["blockers"]})
+                with self.assertRaises(ValueError):
+                    package.require_distribution("public-beta", report, installer=True)
+
+    def test_public_beta_refuses_stale_other_subject_and_synthetic_smoke(self):
+        subject = self.beta_subject()
+        smoke = self.beta_smoke(subject)
+        original = json.loads(smoke.read_text("utf8"))
+        changes = (
+            lambda value: value.update(subject={**subject, "launcherSha256": "e" * 64}),
+            lambda value: value.update(testedAt=(self.now - timedelta(days=8)).strftime("%Y-%m-%dT%H:%M:%SZ")),
+            lambda value: value.update(testedAt=(self.now + timedelta(minutes=10)).strftime("%Y-%m-%dT%H:%M:%SZ")),
+            lambda value: value.update(clientExecuted=False),
+            lambda value: value.update(scope="standalone-qt"),
+            lambda value: value.update(launchMode="direct-inner-max"),
+            lambda value: value["installedLauncher"].update(path=str(self.root / "runtime/mod/max.exe")),
+            lambda value: value["installedLauncher"].update(sha256="e" * 64),
+            lambda value: value["scenarios"].pop("deleted_message_bubble"),
+            lambda value: value["scenarios"].update(chat_send_receive=1),
+            lambda value: value.update(unresolvedCritical=["startup crash"]),
+            lambda value: value.update(status="failed"),
+        )
+        for index, change in enumerate(changes):
+            with self.subTest(index=index):
+                value = copy.deepcopy(original)
+                change(value)
+                smoke.write_text(json.dumps(value), encoding="utf8")
+                report = self.beta_report(subject, smoke)
+                self.assertFalse(report["releaseEligible"])
+                self.assertFalse(report["betaCoreTested"])
+                self.assertIn("invalid_installed_smoke", {item["id"] for item in report["blockers"]})
+
+    def test_public_beta_cli_without_smoke_or_rights_stops_before_payload(self):
+        inputs = self.staging_inputs()
+        subject, material_evidence = self.beta_material_fixture(inputs)
+        smoke = self.beta_smoke(subject)
+        for index, extras in enumerate((("--max-rights-attested",),
+                                        ("--release-evidence", str(smoke)))):
+            output = self.root / ("blocked-public-beta-" + str(index))
+            argv = ["package_native_client.py", "--version", subject["version"],
+                    "--runtime", str(inputs["runtime"]), "--qml-build", str(inputs["qml"]),
+                    "--launcher-proof", str(self.root / "launcher-proof.json"),
+                    "--output", str(output), "--distribution", "public-beta",
+                    "--beta-materials-evidence", str(material_evidence), *extras]
+            with self.subTest(extras=extras), patch.object(sys, "argv", argv), \
+                 patch.object(package, "packaging_inputs", return_value=inputs), \
+                 patch.object(package.shutil, "copyfile") as copy_file, \
+                 patch.object(package.subprocess, "run") as compiler:
+                with self.assertRaisesRegex(ValueError, "public BETA requires"):
+                    package.main()
+                copy_file.assert_not_called()
+                compiler.assert_not_called()
+            self.assertTrue((output / "packaging-preflight.json").is_file())
+            self.assertFalse((output / "payload").exists())
+
+    def test_public_beta_materials_bind_notices_sources_config_and_exact_dlls(self):
+        inputs = self.staging_inputs()
+        subject, evidence = self.beta_material_fixture(inputs)
+        binding = inputs["materialBinding"]
+        assembly = inputs["hookTargetIdentity"]["assemblyReceiptSha256"]
+        plan = package.beta_materials_documentation(binding, inputs["rows"], assembly, subject, evidence)
+        self.assertTrue(plan["summary"]["verified"])
+        self.assertFalse(plan["summary"]["completeForWholeClient"])
+        self.assertFalse(plan["summary"]["exactCorrespondingSourceProven"])
+        self.assertEqual([row["version"] for row in plan["summary"]["sourceBundles"]], ["7.1.3", "7.1.5"])
+        original_evidence = evidence.read_bytes()
+        original_rows = copy.deepcopy(inputs["rows"])
+        original_binding = copy.deepcopy(binding)
+        source715 = self.root / "ffmpeg-7.1.5.tar.xz"
+        original_source715 = source715.read_bytes()
+        audit = self.root / "ffmpeg-audit.json"
+        original_audit = audit.read_bytes()
+        cases = (
+            (lambda: binding["status"]["limitations"].append("unknown materials gap"), "unknown, missing"),
+            (lambda: inputs["rows"].pop(next(i for i, row in enumerate(inputs["rows"])
+                                          if row["path"] == "mod/licenses/Gum/COPYING")), "notice is missing"),
+            (lambda: binding["status"].update(additionalQtMaterialProof=None), "source or notice proof"),
+            (lambda: evidence.write_text(original_evidence.decode().replace('"materialsReceiptSha256": "' + "d" * 64,
+                '"materialsReceiptSha256": "' + "0" * 64), encoding="utf8"), "exact incomplete assembly"),
+            (lambda: source715.write_bytes(b"tampered source"), "source bundle bytes differ"),
+            (lambda: audit.write_bytes(b"tampered audit"), "FFmpeg audit changed"),
+            (lambda: inputs["rows"][next(i for i, row in enumerate(inputs["rows"])
+                                     if row["path"] == "mod/avcodec-61.dll")].update(sha256="0" * 64),
+             "staged FFmpeg DLL differs"),
+        )
+        for index, (change, reason) in enumerate(cases):
+            binding.clear(); binding.update(copy.deepcopy(original_binding))
+            inputs["rows"][:] = copy.deepcopy(original_rows)
+            evidence.write_bytes(original_evidence)
+            source715.write_bytes(original_source715)
+            audit.write_bytes(original_audit)
+            change()
+            with self.subTest(index=index), self.assertRaisesRegex(ValueError, reason):
+                package.beta_materials_documentation(binding, inputs["rows"], assembly, subject, evidence)
+
+    def test_public_beta_materials_reject_changed_reference_and_signature(self):
+        inputs = self.staging_inputs()
+        subject, evidence = self.beta_material_fixture(inputs)
+        binding = inputs["materialBinding"]
+        assembly = inputs["hookTargetIdentity"]["assemblyReceiptSha256"]
+        bundle = self.root / "ffmpeg-bundle"
+        targets = (
+            (bundle / "manifest.json", "reference bundle manifest changed"),
+            (bundle / "manifests/valmax-ffmpeg-runtime.json", "runtime manifest changed"),
+            (bundle / "verification/gpg-verification.json", "signature verification record changed"),
+            (self.root / "ffmpeg-7.1.5.tar.xz.asc", "source bundle bytes differ"),
+        )
+        for target, reason in targets:
+            with self.subTest(target=target.name):
+                original = target.read_bytes()
+                target.write_bytes(b"tampered owned fixture")
+                try:
+                    with self.assertRaisesRegex(ValueError, reason):
+                        package.beta_materials_documentation(binding, inputs["rows"], assembly, subject, evidence)
+                finally:
+                    target.write_bytes(original)
+
+    def test_public_beta_packaging_pins_notice_and_preserves_stable_claim_boundary(self):
+        inputs = self.staging_inputs()
+        subject, material_evidence = self.beta_material_fixture(inputs)
+        smoke = self.beta_smoke(subject)
+        output = self.root / "public-beta"
+        argv = ["package_native_client.py", "--version", subject["version"], "--runtime", str(inputs["runtime"]),
+                "--qml-build", str(inputs["qml"]), "--launcher-proof", str(self.root / "launcher-proof.json"),
+                "--output", str(output), "--distribution", "public-beta", "--release-evidence", str(smoke),
+                "--beta-materials-evidence", str(material_evidence), "--max-rights-attested"]
+        with patch.object(sys, "argv", argv), patch.object(package, "packaging_inputs", return_value=inputs), \
+             patch.object(package.pins, "inventory", return_value=inputs["rows"]), \
+             patch.object(package.subprocess, "run") as compiler:
+            package.main()
+            compiler.assert_not_called()
+        payload = output / "payload"
+        manifest = json.loads((payload / "native-package.json").read_text("utf8"))
+        self.assertTrue(manifest["releaseEligible"])
+        self.assertTrue(manifest["publicBeta"])
+        self.assertTrue(manifest["betaCoreTested"])
+        self.assertFalse(manifest["featureRuntimeTested"])
+        self.assertFalse(manifest["wholeClientMaterialsVerified"])
+        self.assertTrue(manifest["materialsDocumentedForBeta"])
+        self.assertFalse(manifest["betaMaterials"]["exactCorrespondingSourceProven"])
+        self.assertEqual(manifest["betaMaterials"]["materialsReceiptSha256"], "d" * 64)
+        self.assertTrue(manifest["maxRightsAttested"])
+        self.assertEqual(manifest["installedSmokeSha256"], package.sha(smoke))
+        self.assertEqual(manifest["betaInformation"], {"path": "native-beta.txt",
+            "sha256": package.sha(payload / "native-beta.txt")})
+        warning = (payload / "native-beta.txt").read_text("utf-8-sig")
+        for phrase in ("публичная BETA", "история может быть неполной", "Фото, видео и голосовые",
+                       "первого фонового действия", "public BETA", "FFmpeg", "WinSparkle"):
+            self.assertIn(phrase, warning)
+        for item in package.PUBLIC_BETA_MATERIAL_LIMITATIONS:
+            self.assertIn(item["noticeRu"], warning)
+            self.assertIn(item["noticeEn"], warning)
+        for row in (*manifest["betaMaterials"]["sourceBundles"],
+                    *(item["signature"] for item in manifest["betaMaterials"]["sourceBundles"]),
+                    manifest["betaMaterials"]["buildConfigurations"]):
+            self.assertEqual(package.sha(payload / row["path"]), row["sha256"])
+        self.assertEqual(package.sha(payload / "native-beta-materials.json"),
+                         manifest["betaMaterialsInformation"]["sha256"])
+        marker = (payload / "native-release-state.iss").read_text("utf8")
+        self.assertIn('#define NativeDistributionMode "public-beta"', marker)
+        self.assertIn('#define NativeReleaseEligible 1', marker)
+        self.assertIn('#define NativeBetaCoreTested 1', marker)
+        self.assertIn('#define NativeBetaInfoSha256 "' + package.sha(payload / "native-beta.txt") + '"', marker)
+        self.assertIn('#define NativeBetaMaterialsInfoSha256 "' +
+                      package.sha(payload / "native-beta-materials.json") + '"', marker)
+        self.assertIn('#define NativeBetaSource713SignatureSha256 "' +
+                      manifest["betaMaterials"]["sourceBundles"][0]["signature"]["sha256"] + '"', marker)
+
+    def test_public_beta_marker_rejects_changed_notice_and_forged_claim(self):
+        inputs = self.staging_inputs()
+        subject, material_evidence = self.beta_material_fixture(inputs)
+        plan = package.beta_materials_documentation(inputs["materialBinding"], inputs["rows"],
+            inputs["hookTargetIdentity"]["assemblyReceiptSha256"], subject, material_evidence)
+        smoke = self.beta_smoke(subject)
+        report = self.beta_report(subject, smoke, materials=inputs["materialBinding"]["status"],
+                                  beta_materials=plan["summary"])
+        payload = self.root / "beta-marker"
+        payload.mkdir()
+        material_info = package.copy_beta_materials(payload, plan)
+        notice = payload / "native-beta.txt"
+        notice.write_bytes(package.beta_information(subject["version"]))
+        manifest = {"distributionMode": "public-beta", "version": subject["version"], "publicBeta": True,
+                    "betaCoreTested": True, "featureRuntimeTested": False,
+                    "wholeClientMaterialsVerified": False, "materialsDocumentedForBeta": True,
+                    "betaMaterials": plan["summary"], "betaMaterialsInformation": material_info,
+                    "maxRightsAttested": True,
+                    "installedSmokeSha256": package.sha(smoke), "knownLimitations": report["knownLimitations"],
+                    "betaInformation": {"path": "native-beta.txt", "sha256": package.sha(notice)}}
+        (payload / "native-package.json").write_text(json.dumps(manifest), encoding="utf8")
+        notice.write_bytes(b"changed unit-only notice")
+        with self.assertRaisesRegex(ValueError, "public BETA evidence or information changed"):
+            package.write_release_state(payload, manifest, report)
+        notice.write_bytes(package.beta_information(subject["version"]))
+        manifest["featureRuntimeTested"] = True
+        with self.assertRaisesRegex(ValueError, "public BETA evidence or information changed"):
+            package.write_release_state(payload, manifest, report)
+        manifest["featureRuntimeTested"] = False
+        source = payload / manifest["betaMaterials"]["sourceBundles"][0]["path"]
+        source_original = source.read_bytes()
+        source.write_bytes(b"changed unit-only source")
+        with self.assertRaisesRegex(ValueError, "source or configuration changed"):
+            package.write_release_state(payload, manifest, report)
+        source.write_bytes(source_original)
+        signature = payload / manifest["betaMaterials"]["sourceBundles"][0]["signature"]["path"]
+        signature.write_bytes(b"changed unit-only signature")
+        with self.assertRaisesRegex(ValueError, "source or configuration changed"):
+            package.write_release_state(payload, manifest, report)
+        self.assertFalse((payload / "native-release-state.iss").exists())
 
     def test_local_preview_accepts_only_explicit_known_product_gaps(self):
         report = self.preview_report()

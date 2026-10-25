@@ -16,6 +16,7 @@ import re
 import shutil
 import stat
 import subprocess
+import tarfile
 from datetime import datetime, timedelta, timezone
 
 from package_transfer_helper import pe_imports, system_dependency
@@ -41,6 +42,67 @@ LOCAL_PREVIEW_BLOCKERS = frozenset(key for key, _ in CURRENT_RELEASE_BLOCKERS) |
     "release_evidence_missing", "whole_client_materials",
 }
 LOCAL_PREVIEW_INFO = "native-preview.txt"
+PUBLIC_BETA_INFO = "native-beta.txt"
+PUBLIC_BETA_MATERIAL_INFO = "native-beta-materials.json"
+PUBLIC_BETA_SCENARIOS = (
+    "installed_launch",
+    "existing_profile_and_accounts",
+    "account_switch",
+    "chat_send_receive",
+    "deleted_message_bubble",
+    "export_photo_video_voice_with_beta_notice",
+    "app_exit_restart",
+)
+PUBLIC_BETA_LIMITATIONS = (
+    {"id": "retention_scope", "reason": "Only messages already received after capture was enabled can be retained. Older saved records may have approximate placement and earlier deletions cannot be recovered."},
+    {"id": "chat_export_history", "reason": "The server has not confirmed that every older message is available. Media export can report individual attachment failures and the archive may be incomplete."},
+    {"id": "early_protection", "reason": "Ghost and notification protection before the first background event has not been demonstrated on the installed client."},
+    {"id": "full_feature_regression", "reason": "The complete 16-group installed-client regression required for a stable release has not been completed."},
+)
+PUBLIC_BETA_MATERIAL_LIMITATIONS = (
+    {"id": "max_baseline_notices_unassembled",
+     "statusText": "The baseline MAX runtime contains no license/notice files; applicable MAX and bundled third-party redistribution materials have not been assembled.",
+     "noticeRu": "У исходного набора MAX нет единого комплекта лицензий и уведомлений; применимость условий ко всем вложенным компонентам ещё проверяется.",
+     "noticeEn": "The original MAX runtime has no complete notice set; terms for all bundled components are still being reviewed."},
+    {"id": "qt_imageformats_codec_scope_unverified",
+     "statusText": "Five QtImageFormats plugins now match official 6.11.2 binaries and carry corresponding sources and original libtiff/libwebp notices; actual codec linkage and whole-client license scope remain unverified.",
+     "noticeRu": "Пять плагинов QtImageFormats и их материалы сверены; состав кодеков и применимость лицензий ко всему клиенту ещё не подтверждены.",
+     "noticeEn": "Five QtImageFormats plugins and materials match; codec linkage and whole-client license scope remain unverified."},
+    {"id": "qt_remaining_plugin_scope_unverified",
+     "statusText": "Six additional root Qt DLLs and two service copies remain after Qt Lottie was omitted. Their official 6.11.2 source/license texts are staged; other bundled Qt plugins and third-party materials still require whole-client review.",
+     "noticeRu": "Исходники и лицензии для восьми оставшихся копий Qt добавлены; другие Qt-плагины и сторонние материалы требуют проверки.",
+     "noticeEn": "Sources and licenses for eight remaining Qt copies are staged; other Qt plugins and third-party materials need review."},
+    {"id": "webview2_terms_unverified",
+     "statusText": "Modified Qt WebView source and original SDK notices are included; applicable Microsoft Fixed Version Runtime redistribution terms have not been independently collected here.",
+     "noticeRu": "Исходники Qt WebView и уведомления SDK включены; применимые условия распространения Microsoft WebView2 Fixed Version ещё не подтверждены.",
+     "noticeEn": "Qt WebView source and SDK notices are included; applicable Microsoft WebView2 Fixed Version redistribution terms remain unverified."},
+    {"id": "ffmpeg_source_provenance_unverified",
+     "statusText": "Versioned FFmpeg/OpenSSL/WinSparkle notices now match audited runtime images; FFmpeg corresponding source/build, modified WinSparkle provenance and any unaudited family image remain unresolved.",
+     "noticeRu": "FFmpeg: версии DLL, конфигурации, хэши и upstream-архивы приложены, но соответствие исходников именно этим сборкам не доказано. Происхождение изменённого WinSparkle и части семейства также открыто.",
+     "noticeEn": "FFmpeg DLL versions, build configurations, hashes and upstream archives are included, but exact corresponding source for these builds is unproven. Modified WinSparkle provenance and one family image remain open."},
+    {"id": "gum_static_notice_scope_unverified",
+     "statusText": "The tagged Frida Gum COPYING is retained, but static object and transitive dependency notice closure remain unverified.",
+     "noticeRu": "Уведомление Frida Gum приложено; состав статически связанных объектов и их зависимостей проверен не полностью.",
+     "noticeEn": "The Frida Gum notice is included; static objects and transitive dependency notices remain unverified."},
+    {"id": "rust_linked_object_license_scope_unverified",
+     "statusText": "Windows Rust crate archives and original notices match Cargo.lock and the exact compiled-core proof; linked-object and bundled C/ASM license review remain open.",
+     "noticeRu": "Исходники Rust crate и уведомления сверены с Cargo.lock; лицензии связанных объектов и вложенного C/ASM ещё проверяются.",
+     "noticeEn": "Rust crate sources and notices match Cargo.lock; linked-object and bundled C/ASM license review remains open."},
+)
+PUBLIC_BETA_REQUIRED_NOTICE_PATHS = frozenset({
+    "mod/licenses/BaselineUpstream/FFmpeg/COPYING.LGPLv2.1",
+    "mod/licenses/BaselineUpstream/FFmpeg/COPYING.GPLv2",
+    "mod/licenses/BaselineUpstream/FFmpeg/COPYING.LGPLv3",
+    "mod/licenses/BaselineUpstream/FFmpeg/COPYING.GPLv3",
+    "mod/licenses/BaselineUpstream/FFmpeg/LICENSE.md",
+    "mod/licenses/BaselineUpstream/OpenSSL/LICENSE.txt",
+    "mod/licenses/BaselineUpstream/WinSparkle/COPYING",
+    "mod/licenses/BaselineUpstream/WinSparkle/COPYING.expat",
+    "mod/licenses/Gum/COPYING",
+})
+PUBLIC_BETA_FFMPEG_NAMES = frozenset({
+    "avcodec-61.dll", "avformat-61.dll", "avutil-59.dll", "swresample-5.dll", "swscale-8.dll",
+})
 RELEASE_SCENARIOS = {
     "accounts": ("names_colors", "account_switch", "working_hours"),
     "business": ("embedded_webview", "navigation_lifetime"),
@@ -165,14 +227,120 @@ def validate_subject(subject):
         require(isinstance(subject[name], str) and re.fullmatch(r"[0-9a-f]{64}", subject[name]), "invalid release subject digest")
 
 
-def release_preflight(subject=None, evidence=None, mode="user-release", now=None,
-                      artifact_identity=None, materials=None):
-    """Receipts attest installed behavior for these exact bytes, never readiness
-    inferred from DLL presence, a component test count, or localhost removal.
-    Current unresolved work always remains a blocker, even with green receipts.
+def public_beta_preflight(subject, evidence, now, artifact_identity, materials,
+                          artifact_verified, qml_compatibility_verified, max_rights_attested,
+                          beta_materials=None, beta_materials_error=None):
+    """A public BETA requires installed core use on the exact packaged bytes.
+
+    Accepted BETA limitations are disclosed, while byte integrity, exact
+    documented materials and a passing installed-client smoke stay gates.
     """
-    require(mode in ("user-release", "developer-staging", "local-preview"), "invalid distribution mode")
+    blockers = []
+    result = {"schema": 1, "checkedAt": now.strftime("%Y-%m-%dT%H:%M:%SZ"),
+              "distributionMode": "public-beta", "releaseEligible": False,
+              "featureRuntimeTested": False, "betaCoreTested": False,
+              "subject": subject, "evidenceVerified": False,
+              "wholeClientMaterialsVerified": False, "materialsDocumentedForBeta": False,
+              "betaMaterials": None, "maxRightsAttested": max_rights_attested is True,
+              "evidenceManifestSha256": None, "installedSmokeSha256": None,
+              "features": {}, "blockers": blockers,
+              "requiredEvidenceIds": list(PUBLIC_BETA_SCENARIOS),
+              "knownLimitations": ([dict(item) for item in PUBLIC_BETA_LIMITATIONS]
+                                   + [{"id": item["id"], "reason": item["statusText"]}
+                                      for item in PUBLIC_BETA_MATERIAL_LIMITATIONS]),
+              "scope": "Public BETA eligibility for exact bytes and installed core use; the stable 16-group feature regression is separate."}
+
+    def block(key, reason):
+        blockers.append({"id": key, "reason": reason})
+
+    if (isinstance(beta_materials, dict) and beta_materials.get("verified") is True
+            and beta_materials.get("completeForWholeClient") is False
+            and beta_materials.get("exactCorrespondingSourceProven") is False
+            and beta_materials.get("knownLimitations") ==
+                [{"id": item["id"], "reason": item["statusText"]}
+                 for item in PUBLIC_BETA_MATERIAL_LIMITATIONS]
+            and isinstance(materials, dict) and materials.get("completeForWholeClient") is False
+            and materials.get("limitations") ==
+                [item["statusText"] for item in PUBLIC_BETA_MATERIAL_LIMITATIONS]):
+        result["materialsDocumentedForBeta"] = True
+        result["betaMaterials"] = beta_materials
+    else:
+        block("beta_materials", beta_materials_error or "The exact assembled runtime has no complete documented BETA materials receipt.")
+    if max_rights_attested is not True:
+        block("max_redistribution_attestation", "The MAX rights holder permission must be attested for this public BETA; the confidential document is not stored in the package.")
+    try:
+        validate_subject(subject)
+        require_preview_version(subject["version"])
+    except (ValueError, TypeError, KeyError) as error:
+        block("invalid_payload_subject", str(error))
+    try:
+        require(isinstance(artifact_identity, dict) and set(artifact_identity) == ARTIFACT_IDENTITY_KEYS
+                and all(isinstance(value, str) and re.fullmatch(r"[0-9a-f]{64}", value)
+                        for value in artifact_identity.values()), "exact byte artifact identity required")
+        require(subject is not None and artifact_identity == {key: subject[key] for key in ARTIFACT_IDENTITY_KEYS},
+                "artifact identity and release subject differ")
+        require(artifact_verified is True, "exact assembled artifact validation has not passed")
+        require(qml_compatibility_verified is True, "generated QML still has legacy references or lacks verification")
+    except (ValueError, TypeError, KeyError) as error:
+        block("artifact_integrity", str(error))
+    if evidence is None:
+        block("installed_smoke_missing", "A passing installed-client BETA smoke receipt was not supplied.")
+        return result
+    try:
+        smoke_path = evidence_path(str(evidence))
+        smoke = read_json(smoke_path)
+        required = {"schema", "kind", "status", "subject", "testedAt", "clientExecuted", "scope",
+                    "installedLauncher", "launchMode", "scenarios", "unresolvedCritical"}
+        require(isinstance(smoke, dict) and set(smoke) == required, "exact installed BETA smoke receipt required")
+        require(type(smoke["schema"]) is int and smoke["schema"] == 1
+                and smoke["kind"] == "native-public-beta-installed-smoke"
+                and smoke["status"] == "passed", "unsupported or failed installed BETA smoke")
+        validate_subject(smoke["subject"])
+        require(smoke["subject"] == subject, "installed BETA smoke targets another payload")
+        evidence_time(smoke["testedAt"], now)
+        require(smoke["clientExecuted"] is True and smoke["scope"] == "installed-native-client",
+                "component/synthetic-only proof is not installed-client smoke")
+        launcher_ref = smoke["installedLauncher"]
+        require(smoke["launchMode"] == "outer-installed-launcher"
+                and isinstance(launcher_ref, dict) and set(launcher_ref) == {"path", "sha256"}
+                and launcher_ref["sha256"] == subject["launcherSha256"],
+                "installed BETA smoke must use the exact outer ValMAX launcher")
+        launcher_path = Path(launcher_ref["path"])
+        require(launcher_path.is_absolute() and launcher_path.name.casefold() == "valmax.exe",
+                "installed BETA smoke did not use ValMAX.exe")
+        for ancestor in (launcher_path, *launcher_path.parents):
+            ordinary(ancestor, ancestor.is_dir())
+        require(sha(launcher_path) == subject["launcherSha256"],
+                "installed launcher bytes differ from BETA subject")
+        require(smoke["unresolvedCritical"] == [], "installed BETA smoke lists critical unresolved work")
+        require(isinstance(smoke["scenarios"], dict) and set(smoke["scenarios"]) == set(PUBLIC_BETA_SCENARIOS)
+                and all(value is True for value in smoke["scenarios"].values()),
+                "required installed BETA scenario is missing/failed")
+        result["installedSmokeSha256"] = sha(smoke_path)
+        result["evidenceManifestSha256"] = result["installedSmokeSha256"]
+        result["evidenceVerified"] = True
+        result["betaCoreTested"] = True
+    except (ValueError, OSError, TypeError, KeyError) as error:
+        block("invalid_installed_smoke", str(error))
+    result["releaseEligible"] = result["betaCoreTested"] and not blockers
+    return result
+
+
+def release_preflight(subject=None, evidence=None, mode="user-release", now=None,
+                      artifact_identity=None, materials=None, artifact_verified=False,
+                      qml_compatibility_verified=False, max_rights_attested=False,
+                      beta_materials=None, beta_materials_error=None):
+    """Receipts attest installed behavior for exact bytes, never DLL presence.
+
+    Stable release retains every unresolved product blocker. Public BETA has
+    a separate installed-core contract and explicitly disclosed limitations.
+    """
+    require(mode in ("user-release", "developer-staging", "local-preview", "public-beta"), "invalid distribution mode")
     now = now or datetime.now(timezone.utc)
+    if mode == "public-beta":
+        return public_beta_preflight(subject, evidence, now, artifact_identity, materials,
+                                     artifact_verified, qml_compatibility_verified, max_rights_attested,
+                                     beta_materials, beta_materials_error)
     blockers = [{"id": key, "reason": reason} for key, reason in CURRENT_RELEASE_BLOCKERS]
     result = {"schema": 1, "checkedAt": now.strftime("%Y-%m-%dT%H:%M:%SZ"),
               "distributionMode": mode, "releaseEligible": False,
@@ -487,6 +655,262 @@ def bound_materials(runtime, rows, assembly_receipt_sha):
     return {"status": status, "sha256": matches[0]["sha256"]}
 
 
+def beta_materials_documentation(binding, rows, assembly_receipt_sha, subject, evidence):
+    """Document a bounded BETA materials gap without asserting legal completeness.
+
+    `binding` is already byte-bound to the assembled runtime by bound_materials.
+    Source archives are supplied with the BETA package, but are explicitly not
+    claimed to correspond exactly to the original MAX/ONEME FFmpeg DLL builds.
+    """
+    require(isinstance(binding, dict) and isinstance(binding.get("status"), dict)
+            and isinstance(binding.get("sha256"), str)
+            and re.fullmatch(r"[0-9a-f]{64}", binding["sha256"]),
+            "bound materials receipt required for public BETA")
+    status = binding["status"]
+    require(status.get("completeForWholeClient") is False
+            and status.get("limitations") == [item["statusText"] for item in PUBLIC_BETA_MATERIAL_LIMITATIONS],
+            "unknown, missing or reordered public BETA materials limitation")
+    qt = status.get("additionalQtMaterialProof") or {}
+    imageformats = status.get("additionalQtImageFormatsMaterialProof") or {}
+    baseline = status.get("baselineUpstreamNoticeProof") or {}
+    gum = status.get("gumTaggedNoticeProof") or {}
+    rust = status.get("nativeRustSourceGraphProof") or {}
+    lottie = status.get("qtLottieRuntimeOmission") or {}
+    require(status.get("helperMaterialsKeptIndependent") is True
+            and qt.get("runtimeImagesMatched") == 12 and qt.get("licenseTexts") == 48
+            and qt.get("runtimeDllsMatched") is True
+            and imageformats.get("runtimeImagesMatched") == 5
+            and imageformats.get("copiedMaterialFiles", 0) >= 5
+            and imageformats.get("wholeClientMaterialsComplete") is False
+            and baseline.get("copiedNoticeFiles") == 8
+            and baseline.get("uncoveredRuntimeImages") in ([], ["swscale-8.dll"])
+            and baseline.get("ffmpegExactCorrespondingSourceProven") is False
+            and gum.get("taggedNoticeCopied") is True
+            and rust.get("sourceArchives") == 70 and rust.get("licenseTexts") == 139
+            and rust.get("resolvedDependencyGraphBoundToCoreProof") is True
+            and rust.get("wholeClientMaterialsComplete") is False
+            and len(lottie.get("omittedRuntimeFiles", [])) == 7
+            and status.get("fixedBrowserFilesUnmodified") is True,
+            "required staged source or notice proof is missing for public BETA")
+    inventory = {row["path"]: row for row in rows}
+    require(len(inventory) == len(rows) and PUBLIC_BETA_REQUIRED_NOTICE_PATHS <= set(inventory),
+            "required staged FFmpeg/OpenSSL/WinSparkle/Gum notice is missing")
+    require(evidence is not None, "public BETA materials evidence is missing")
+    evidence_file = evidence_path(str(evidence))
+    material_manifest = read_json(evidence_file)
+    required = {"schema", "kind", "subject", "materialsReceiptSha256", "assemblyReceiptSha256",
+                "knownLimitationIds", "ffmpegReferenceBundle", "exactCorrespondingSourceProven",
+                "completeForWholeClient"}
+    require(isinstance(material_manifest, dict) and set(material_manifest) == required
+            and type(material_manifest["schema"]) is int and material_manifest["schema"] == 1
+            and material_manifest["kind"] == "native-public-beta-materials"
+            and material_manifest["subject"] == subject
+            and material_manifest["materialsReceiptSha256"] == binding["sha256"]
+            and material_manifest["assemblyReceiptSha256"] == assembly_receipt_sha
+            and material_manifest["knownLimitationIds"] == [item["id"] for item in PUBLIC_BETA_MATERIAL_LIMITATIONS]
+            and material_manifest["exactCorrespondingSourceProven"] is False
+            and material_manifest["completeForWholeClient"] is False,
+            "public BETA materials manifest does not describe this exact incomplete assembly")
+    bundle_ref = material_manifest["ffmpegReferenceBundle"]
+    require(isinstance(bundle_ref, dict) and set(bundle_ref) == {"path", "sha256"}
+            and isinstance(bundle_ref["sha256"], str)
+            and re.fullmatch(r"[0-9a-f]{64}", bundle_ref["sha256"]),
+            "exact FFmpeg reference bundle manifest required")
+    bundle_path = evidence_path(bundle_ref["path"])
+    require(bundle_path.name == "manifest.json" and sha(bundle_path) == bundle_ref["sha256"],
+            "FFmpeg reference bundle manifest changed")
+    bundle = read_json(bundle_path)
+    require(bundle.get("schema") == "valmax.ffmpeg-public-beta-reference-bundle.v1"
+            and bundle.get("completeForWholeClient") is False
+            and bundle.get("ffmpegExactCorrespondingSourceProven") is False
+            and bundle.get("ffmpegSourceProvenanceUnverified") is True
+            and bundle.get("knownLimitationIds") == ["ffmpeg_source_provenance_unverified",
+                "ffmpeg_exact_patches_unconfirmed", "whole_client_materials_incomplete"],
+            "FFmpeg reference bundle falsely claims corresponding source or has unknown limitations")
+    def bundle_file(relative_name):
+        relative_path = PurePosixPath(relative_name)
+        require(isinstance(relative_name, str) and relative_path.parts
+                and not relative_path.is_absolute()
+                and all(part not in (".", "..") for part in relative_path.parts)
+                and "\\" not in relative_name, "invalid FFmpeg bundle member path")
+        path = evidence_path(str(bundle_path.parent.joinpath(*relative_path.parts)))
+        require(path.is_relative_to(bundle_path.parent), "FFmpeg bundle member escapes root")
+        return path
+    audit_ref = bundle["ffmpegAudit"]
+    require(isinstance(audit_ref, dict) and set(audit_ref) == {"path", "sha256", "bundleRelativePath", "copySha256"}
+            and isinstance(audit_ref["sha256"], str)
+            and re.fullmatch(r"[0-9a-f]{64}", audit_ref["sha256"])
+            and audit_ref["copySha256"] == audit_ref["sha256"],
+            "exact FFmpeg audit reference required")
+    audit_path = evidence_path(audit_ref["path"])
+    require(sha(audit_path) == audit_ref["sha256"]
+            and sha(bundle_file(audit_ref["bundleRelativePath"])) == audit_ref["sha256"],
+            "FFmpeg audit changed")
+    audit = read_json(audit_path)
+    require(audit.get("originalMax", {}).get("p14ImagesMatchCab") == {
+                location: {name: True for name in PUBLIC_BETA_FFMPEG_NAMES}
+                for location in ("p14Main", "p14Service")},
+            "FFmpeg audit does not establish the original MAX MSI binary chain")
+    runtime_ref = bundle["runtimeManifest"]
+    require(isinstance(runtime_ref, dict) and set(runtime_ref) == {"bundleRelativePath", "sha256", "imageCount"}
+            and runtime_ref["imageCount"] == 10
+            and isinstance(runtime_ref["sha256"], str)
+            and re.fullmatch(r"[0-9a-f]{64}", runtime_ref["sha256"]),
+            "exact ten-image FFmpeg runtime manifest required")
+    runtime_manifest_path = bundle_file(runtime_ref["bundleRelativePath"])
+    require(sha(runtime_manifest_path) == runtime_ref["sha256"], "FFmpeg runtime manifest changed")
+    runtime_manifest = read_json(runtime_manifest_path)
+    require(runtime_manifest.get("schema") == "valmax.ffmpeg-runtime-reference.v1"
+            and runtime_manifest.get("imageCount") == 10
+            and runtime_manifest.get("exactCorrespondingSourceProven") is False
+            and isinstance(runtime_manifest.get("images"), list)
+            and len(runtime_manifest["images"]) == 10,
+            "FFmpeg runtime manifest has unknown or incomplete scope")
+    runtime_images = {entry["runtimePath"]: entry for entry in runtime_manifest["images"]}
+    require(len(runtime_images) == 10, "duplicate FFmpeg runtime image in reference bundle")
+    signature_ref = bundle["signatureVerification"]
+    require(isinstance(signature_ref, dict) and set(signature_ref) == {"bundleRelativePath", "sha256"}
+            and isinstance(signature_ref["sha256"], str)
+            and re.fullmatch(r"[0-9a-f]{64}", signature_ref["sha256"]),
+            "pinned FFmpeg signature verification record required")
+    signature_path = bundle_file(signature_ref["bundleRelativePath"])
+    require(sha(signature_path) == signature_ref["sha256"], "FFmpeg signature verification record changed")
+    signatures = read_json(signature_path)
+    fingerprint = "FCF986EA15E6E293A5644F10B4322F04D67658D8"
+    require(signatures.get("schema") == "valmax.ffmpeg-upstream-signatures.v1"
+            and signatures.get("expectedFingerprintFromOfficialDownloadPage") == fingerprint
+            and {entry.get("version") for entry in signatures.get("signatures", [])} == {"7.1.3", "7.1.5"}
+            and all(entry.get("signingKeyFingerprint") == fingerprint
+                    and isinstance(entry.get("validSigStatus"), str)
+                    and entry["validSigStatus"].startswith("[GNUPG:] VALIDSIG " + fingerprint)
+                    for entry in signatures["signatures"]),
+            "FFmpeg upstream source signatures are not verified")
+    configurations = []
+    for location, prefix in (("p14Main", "mod/"), ("p14Service", "mod/max-service/")):
+        images = audit.get("images", {}).get(location, {})
+        libraries = audit.get("capabilityProbes", {}).get(location, {}).get("libraries", {})
+        require(isinstance(images, dict) and isinstance(libraries, dict)
+                and PUBLIC_BETA_FFMPEG_NAMES <= set(images) and PUBLIC_BETA_FFMPEG_NAMES <= set(libraries),
+                "FFmpeg audit does not cover every staged DLL")
+        for name in sorted(PUBLIC_BETA_FFMPEG_NAMES):
+            runtime_path = prefix + name
+            row, image, library = inventory.get(runtime_path), images[name], libraries[name]
+            require(isinstance(row, dict) and row.get("sha256") == image.get("sha256")
+                    and row.get("size") == image.get("sizeBytes"),
+                    "staged FFmpeg DLL differs from its pinned audit: " + runtime_path)
+            configuration = library.get("configuration")
+            require(library.get("license") == "LGPL version 2.1 or later"
+                    and isinstance(configuration, str) and configuration
+                    and "--enable-gpl" not in configuration and "--enable-nonfree" not in configuration,
+                    "FFmpeg configuration or license is not covered by this BETA evidence")
+            reference = runtime_images.get(runtime_path)
+            require(isinstance(reference, dict)
+                    and reference.get("sha256") == row["sha256"]
+                    and reference.get("bytes") == row["size"]
+                    and reference.get("configuration") == configuration
+                    and reference.get("reportedLicense") == library["license"]
+                    and reference.get("productVersion") == image.get("productVersion")
+                    and reference.get("matchesLocalMaxMsiCab") is True
+                    and reference.get("exactCorrespondingSourceProven") is False,
+                    "FFmpeg runtime bundle inventory differs from exact staged DLL")
+            configurations.append({"runtimePath": runtime_path, "sha256": row["sha256"],
+                                   "productVersion": image["productVersion"],
+                                   "configuration": configuration, "license": library["license"]})
+    bundles = bundle["sourceBundles"]
+    require(isinstance(bundles, list) and len(bundles) == 2, "FFmpeg 7.1.3 and 7.1.5 source bundles required")
+    source_paths, source_rows = {}, []
+    for entry in bundles:
+        required_source = {"version", "officialUrl", "path", "bundleRelativePath", "bytes", "sha256",
+                           "signatureOfficialUrl", "signaturePath", "signatureSha256", "signatureVerified",
+                           "signingKeyFingerprint", "correspondenceToValMAXDllsProven"}
+        require(isinstance(entry, dict) and set(entry) == required_source
+                and entry["version"] in ("7.1.3", "7.1.5") and entry["version"] not in source_paths,
+                "unknown or duplicate FFmpeg source bundle")
+        name = "ffmpeg-" + entry["version"] + ".tar.xz"
+        require(entry["officialUrl"] == "https://ffmpeg.org/releases/" + name
+                and entry["bundleRelativePath"] == "sources/" + name
+                and entry["signatureOfficialUrl"] == entry["officialUrl"] + ".asc"
+                and entry["signatureVerified"] is True
+                and entry["signingKeyFingerprint"] == fingerprint
+                and entry["correspondenceToValMAXDllsProven"] is False
+                and type(entry["bytes"]) is int and entry["bytes"] > 0
+                and isinstance(entry["sha256"], str)
+                and re.fullmatch(r"[0-9a-f]{64}", entry["sha256"])
+                and isinstance(entry["signatureSha256"], str)
+                and re.fullmatch(r"[0-9a-f]{64}", entry["signatureSha256"]),
+                "FFmpeg source bundle identity must name its official release")
+        source = evidence_path(entry["path"])
+        signature = evidence_path(entry["signaturePath"])
+        require(source.name == name and ordinary(source).st_size == entry["bytes"]
+                and sha(source) == entry["sha256"]
+                and sha(bundle_file(entry["bundleRelativePath"])) == entry["sha256"]
+                and signature.name == name + ".asc"
+                and sha(signature) == entry["signatureSha256"]
+                and sha(bundle_file(entry["bundleRelativePath"] + ".asc")) == entry["signatureSha256"],
+                "FFmpeg source bundle bytes differ from materials manifest")
+        with tarfile.open(source, "r:xz") as archive:
+            member = archive.getmember("ffmpeg-" + entry["version"] + "/libavcodec/version.h")
+            require(member.isfile() and member.size > 0, "FFmpeg source bundle has no versioned source tree")
+        source_paths[entry["version"]] = {"source": source, "signature": signature}
+        source_rows.append({"version": entry["version"], "path": "materials/FFmpeg/" + name,
+                            "size": entry["bytes"], "sha256": entry["sha256"],
+                            "signature": {"path": "materials/FFmpeg/" + name + ".asc",
+                                          "size": ordinary(signature).st_size,
+                                          "sha256": entry["signatureSha256"]}})
+    require(set(source_paths) == {"7.1.3", "7.1.5"}, "both FFmpeg source versions required")
+    source_rows.sort(key=lambda row: row["version"])
+    config_bytes = (json.dumps({"schema": 1, "exactCorrespondingSourceProven": False,
+                                "ffmpegAuditSha256": audit_ref["sha256"],
+                                "libraries": configurations}, sort_keys=True, ensure_ascii=False, indent=2) + "\n").encode("utf8")
+    config_row = {"path": "materials/FFmpeg/build-configurations.json", "size": len(config_bytes),
+                  "sha256": hashlib.sha256(config_bytes).hexdigest()}
+    summary = {"verified": True, "materialsReceiptSha256": binding["sha256"],
+               "assemblyReceiptSha256": assembly_receipt_sha,
+               "evidenceSha256": sha(evidence_file),
+               "ffmpegReferenceBundleManifestSha256": bundle_ref["sha256"],
+               "ffmpegAuditSha256": audit_ref["sha256"],
+               "ffmpegRuntimeManifestSha256": runtime_ref["sha256"],
+               "ffmpegSignatureVerificationSha256": signature_ref["sha256"],
+               "sourceBundles": source_rows, "buildConfigurations": config_row,
+               "knownLimitations": [{"id": item["id"], "reason": item["statusText"]}
+                                    for item in PUBLIC_BETA_MATERIAL_LIMITATIONS],
+               "exactCorrespondingSourceProven": False, "completeForWholeClient": False}
+    return {"summary": summary, "sourcePaths": source_paths, "configBytes": config_bytes,
+            "auditPath": audit_path, "evidencePath": evidence_file,
+            "bundlePath": bundle_path, "runtimeManifestPath": runtime_manifest_path,
+            "signatureVerificationPath": signature_path}
+
+
+def copy_beta_materials(payload, plan):
+    summary = plan["summary"]
+    require(sha(plan["auditPath"]) == summary["ffmpegAuditSha256"]
+            and sha(plan["evidencePath"]) == summary["evidenceSha256"]
+            and sha(plan["bundlePath"]) == summary["ffmpegReferenceBundleManifestSha256"]
+            and sha(plan["runtimeManifestPath"]) == summary["ffmpegRuntimeManifestSha256"]
+            and sha(plan["signatureVerificationPath"]) == summary["ffmpegSignatureVerificationSha256"],
+            "public BETA materials evidence changed before copying")
+    for row in summary["sourceBundles"]:
+        for kind, item in (("source", row), ("signature", row["signature"])):
+            source = plan["sourcePaths"][row["version"]][kind]
+            target = payload / item["path"]
+            target.parent.mkdir(parents=True, exist_ok=True)
+            require(not target.exists() and ordinary(source).st_size == item["size"]
+                    and sha(source) == item["sha256"], "FFmpeg source or signature changed before copying")
+            shutil.copyfile(source, target)
+            require(ordinary(target).st_size == item["size"] and sha(target) == item["sha256"]
+                    and sha(source) == item["sha256"], "FFmpeg source or signature copy mismatch")
+    config = summary["buildConfigurations"]
+    target = payload / config["path"]
+    require(not target.exists(), "new FFmpeg configuration target required")
+    target.write_bytes(plan["configBytes"])
+    require(ordinary(target).st_size == config["size"] and sha(target) == config["sha256"],
+            "FFmpeg configuration copy mismatch")
+    info = payload / PUBLIC_BETA_MATERIAL_INFO
+    require(not info.exists(), "new public BETA materials summary required")
+    info.write_text(json.dumps(summary, ensure_ascii=False, sort_keys=True, indent=2) + "\n", encoding="utf8")
+    return {"path": PUBLIC_BETA_MATERIAL_INFO, "sha256": sha(info)}
+
+
 def packaging_inputs(runtime_path, qml_path, launcher_proof, *, preflight_only=False):
     runtime, qml = owned(runtime_path), owned(qml_path)
     rows = pins.inventory(runtime)
@@ -544,6 +968,73 @@ def require_distribution(mode, report, installer=False):
         validate_subject(report.get("subject"))
         require_preview_version(report["subject"]["version"])
         return
+    if mode == "public-beta":
+        require(report.get("distributionMode") == mode and report.get("releaseEligible") is True
+                and report.get("betaCoreTested") is True and report.get("featureRuntimeTested") is False
+                and report.get("evidenceVerified") is True, "public BETA requires passing installed core smoke without a stable feature claim")
+        require(report.get("blockers") == [] and report.get("wholeClientMaterialsVerified") is False
+                and report.get("materialsDocumentedForBeta") is True
+                and report.get("maxRightsAttested") is True, "public BETA has unresolved distribution blockers")
+        subject = report.get("subject")
+        validate_subject(subject)
+        require_preview_version(subject["version"])
+        artifact = report.get("artifactValidation", {})
+        require(artifact.get("verified") is True and artifact.get("identity") ==
+                {key: subject[key] for key in ARTIFACT_IDENTITY_KEYS}
+                and isinstance(artifact.get("materialsReceiptSha256"), str)
+                and re.fullmatch(r"[0-9a-f]{64}", artifact["materialsReceiptSha256"]),
+                "public BETA requires exact artifact and bound materials snapshot")
+        beta_materials = report.get("betaMaterials")
+        require(isinstance(beta_materials, dict) and beta_materials.get("verified") is True
+                and beta_materials.get("materialsReceiptSha256") == artifact["materialsReceiptSha256"]
+                and beta_materials.get("assemblyReceiptSha256") ==
+                    artifact.get("hookTargetIdentity", {}).get("assemblyReceiptSha256")
+                and beta_materials.get("completeForWholeClient") is False
+                and beta_materials.get("exactCorrespondingSourceProven") is False
+                and beta_materials.get("knownLimitations") ==
+                    [{"id": item["id"], "reason": item["statusText"]}
+                     for item in PUBLIC_BETA_MATERIAL_LIMITATIONS]
+                and isinstance(beta_materials.get("evidenceSha256"), str)
+                and re.fullmatch(r"[0-9a-f]{64}", beta_materials["evidenceSha256"]),
+                "public BETA materials are not bound to this exact assembled runtime")
+        sources = beta_materials.get("sourceBundles")
+        require(isinstance(sources, list) and len(sources) == 2
+                and all(isinstance(row, dict) for row in sources)
+                and [row.get("version") for row in sources] == ["7.1.3", "7.1.5"]
+                and all(row.get("path") == "materials/FFmpeg/ffmpeg-" + row["version"] + ".tar.xz"
+                        and type(row.get("size")) is int and row["size"] > 0
+                        and isinstance(row.get("sha256"), str)
+                        and re.fullmatch(r"[0-9a-f]{64}", row["sha256"])
+                        and isinstance(row.get("signature"), dict)
+                        and row["signature"].get("path") == row["path"] + ".asc"
+                        and type(row["signature"].get("size")) is int
+                        and row["signature"]["size"] > 0
+                        and isinstance(row["signature"].get("sha256"), str)
+                        and re.fullmatch(r"[0-9a-f]{64}", row["signature"]["sha256"])
+                        for row in sources), "both pinned FFmpeg source bundles required for public BETA")
+        require(all(isinstance(beta_materials.get(key), str)
+                    and re.fullmatch(r"[0-9a-f]{64}", beta_materials[key])
+                    for key in ("ffmpegReferenceBundleManifestSha256", "ffmpegAuditSha256",
+                                "ffmpegRuntimeManifestSha256", "ffmpegSignatureVerificationSha256")),
+                "pinned FFmpeg reference and verification records required for public BETA")
+        config = beta_materials.get("buildConfigurations")
+        require(isinstance(config, dict) and config.get("path") == "materials/FFmpeg/build-configurations.json"
+                and type(config.get("size")) is int and config["size"] > 0
+                and isinstance(config.get("sha256"), str)
+                and re.fullmatch(r"[0-9a-f]{64}", config["sha256"]),
+                "pinned FFmpeg build configurations required for public BETA")
+        require(report.get("nativeQmlCompatibility", {}).get("verifiedNoLegacyReferences") is True,
+                "public BETA requires verified native QML without legacy references")
+        require(isinstance(report.get("installedSmokeSha256"), str)
+                and re.fullmatch(r"[0-9a-f]{64}", report["installedSmokeSha256"])
+                and report.get("evidenceManifestSha256") == report["installedSmokeSha256"],
+                "public BETA requires a pinned installed-client smoke receipt")
+        require(report.get("knownLimitations") ==
+                ([dict(item) for item in PUBLIC_BETA_LIMITATIONS]
+                 + [{"id": item["id"], "reason": item["statusText"]}
+                    for item in PUBLIC_BETA_MATERIAL_LIMITATIONS]),
+                "public BETA must disclose its accepted limitations")
+        return
     if mode == "user-release" or installer:
         require(report["releaseEligible"] is True, "complete user release is blocked: " + ", ".join(item["id"] for item in report["blockers"]))
     require(not installer or mode == "user-release", "developer staging cannot compile a user installer")
@@ -577,9 +1068,37 @@ def preview_information(version):
     ).encode("utf-8-sig")
 
 
+def beta_information(version):
+    require_preview_version(version)
+    material_ru = "".join("• " + item["noticeRu"] + "\n" for item in PUBLIC_BETA_MATERIAL_LIMITATIONS)
+    material_en = "".join("• " + item["noticeEn"] + "\n" for item in PUBLIC_BETA_MATERIAL_LIMITATIONS)
+    return (
+        "ValMAX — публичная BETA-сборка\nВерсия: " + version + "\n\n"
+        "Это рабочая тестовая версия. Проверен базовый сценарий установленного клиента; полная проверка всех функций ещё не завершена. Возможны ошибки.\n\n"
+        "Известные ограничения:\n"
+        "• Сохранение удалённых сообщений: доступны только сообщения, уже полученные клиентом после включения захвата. Новые записи с ключом порядка показывают исходное время; старые записи могут стоять приблизительно. Более ранние удаления восстановить нельзя.\n"
+        "• Экспорт чата: история может быть неполной, поскольку сервер не подтвердил доступность всех старых сообщений. Фото, видео и голосовые выгружаются по мере доступности; отдельные вложения могут завершиться ошибкой. Перед использованием архива проверьте отчёт экспорта.\n"
+        "• Режим призрака и защита уведомлений: готовность до самого первого фонового действия установленного клиента пока не подтверждена.\n"
+        "• Полная проверка всех функций, необходимая для стабильного релиза, ещё не завершена.\n\n"
+        "Материалы сторонних компонентов — известные ограничения:\n" + material_ru + "\n"
+        "Архивы upstream FFmpeg и конфигурации сборок находятся в materials/FFmpeg. Точное соответствие исходников DLL из MAX остаётся недоказанным.\n\n"
+        "Папка аккаунтов MXMOD и Windows credentials не переносятся и не очищаются установщиком. Предыдущая установка сохраняется рядом как резервная копия; не запускайте её старый uninstaller.\n"
+        "Ограничения и результаты проверок указаны в native-package.json.\n\n"
+        "ValMAX — public BETA build\nVersion: " + version + "\n\n"
+        "This is a working test release. Basic installed-client use was checked; the full feature regression is still pending and errors are possible.\n"
+        "Deleted-message retention covers only messages received after capture was enabled. New records have original-order timestamps; older records may be approximate. Earlier deletions cannot be recovered.\n"
+        "Chat export may be incomplete because the server has not confirmed all older history. Photos, videos and voice messages are downloaded when available; individual attachments may fail. Check the export result before relying on an archive.\n"
+        "Ghost and notification protection before the first background event remains unverified. The full stable-release regression is pending.\n"
+        "Third-party materials — known limitations:\n" + material_en + "\n"
+        "Upstream FFmpeg source archives and build configurations are under materials/FFmpeg. Exact source correspondence for the MAX DLL builds remains unproven.\n"
+        "Setup does not migrate or clear MXMOD accounts or Windows credentials. The previous installation is preserved beside the new one; do not run its old uninstaller.\n"
+        "See native-package.json for limitations and evidence.\n"
+    ).encode("utf-8-sig")
+
+
 def write_release_state(payload, manifest, report):
     digest = sha(payload / "native-package.json")
-    require(manifest["distributionMode"] in ("user-release", "developer-staging", "local-preview"), "invalid native release marker mode")
+    require(manifest["distributionMode"] in ("user-release", "developer-staging", "local-preview", "public-beta"), "invalid native release marker mode")
     marker = ('; Generated by the native packager; verified installed functionality is separate from compilation.\n'
               '#define NativeDistributionMode "' + manifest["distributionMode"] + '"\n'
               '#define NativeReleaseEligible ' + str(int(report["releaseEligible"] is True)) + '\n'
@@ -592,6 +1111,39 @@ def write_release_state(payload, manifest, report):
         require_preview_version(manifest["version"])
         marker += ('#define NativePreviewVersion "' + manifest["version"] + '"\n'
                    '#define NativePreviewInfoSha256 "' + manifest["previewInformation"]["sha256"] + '"\n')
+    elif manifest["distributionMode"] == "public-beta":
+        require_distribution("public-beta", report)
+        require(manifest.get("publicBeta") is True and manifest.get("betaCoreTested") is True
+                and manifest.get("featureRuntimeTested") is False
+                and manifest.get("wholeClientMaterialsVerified") is False
+                and manifest.get("materialsDocumentedForBeta") is True
+                and manifest.get("maxRightsAttested") is True
+                and manifest.get("knownLimitations") == report["knownLimitations"]
+                and manifest.get("installedSmokeSha256") == report["installedSmokeSha256"]
+                and manifest.get("betaMaterials") == report["betaMaterials"]
+                and manifest.get("betaMaterialsInformation") == {
+                    "path": PUBLIC_BETA_MATERIAL_INFO, "sha256": sha(payload / PUBLIC_BETA_MATERIAL_INFO)}
+                and manifest.get("betaInformation") == {
+                    "path": PUBLIC_BETA_INFO, "sha256": sha(payload / PUBLIC_BETA_INFO)},
+                "public BETA evidence or information changed")
+        require(read_json(payload / PUBLIC_BETA_MATERIAL_INFO) == manifest["betaMaterials"],
+                "public BETA materials summary differs from manifest")
+        for row in (*manifest["betaMaterials"]["sourceBundles"],
+                    *(item["signature"] for item in manifest["betaMaterials"]["sourceBundles"]),
+                    manifest["betaMaterials"]["buildConfigurations"]):
+            target = payload / row["path"]
+            require(ordinary(target).st_size == row["size"] and sha(target) == row["sha256"],
+                    "public BETA source or configuration changed before installer compilation")
+        require_preview_version(manifest["version"])
+        marker += ('#define NativeBetaVersion "' + manifest["version"] + '"\n'
+                   '#define NativeBetaCoreTested 1\n'
+                   '#define NativeBetaInfoSha256 "' + manifest["betaInformation"]["sha256"] + '"\n'
+                   '#define NativeBetaMaterialsInfoSha256 "' + manifest["betaMaterialsInformation"]["sha256"] + '"\n'
+                   '#define NativeBetaSource713Sha256 "' + manifest["betaMaterials"]["sourceBundles"][0]["sha256"] + '"\n'
+                   '#define NativeBetaSource715Sha256 "' + manifest["betaMaterials"]["sourceBundles"][1]["sha256"] + '"\n'
+                   '#define NativeBetaSource713SignatureSha256 "' + manifest["betaMaterials"]["sourceBundles"][0]["signature"]["sha256"] + '"\n'
+                   '#define NativeBetaSource715SignatureSha256 "' + manifest["betaMaterials"]["sourceBundles"][1]["signature"]["sha256"] + '"\n'
+                   '#define NativeBetaBuildConfigSha256 "' + manifest["betaMaterials"]["buildConfigurations"]["sha256"] + '"\n')
     path = payload / "native-release-state.iss"
     require(not path.exists(), "new native release marker required")
     path.write_text(marker, encoding="utf8")
@@ -606,8 +1158,12 @@ def main():
     parser.add_argument("--output", type=Path)
     parser.add_argument("--version", help="Required for packaging; may be omitted for a technical preflight report.")
     parser.add_argument("--iscc", type=Path)
-    parser.add_argument("--distribution", choices=("user-release", "developer-staging", "local-preview"), default="user-release")
-    parser.add_argument("--release-evidence", type=Path)
+    parser.add_argument("--distribution", choices=("user-release", "developer-staging", "local-preview", "public-beta"), default="user-release")
+    parser.add_argument("--release-evidence", type=Path, help="Full feature manifest for user-release, installed core smoke receipt for public-beta.")
+    parser.add_argument("--beta-materials-evidence", type=Path,
+                        help="Exact assembled-materials and FFmpeg source/config bundle receipt for public-beta.")
+    parser.add_argument("--max-rights-attested", action="store_true",
+                        help="Attest that the MAX rights holder has authorized this public BETA; do not include the confidential document.")
     parser.add_argument("--preflight-only", action="store_true")
     parser.add_argument("--preflight-report", type=Path)
     args = parser.parse_args()
@@ -616,6 +1172,12 @@ def main():
     if args.distribution == "local-preview":
         require_preview_version(args.version)
         require(args.release_evidence is None, "local preview does not consume full-release evidence")
+    if args.distribution == "public-beta":
+        require_preview_version(args.version)
+    require(not args.max_rights_attested or args.distribution == "public-beta",
+            "MAX rights attestation is only accepted for public-beta")
+    require(args.beta_materials_evidence is None or args.distribution == "public-beta",
+            "BETA materials evidence is only accepted for public-beta")
     require(not args.preflight_only or args.iscc is None, "preflight never compiles an installer")
     require(args.preflight_report is not None or args.output is not None, "preflight report or output directory required")
     require(args.preflight_only or args.output is not None, "packaging output required")
@@ -630,10 +1192,26 @@ def main():
     artifact_identity = None if inputs is None else {"launcherSha256": inputs["launcherHash"],
         "runtimeInventorySha256": inventory_digest(inputs["rows"]), "qmlProofSha256": inputs["qmlResult"]["proofSha256"]}
     subject = None if artifact_identity is None or args.version is None else {"version": args.version, **artifact_identity}
+    legacy_resources = [] if inputs is None else inputs["qmlResult"].get("legacyResources", [])
+    beta_plan, beta_materials_error = None, None
+    if args.distribution == "public-beta":
+        try:
+            require(inputs is not None and subject is not None, "exact assembled BETA subject is unavailable")
+            beta_plan = beta_materials_documentation(
+                inputs.get("materialBinding"), inputs["rows"],
+                inputs["hookTargetIdentity"]["assemblyReceiptSha256"],
+                subject, args.beta_materials_evidence)
+        except (ValueError, OSError, KeyError, TypeError, tarfile.TarError) as error:
+            beta_materials_error = str(error)
     report = release_preflight(subject, args.release_evidence, args.distribution,
                                artifact_identity=artifact_identity,
                                materials=None if inputs is None or inputs.get("materialBinding") is None
-                               else inputs["materialBinding"]["status"])
+                               else inputs["materialBinding"]["status"],
+                               artifact_verified=inputs is not None,
+                               qml_compatibility_verified=inputs is not None and not legacy_resources,
+                               max_rights_attested=args.max_rights_attested,
+                               beta_materials=None if beta_plan is None else beta_plan["summary"],
+                               beta_materials_error=beta_materials_error)
     report["requestedVersion"] = args.version
     if args.version is None:
         report["blockers"].append({"id": "product_version_missing", "reason": "A native user-release version has not been selected; artifact validation is still reported independently."})
@@ -645,7 +1223,6 @@ def main():
         "hookTargetIdentity": None if inputs is None else inputs["hookTargetIdentity"]}
     report["artifactValidation"]["materialsReceiptSha256"] = (None if inputs is None or inputs.get("materialBinding") is None
                                                               else inputs["materialBinding"]["sha256"])
-    legacy_resources = [] if inputs is None else inputs["qmlResult"].get("legacyResources", [])
     report["nativeQmlCompatibility"] = {"legacyResources": legacy_resources,
         "verifiedNoLegacyReferences": inputs is not None and not legacy_resources,
         "scope": "Static generated/embedded resource references, not runtime network behavior."}
@@ -674,6 +1251,10 @@ def main():
     launcher_hash, qml_result, closure = inputs["launcherHash"], inputs["qmlResult"], inputs["closure"]
     ancillary = ancillary_inventory()
     required_bytes = sum(row["size"] for row in rows) + launcher.stat().st_size + sum(row["size"] for row in ancillary)
+    if beta_plan is not None:
+        required_bytes += sum(row["size"] for row in beta_plan["summary"]["sourceBundles"])
+        required_bytes += sum(row["signature"]["size"] for row in beta_plan["summary"]["sourceBundles"])
+        required_bytes += beta_plan["summary"]["buildConfigurations"]["size"]
     free_bytes = shutil.disk_usage(output.anchor).free
     require(free_bytes >= required_bytes * (2 if args.iscc else 1) + (512 << 20),
             "insufficient space for native payload and installer")
@@ -690,10 +1271,15 @@ def main():
     require(pins.inventory(payload / "runtime") == rows and pins.inventory(runtime) == rows, "runtime changed during packaging")
     copy_ancillary(payload, ancillary)
     preview = args.distribution == "local-preview"
-    preview_info = None
+    public_beta = args.distribution == "public-beta"
+    preview_info = beta_info = None
+    beta_material_info = copy_beta_materials(payload, beta_plan) if public_beta else None
     if preview:
         (payload / LOCAL_PREVIEW_INFO).write_bytes(preview_information(args.version))
         preview_info = {"path": LOCAL_PREVIEW_INFO, "sha256": sha(payload / LOCAL_PREVIEW_INFO)}
+    if public_beta:
+        (payload / PUBLIC_BETA_INFO).write_bytes(beta_information(args.version))
+        beta_info = {"path": PUBLIC_BETA_INFO, "sha256": sha(payload / PUBLIC_BETA_INFO)}
     manifest = {"schema": 1, "nativeOnly": True, "version": args.version,
                 "launcherSha256": launcher_hash, "runtimeFiles": rows, "ancillaryFiles": ancillary, "qml": qml_result,
                 "dependencyClosure": closure, "featureRuntimeTested": report["featureRuntimeTested"],
@@ -705,6 +1291,13 @@ def main():
                 "scope": ARTIFACT_AUDIT_SCOPE + " Installed feature testing is separate."}
     if preview:
         manifest.update(localPreview=True, previewInformation=preview_info)
+    if public_beta:
+        manifest.update(publicBeta=True, betaCoreTested=report["betaCoreTested"],
+                        materialsDocumentedForBeta=report["materialsDocumentedForBeta"],
+                        betaMaterials=report["betaMaterials"], betaMaterialsInformation=beta_material_info,
+                        installedSmokeSha256=report["installedSmokeSha256"],
+                        maxRightsAttested=report["maxRightsAttested"],
+                        knownLimitations=report["knownLimitations"], betaInformation=beta_info)
     (payload / "native-package.json").write_text(json.dumps(manifest, ensure_ascii=False, indent=2) + "\n", encoding="utf8")
     receipt = {"schema": 1, "packaged": True, "nativeOnly": True, "installerCompiled": False,
                "payload": str(payload), "manifestSha256": sha(payload / "native-package.json"),
@@ -716,6 +1309,13 @@ def main():
                "preflightReport": str(report_path), "preflightReportSha256": sha(report_path)}
     if preview:
         receipt.update(localPreview=True, previewInformation=preview_info)
+    if public_beta:
+        receipt.update(publicBeta=True, betaCoreTested=report["betaCoreTested"],
+                       materialsDocumentedForBeta=report["materialsDocumentedForBeta"],
+                       betaMaterials=report["betaMaterials"], betaMaterialsInformation=beta_material_info,
+                       installedSmokeSha256=report["installedSmokeSha256"],
+                       maxRightsAttested=report["maxRightsAttested"],
+                       knownLimitations=report["knownLimitations"], betaInformation=beta_info)
     receipt.update(write_release_state(payload, manifest, report))
     if args.iscc:
         ordinary(args.iscc)

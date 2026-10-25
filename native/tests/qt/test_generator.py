@@ -16,6 +16,7 @@ from chat_lock_ui import CONTROLLER_RESOURCE as LOCK_RESOURCE
 from message_retention_ui import CONTROLLER_RESOURCE as RETENTION_RESOURCE
 from optimization_gates import transform_extra, flag
 from list_work_queue_ui import queue_source
+from recording_indicator_ui import RESOURCE_PATHS as RECORDING_RESOURCES, MARKER as RECORDING_MARKER
 
 
 def main():
@@ -35,6 +36,13 @@ def main():
     assert legacy["extraResourceHashes"][QUEUE_RESOURCE] == hashlib.sha256(transform_extra(queue_source(), QUEUE_RESOURCE).encode()).hexdigest()
     native_sources, _, _, native = build_native_qml.prepare(
         baseline, scratch / "native", native_runtime=True, rcc=Path("C:/ValMAXBuild/Qt/bin/rcc.exe"))
+    assert set(native_sources) - set(legacy_sources) == set(RECORDING_RESOURCES)
+    for key in RECORDING_RESOURCES:
+        recorder = native_sources[key].decode("utf8")
+        assert recorder.count(RECORDING_MARKER) == 1
+        assert "Qt.labs.lottieqt" not in recorder and "LottieAnimation" not in recorder
+        assert 'objectName: "valmaxRecordingPulseDot"' in recorder
+        assert 'objectName: "valmaxRecordingPulseHalo"' in recorder
     changed = [key for key in legacy_sources if legacy_sources[key] != native_sources[key]]
     account_readers = [":/qt/qml/OneMeUi/" + name for name in build_native_qml.ACCOUNT_READERS
                        if ":/qt/qml/OneMeUi/" + name in native_sources]
@@ -173,6 +181,7 @@ def main():
     assert "message_retention" in {item["id"] for item in eligibility["blockers"]}
     proof = {"schema": 1, "verified": True, "legacySourcesAndSpecIdentical": True,
              "changedNativeSources": changed, "changedNativeExtraResources": changed_extra,
+             "nativeOnlyRecordingResources": list(RECORDING_RESOURCES),
              "nativeAccountReaders": account_readers, "accountReadersUseHttp": False,
              "optimizationGatingPreserved": True, "compiledResourcesPreserved": native["compiledPreserved"],
              "nativeLocalHelperReferences": 0, "retentionArchiveIntegrated": True,

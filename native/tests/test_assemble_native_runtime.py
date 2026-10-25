@@ -236,6 +236,33 @@ class AssemblyTests(unittest.TestCase):
         self.assertFalse(future.exists())
         self.assertEqual(result["edges"][0]["target"], "mod/dependency.dll")
 
+    def test_exact_qt_lottie_omission_retains_custom_module(self):
+        root = self.fresh("lottie")
+        plan = assembly.Plan()
+        selected = {}
+        for resource in assembly.QT_LOTTIE_RECORDER_REPLACEMENTS:
+            path = root / resource.rsplit("/", 1)[1]
+            path.write_text("import QtQuick\nItem { // VALMAX_QTQUICK_RECORDING_PULSE\n}\n", "utf8")
+            selected[resource] = assembly.sha(path)
+        for destination in sorted(assembly.QT_LOTTIE_RUNTIME_FILES | {assembly.QT_LOTTIE_QMLDIR}):
+            path = root / destination.replace("/", "_")
+            path.write_bytes(destination.encode())
+            plan.add(destination, path, assembly.sha(path), "synthetic")
+        keep = root / "custom-qmldir"
+        keep.write_text("module LottieModule\n", "utf8")
+        plan.add("mod/qml/LottieModule/qmldir", keep, assembly.sha(keep), "synthetic")
+        with mock.patch.dict(assembly.QT_LOTTIE_RECORDER_REPLACEMENTS, selected, clear=True):
+            result = assembly.omit_qt_lottie(plan, {"sourceHashes": selected}, root)
+        self.assertEqual(len(result["omittedRuntimeFiles"]), 7)
+        self.assertEqual({row["path"] for row in plan.entries.values()}, {"mod/qml/LottieModule/qmldir"})
+
+    def test_qt_lottie_missing_replacement_or_pe_import_fails_closed(self):
+        with self.assertRaisesRegex(ValueError, "exact native Qt Quick"):
+            assembly.omit_qt_lottie(assembly.Plan(), {"sourceHashes": {}}, self.fresh("missing"))
+        for kind in ("direct", "delay"):
+            with self.subTest(kind=kind), self.assertRaisesRegex(ValueError, "PE import remains"):
+                assembly.require_no_lottie_pe_imports({"images": 1, "edges": [{"kind": kind, "import": "Qt6Lottie.dll"}]})
+
 
 if __name__ == "__main__":
     result = unittest.TextTestRunner(verbosity=2).run(unittest.defaultTestLoader.loadTestsFromTestCase(AssemblyTests))

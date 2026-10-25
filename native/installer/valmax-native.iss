@@ -53,8 +53,80 @@
       #error Local preview information belongs to another package
     #endif
   #else
-    #if (NativeDistributionMode != "user-release") || (NativeReleaseEligible != 1) || (NativeReleaseBlockerCount != 0)
-      #error A staging or blocked native package cannot become a user installer
+    #if NativeDistributionMode == "public-beta"
+      #ifndef NativeBetaVersion
+        #error A public BETA version is required
+      #endif
+      #ifndef NativeBetaInfoSha256
+        #error Public BETA information must be pinned
+      #endif
+      #ifndef NativeBetaCoreTested
+        #error Public BETA installed core smoke must be pinned
+      #endif
+      #ifndef NativeBetaMaterialsInfoSha256
+        #error Public BETA materials summary must be pinned
+      #endif
+      #ifndef NativeBetaSource713Sha256
+        #error FFmpeg 7.1.3 source must be pinned
+      #endif
+      #ifndef NativeBetaSource715Sha256
+        #error FFmpeg 7.1.5 source must be pinned
+      #endif
+      #ifndef NativeBetaSource713SignatureSha256
+        #error FFmpeg 7.1.3 signature must be pinned
+      #endif
+      #ifndef NativeBetaSource715SignatureSha256
+        #error FFmpeg 7.1.5 signature must be pinned
+      #endif
+      #ifndef NativeBetaBuildConfigSha256
+        #error FFmpeg build configurations must be pinned
+      #endif
+      #if (NativeReleaseEligible != 1) || (NativeReleaseBlockerCount != 0) || (NativeBetaCoreTested != 1)
+        #error A blocked or untested public BETA cannot become a user installer
+      #endif
+      #if (NativeBetaVersion != ProductVersion) || (Pos("-native.preview.", ProductVersion) == 0)
+        #error The public BETA product version must be visibly marked
+      #endif
+      #if !FileExists(Payload + "\native-beta.txt")
+        #error Public BETA information is missing
+      #endif
+      #if GetSHA256OfFile(Payload + "\native-beta.txt") != NativeBetaInfoSha256
+        #error Public BETA information belongs to another package
+      #endif
+      #if !FileExists(Payload + "\native-beta-materials.json")
+        #error Public BETA materials summary is missing
+      #endif
+      #if GetSHA256OfFile(Payload + "\native-beta-materials.json") != NativeBetaMaterialsInfoSha256
+        #error Public BETA materials summary belongs to another package
+      #endif
+      #if !FileExists(Payload + "\materials\FFmpeg\ffmpeg-7.1.3.tar.xz") || !FileExists(Payload + "\materials\FFmpeg\ffmpeg-7.1.5.tar.xz")
+        #error Both versioned FFmpeg source archives are required
+      #endif
+      #if GetSHA256OfFile(Payload + "\materials\FFmpeg\ffmpeg-7.1.3.tar.xz") != NativeBetaSource713Sha256
+        #error FFmpeg 7.1.3 source belongs to another package
+      #endif
+      #if GetSHA256OfFile(Payload + "\materials\FFmpeg\ffmpeg-7.1.5.tar.xz") != NativeBetaSource715Sha256
+        #error FFmpeg 7.1.5 source belongs to another package
+      #endif
+      #if !FileExists(Payload + "\materials\FFmpeg\ffmpeg-7.1.3.tar.xz.asc") || !FileExists(Payload + "\materials\FFmpeg\ffmpeg-7.1.5.tar.xz.asc")
+        #error Both versioned FFmpeg source signatures are required
+      #endif
+      #if GetSHA256OfFile(Payload + "\materials\FFmpeg\ffmpeg-7.1.3.tar.xz.asc") != NativeBetaSource713SignatureSha256
+        #error FFmpeg 7.1.3 signature belongs to another package
+      #endif
+      #if GetSHA256OfFile(Payload + "\materials\FFmpeg\ffmpeg-7.1.5.tar.xz.asc") != NativeBetaSource715SignatureSha256
+        #error FFmpeg 7.1.5 signature belongs to another package
+      #endif
+      #if !FileExists(Payload + "\materials\FFmpeg\build-configurations.json")
+        #error FFmpeg build configurations are missing
+      #endif
+      #if GetSHA256OfFile(Payload + "\materials\FFmpeg\build-configurations.json") != NativeBetaBuildConfigSha256
+        #error FFmpeg build configurations belong to another package
+      #endif
+    #else
+      #if (NativeDistributionMode != "user-release") || (NativeReleaseEligible != 1) || (NativeReleaseBlockerCount != 0)
+        #error A staging or blocked native package cannot become a user installer
+      #endif
     #endif
   #endif
   #if GetSHA256OfFile(Payload + "\native-package.json") != NativePackageManifestSha256
@@ -63,10 +135,15 @@
   #define NativeAppId "{419706B9-6FC7-46F8-B9FB-D7212FC91BAC}"
   #define NativeCanonicalAppName "ValMAX"
   #define NativePreviewAppName "ValMAX native preview"
+  #define NativeBetaAppName "ValMAX BETA"
   #if NativeDistributionMode == "local-preview"
     #define NativeAppName NativePreviewAppName
   #else
-    #define NativeAppName NativeCanonicalAppName
+    #if NativeDistributionMode == "public-beta"
+      #define NativeAppName NativeBetaAppName
+    #else
+      #define NativeAppName NativeCanonicalAppName
+    #endif
   #endif
 #endif
 #if !FileExists(Payload + "\ValMAX.exe")
@@ -110,6 +187,10 @@ DisableWelcomePage=no
 #if ValMAXInstallerFixture != "1"
   #if NativeDistributionMode == "local-preview"
 InfoBeforeFile={#Payload}\native-preview.txt
+  #else
+    #if NativeDistributionMode == "public-beta"
+InfoBeforeFile={#Payload}\native-beta.txt
+    #endif
   #endif
 #endif
 DisableProgramGroupPage=yes

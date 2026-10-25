@@ -928,7 +928,7 @@ def native_export_panel(source: str) -> str:
 def prepare(binary: bytes, output: Path, *, native_runtime: bool, rcc: Path):
     import icon_resources
     import ui_prepare_features
-    from ui_multi_resource_patch import make_resource_spec, PRESERVED_COMPILED_RESOURCES
+    from ui_multi_resource_patch import make_resource_spec, read_source, PRESERVED_COMPILED_RESOURCES
     from message_retention_ui import CONTROLLER_RESOURCE, controller_source
     from chat_lock_ui import CONTROLLER_RESOURCE as LOCK_RESOURCE, controller_source as lock_source, transform_export_panel
     from async_list_rows_ui import ROW_RESOURCE, row_source
@@ -986,6 +986,11 @@ def prepare(binary: bytes, output: Path, *, native_runtime: bool, rcc: Path):
         sources = native_account_sources(sources)
         from chat_row_identity import RESOURCE as CHAT_LIST_RESOURCE, apply as chat_row_identity
         sources[CHAT_LIST_RESOURCE] = chat_row_identity(sources[CHAT_LIST_RESOURCE].decode()).encode()
+        from recording_indicator_ui import RESOURCE_PATHS as RECORDING_RESOURCES, transform as recording_transform
+        for key in RECORDING_RESOURCES:
+            if key in sources:
+                raise ValueError("Native recording indicator resource was already selected")
+            sources[key] = recording_transform(key, read_source(binary, key))
         spec, evidence = make_resource_spec(binary, sources, icon_bundle=bundle)
         evidence["preservedCompiledResources"] = list(PRESERVED_COMPILED_RESOURCES)
     else:
