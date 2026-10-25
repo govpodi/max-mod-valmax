@@ -5,5 +5,7 @@
 # These seven SVGs are hash-pinned by assets/valmax-icons/catalog.json.
 # Windows checkout must preserve their Git blob bytes.
 assets/valmax-icons/icons/*.svg -text
+# This generated-resource input is pinned byte-for-byte by the p16 QML proof.
+modkit/optimization_qmldir -text
 modkit/ui_privacy.py linguist-generated=true
 modkit/config.defaults.json linguist-vendored=true
