@@ -37,10 +37,13 @@ CURRENT_RELEASE_BLOCKERS = (
     ("message_retention", "Passive native capture, selected-chat in-history BETA bubbles and the account-scoped local archive are integrated. New captures carry an original-order key; comprehensive installed placement remains unverified. Older preview.11 records have no such key and remain in an approximate fallback. Mixed-account installed lifecycle, failure recovery and restart evidence remain insufficient for a full release."),
     ("early_protection", "Dynamic ghost/notification readiness before first use is unverified. Static privacy patches have separate package verification; the rejected early bootstrap remains unused."),
     ("installed_full_client", "The assembled native client has not passed complete installed feature and lifecycle checks."),
-    ("max_redistribution_authorization", "No reviewed permission from the MAX rights holder covers publishing the modified MAX sources, assets and bundled installer. A tool or user assertion is not a substitute for that permission."),
+)
+MAX_RIGHTS_ATTESTATION_BLOCKER = (
+    "max_redistribution_attestation",
+    "The publisher has not attested that the MAX rights holder authorized distribution of the modified sources, assets and installer.",
 )
 LOCAL_PREVIEW_BLOCKERS = frozenset(key for key, _ in CURRENT_RELEASE_BLOCKERS) | {
-    "release_evidence_missing", "whole_client_materials",
+    MAX_RIGHTS_ATTESTATION_BLOCKER[0], "release_evidence_missing", "whole_client_materials",
 }
 LOCAL_PREVIEW_INFO = "native-preview.txt"
 PUBLIC_BETA_INFO = "native-beta.txt"
@@ -380,11 +383,15 @@ def release_preflight(subject=None, evidence=None, mode="user-release", now=None
                                      artifact_verified, qml_compatibility_verified, max_rights_attested,
                                      beta_materials, beta_materials_error,
                                      webview2_mode, qt_source_mode)
+    rights_attested = mode == "user-release" and max_rights_attested is True
     blockers = [{"id": key, "reason": reason} for key, reason in CURRENT_RELEASE_BLOCKERS]
+    if not rights_attested:
+        key, reason = MAX_RIGHTS_ATTESTATION_BLOCKER
+        blockers.append({"id": key, "reason": reason})
     result = {"schema": 1, "checkedAt": now.strftime("%Y-%m-%dT%H:%M:%SZ"),
               "distributionMode": mode, "releaseEligible": False,
               "featureRuntimeTested": False, "subject": subject, "evidenceVerified": False,
-              "wholeClientMaterialsVerified": False,
+              "wholeClientMaterialsVerified": False, "maxRightsAttested": rights_attested,
               "evidenceManifestSha256": None, "features": {}, "blockers": blockers,
               "requiredEvidenceIds": list(RELEASE_SCENARIOS),
               "scope": "Eligibility for a complete installed native client, not a component build or dependency check."}
@@ -1157,7 +1164,8 @@ def require_distribution(mode, report, installer=False):
                         for item in blockers), "invalid local preview blocker list")
         ids = [item["id"] for item in blockers]
         require(len(set(ids)) == len(ids) and set(ids) <= LOCAL_PREVIEW_BLOCKERS
-                and {key for key, _ in CURRENT_RELEASE_BLOCKERS} <= set(ids),
+                and ({key for key, _ in CURRENT_RELEASE_BLOCKERS}
+                     | {MAX_RIGHTS_ATTESTATION_BLOCKER[0]}) <= set(ids),
                 "local preview accepts only the known unresolved product work")
         validate_subject(report.get("subject"))
         require_preview_version(report["subject"]["version"])
@@ -1233,6 +1241,9 @@ def require_distribution(mode, report, installer=False):
         return
     if mode == "user-release" or installer:
         require(report["releaseEligible"] is True, "complete user release is blocked: " + ", ".join(item["id"] for item in report["blockers"]))
+    if mode == "user-release":
+        require(report.get("maxRightsAttested") is True,
+                "publisher MAX rights attestation is required for a user release")
     require(not installer or mode == "user-release", "developer staging cannot compile a user installer")
 
 
@@ -1425,6 +1436,9 @@ def write_release_state(payload, manifest, report):
                    '#define NativeBetaSource713SignatureSha256 "' + manifest["betaMaterials"]["sourceBundles"][0]["signature"]["sha256"] + '"\n'
                    '#define NativeBetaSource715SignatureSha256 "' + manifest["betaMaterials"]["sourceBundles"][1]["signature"]["sha256"] + '"\n'
                    '#define NativeBetaBuildConfigSha256 "' + manifest["betaMaterials"]["buildConfigurations"]["sha256"] + '"\n')
+    elif manifest["distributionMode"] == "user-release":
+        require(manifest.get("maxRightsAttested") is True and report.get("maxRightsAttested") is True,
+                "user release must bind publisher rights attestation")
     path = payload / "native-release-state.iss"
     require(not path.exists(), "new native release marker required")
     path.write_text(marker, encoding="utf8")
@@ -1444,7 +1458,7 @@ def main():
     parser.add_argument("--beta-materials-evidence", type=Path,
                         help="Exact assembled-materials and FFmpeg source/config bundle receipt for public-beta.")
     parser.add_argument("--max-rights-attested", action="store_true",
-                        help="Attest that the MAX rights holder has authorized this public BETA; do not include the confidential document.")
+                        help="Publisher attests MAX rights holder permission for this public distribution; no confidential document is stored.")
     parser.add_argument("--preflight-only", action="store_true")
     parser.add_argument("--preflight-report", type=Path)
     args = parser.parse_args()
@@ -1455,8 +1469,8 @@ def main():
         require(args.release_evidence is None, "local preview does not consume full-release evidence")
     if args.distribution == "public-beta":
         require_preview_version(args.version)
-    require(not args.max_rights_attested or args.distribution == "public-beta",
-            "MAX rights attestation is only accepted for public-beta")
+    require(not args.max_rights_attested or args.distribution in ("public-beta", "user-release"),
+            "MAX rights attestation is only accepted for public distribution")
     require(args.beta_materials_evidence is None or args.distribution == "public-beta",
             "BETA materials evidence is only accepted for public-beta")
     require(not args.preflight_only or args.iscc is None, "preflight never compiles an installer")
@@ -1614,6 +1628,8 @@ def main():
                         installedSmokeSha256=report["installedSmokeSha256"],
                         maxRightsAttested=report["maxRightsAttested"],
                         knownLimitations=report["knownLimitations"], betaInformation=beta_info)
+    elif args.distribution == "user-release":
+        manifest["maxRightsAttested"] = report["maxRightsAttested"]
     (payload / "native-package.json").write_text(json.dumps(manifest, ensure_ascii=False, indent=2) + "\n", encoding="utf8")
     receipt = {"schema": 1, "packaged": True, "nativeOnly": True, "installerCompiled": False,
                "webview2Mode": webview2_mode, "qtSourceMode": qt_source_mode,
@@ -1635,6 +1651,8 @@ def main():
                        installedSmokeSha256=report["installedSmokeSha256"],
                        maxRightsAttested=report["maxRightsAttested"],
                        knownLimitations=report["knownLimitations"], betaInformation=beta_info)
+    elif args.distribution == "user-release":
+        receipt["maxRightsAttested"] = report["maxRightsAttested"]
     receipt.update(write_release_state(payload, manifest, report))
     if args.iscc:
         ordinary(args.iscc)

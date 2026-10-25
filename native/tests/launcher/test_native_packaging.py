@@ -490,8 +490,38 @@ class NativePackaging(unittest.TestCase):
         self.assertTrue(report["evidenceVerified"])
         self.assertFalse(report["releaseEligible"])
         self.assertFalse(report["featureRuntimeTested"])
-        self.assertEqual({key for key, _ in package.CURRENT_RELEASE_BLOCKERS} | {"whole_client_materials"},
+        self.assertEqual({key for key, _ in package.CURRENT_RELEASE_BLOCKERS}
+                         | {package.MAX_RIGHTS_ATTESTATION_BLOCKER[0], "whole_client_materials"},
                          {value["id"] for value in report["blockers"]})
+
+    def test_publisher_attestation_clears_only_the_rights_blocker(self):
+        manifest = self.evidence()
+        subject = self.subject()
+        without = package.release_preflight(subject, manifest, now=self.now)
+        with_attestation = package.release_preflight(
+            subject, manifest, now=self.now, max_rights_attested=True)
+        self.assertFalse(without["maxRightsAttested"])
+        self.assertTrue(with_attestation["maxRightsAttested"])
+        self.assertIn("max_redistribution_attestation", {item["id"] for item in without["blockers"]})
+        self.assertEqual({item["id"] for item in without["blockers"]}
+                         - {"max_redistribution_attestation"},
+                         {item["id"] for item in with_attestation["blockers"]})
+        self.assertFalse(with_attestation["releaseEligible"])
+        self.assertFalse(with_attestation["wholeClientMaterialsVerified"])
+
+    def test_user_release_cli_records_attestation_without_claiming_readiness(self):
+        destination = self.root / "attested-preflight.json"
+        argv = ["package_native_client.py", "--version", "8.9.0",
+                "--distribution", "user-release", "--max-rights-attested",
+                "--preflight-only", "--preflight-report", str(destination)]
+        with patch.object(sys, "argv", argv):
+            package.main()
+        report = json.loads(destination.read_text("utf8"))
+        self.assertTrue(report["maxRightsAttested"])
+        self.assertFalse(report["releaseEligible"])
+        self.assertNotIn("max_redistribution_attestation",
+                         {item["id"] for item in report["blockers"]})
+        self.assertIn("whole_client_materials", {item["id"] for item in report["blockers"]})
 
     def test_complete_matching_evidence_contract_after_actual_blockers_resolved(self):
         manifest = self.evidence()
@@ -499,7 +529,8 @@ class NativePackaging(unittest.TestCase):
         # and this test does not package anything or change product statuses.
         with patch.object(package, "CURRENT_RELEASE_BLOCKERS", ()):
             report = package.release_preflight(self.subject(), manifest, now=self.now,
-                                               materials={"completeForWholeClient": True, "limitations": []})
+                                               materials={"completeForWholeClient": True, "limitations": []},
+                                               max_rights_attested=True)
         self.assertTrue(report["releaseEligible"])
         self.assertTrue(report["wholeClientMaterialsVerified"])
         self.assertTrue(report["featureRuntimeTested"])
@@ -511,7 +542,7 @@ class NativePackaging(unittest.TestCase):
             for materials in (None, {"completeForWholeClient": False, "limitations": []},
                               {"completeForWholeClient": True, "limitations": ["unresolved"]}):
                 report = package.release_preflight(self.subject(), manifest, now=self.now,
-                                                   materials=materials)
+                                                   materials=materials, max_rights_attested=True)
                 self.assertTrue(report["evidenceVerified"])
                 self.assertFalse(report["wholeClientMaterialsVerified"])
                 self.assertFalse(report["releaseEligible"])
@@ -1141,7 +1172,8 @@ class NativePackaging(unittest.TestCase):
         self.assertFalse(report["featureRuntimeTested"])
         self.assertEqual({item["id"] for item in report["blockers"]},
                          {key for key, _ in package.CURRENT_RELEASE_BLOCKERS}
-                         | {"whole_client_materials", "release_evidence_missing"})
+                         | {package.MAX_RIGHTS_ATTESTATION_BLOCKER[0],
+                            "whole_client_materials", "release_evidence_missing"})
         for bad in ("artifact_validation", "legacy_local_helper", "invalid_release_evidence", "arbitrary_gap"):
             changed = copy.deepcopy(report)
             changed["blockers"].append({"id": bad, "reason": "owned unit-only rejection"})
@@ -1198,7 +1230,7 @@ class NativePackaging(unittest.TestCase):
         self.assertIn('#define NativeReleaseEligible 0', marker)
         self.assertIn('#define NativePreviewVersion "8.9.0-native.preview.1"', marker)
         self.assertIn('#define NativePreviewInfoSha256 "' + package.sha(payload / "native-preview.txt") + '"', marker)
-        self.assertEqual(len(manifest["releaseBlockers"]), len(package.CURRENT_RELEASE_BLOCKERS) + 2)
+        self.assertEqual(len(manifest["releaseBlockers"]), len(package.CURRENT_RELEASE_BLOCKERS) + 3)
 
     def test_local_preview_marker_refuses_changed_information(self):
         payload = self.root / "preview-marker"

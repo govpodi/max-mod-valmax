@@ -1,5 +1,13 @@
 # Изменения / Changelog
 
+## 8.9.0 — черновик выпуска / release draft
+
+- Подготовлена компактная поставка для Windows x64: ValMAX использует общий WebView2 Evergreen в системе вместо отдельной Fixed-копии. Установщик проверяет наличие Runtime до обновления. Из пакета убраны неиспользуемые файлы QtWebEngine, а соответствующие исходники Qt подготовлены отдельным архивом.
+- Экспорт чата по-прежнему сохраняет только доступную сервером историю. Фото, видео и голосовые скачиваются при доступности; неполная история и ошибки вложений отмечаются в архиве. Это ограничение функции сохраняется независимо от статуса выпуска приложения.
+- Дата, размеры, SHA-256 и результаты проверки установленного клиента будут добавлены после сборки и испытаний точного релизного пакета. Эта запись не является подтверждением выпуска.
+
+The Windows x64 package is being prepared to use the shared WebView2 Evergreen Runtime instead of bundling a Fixed copy. Setup checks for the Runtime before upgrading. Unused QtWebEngine files are omitted, and corresponding Qt sources are prepared as a separate archive. Chat export remains limited to history and media available from the server; incomplete history and failed attachments are reported. Release date, sizes, checksums and installed-client results will be added only after the exact release package passes verification.
+
 ## 8.9.0-native.preview.16 Beta — 2026-10-25
 
 - Обработка уведомлений об удалении в нативном хосте разбивает большие пачки на части. Пачка сверх заданных пределов пропускается без отключения дальнейшего сохранения; некорректные данные аккаунта и маршрута по-прежнему закрывают обработку. Проверено синтетическими нативными тестами и новым удалением между двумя собственными аккаунтами в установленной preview.16.
