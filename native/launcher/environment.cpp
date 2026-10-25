@@ -78,7 +78,8 @@ bool removed(std::wstring_view name) {
     if (prefix(name, L"WEBVIEW2_")) return true;
     // Bridge configuration and startup receipt identity must be assembled by
     // the verified host for this launch, never trusted from an inherited env.
-    if (equal(name, L"VALMAX_NATIVE_RUNTIME_CONFIG") || equal(name, L"MAX_MOD_STARTUP_OPERATION")) return true;
+    if (equal(name, L"VALMAX_NATIVE_RUNTIME_CONFIG") || equal(name, L"MAX_MOD_STARTUP_OPERATION")
+            || equal(name, L"VALMAX_WEBVIEW2_MODE")) return true;
     // Explicit Qt path/plugin-selection overrides. Do not blanket-strip QT_ or
     // QSG_: DPI/render preferences keep their existing behavior. These options
     // are not needed for the application-local, verified qt.conf/plugin tree.
@@ -109,7 +110,11 @@ void entry(const EnvironmentEntry &item) {
 }
 ChildEnvironment build(std::span<const EnvironmentEntry> input, const LexicalEnvironmentPaths &paths) {
     if (input.size() > kEnvironmentMaximumEntries) fail(EnvironmentError::TooLarge);
-    std::wstring runtime = path(paths.fixed_webview_runtime);
+    if (paths.webview2_mode != WebView2Mode::Fixed && paths.webview2_mode != WebView2Mode::Evergreen)
+        fail(EnvironmentError::InvalidPath);
+    const bool evergreen = paths.webview2_mode == WebView2Mode::Evergreen;
+    if (evergreen && !paths.fixed_webview_runtime.empty()) fail(EnvironmentError::InvalidPath);
+    std::wstring runtime = evergreen ? std::wstring{} : path(paths.fixed_webview_runtime);
     std::wstring profile = path(paths.prepared_mxmod_root);
     if (!equal(std::wstring_view(profile).substr(profile.find_last_of(L'\\') + 1), L"MXMOD"))
         fail(EnvironmentError::InvalidPath);
@@ -121,9 +126,9 @@ ChildEnvironment build(std::span<const EnvironmentEntry> input, const LexicalEnv
         return equal(child, parent) || (child.size() > parent.size() && child[parent.size()] == L'\\'
             && prefix(child, parent));
     };
-    if (within(runtime, profile) || within(profile, runtime)) fail(EnvironmentError::InvalidPath);
+    if (!evergreen && (within(runtime, profile) || within(profile, runtime))) fail(EnvironmentError::InvalidPath);
     std::vector<EnvironmentEntry> kept;
-    kept.reserve(input.size() + 4);
+    kept.reserve(input.size() + 5);
     size_t input_units = input.empty() ? 2 : 1;
     for (const auto &item : input) {
         entry(item);
@@ -132,10 +137,11 @@ ChildEnvironment build(std::span<const EnvironmentEntry> input, const LexicalEnv
         input_units += units;
         if (!removed(item.name)) kept.push_back(item);
     }
-    kept.push_back({L"WEBVIEW2_BROWSER_EXECUTABLE_FOLDER", runtime});
+    if (!evergreen) kept.push_back({L"WEBVIEW2_BROWSER_EXECUTABLE_FOLDER", runtime});
     kept.push_back({L"WEBVIEW2_USER_DATA_FOLDER", data});
     kept.push_back({L"QT_WEBVIEW_PLUGIN", L"webview2"});
     kept.push_back({L"QML_XHR_ALLOW_FILE_READ", L"1"});
+    kept.push_back({L"VALMAX_WEBVIEW2_MODE", evergreen ? L"evergreen" : L"fixed"});
     if (kept.size() > kEnvironmentMaximumEntries) fail(EnvironmentError::TooLarge);
     std::sort(kept.begin(), kept.end(), [](const auto &a, const auto &b) { return compare(a.name, b.name) < 0; });
     size_t output_units = 1;

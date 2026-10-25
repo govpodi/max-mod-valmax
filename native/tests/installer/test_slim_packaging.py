@@ -1,0 +1,208 @@
+"""Synthetic gates for the separate Qt source asset and Evergreen notices."""
+from __future__ import annotations
+
+import hashlib
+import json
+from pathlib import Path
+import subprocess
+import sys
+import tempfile
+import unittest
+import zipfile
+
+ROOT = Path(__file__).resolve().parents[3]
+sys.path.insert(0, str(ROOT / "native/tooling"))
+sys.path.insert(0, str(ROOT / "native/launcher"))
+import package_native_client as package
+from qt_source_asset import verify_external_qt_source_asset
+from launcher_generate_pins import REQUIRED, EVERGREEN_REQUIRED, generate, inventory
+
+
+def digest(data: bytes) -> str:
+    return hashlib.sha256(data).hexdigest()
+
+
+class SlimPackaging(unittest.TestCase):
+    def setUp(self):
+        self.temp = tempfile.TemporaryDirectory(prefix="qt-external-gate-", dir="E:/ValMAXBuild/build")
+        self.addCleanup(self.temp.cleanup)
+        self.root = Path(self.temp.name)
+
+    def planned_file(self, plan, destination, content):
+        source = self.root / "inputs" / destination
+        source.parent.mkdir(parents=True, exist_ok=True)
+        source.write_bytes(content)
+        plan[destination.casefold()] = {"path": destination, "source": str(source),
+                                        "sha256": digest(content)}
+        return source
+
+    def source_fixture(self):
+        archive_name = "qtbase-everywhere-src-6.11.2.tar.xz"
+        source_paths = [
+            "mod/licenses/shared-component-materials/Qt/source-materials/sources/" + archive_name,
+            "transfer/licenses/Qt/source-materials/sources/" + archive_name,
+        ]
+        source_bytes = b"synthetic Qt source archive bytes"
+        plan = {}
+        for path in source_paths:
+            self.planned_file(plan, path, source_bytes)
+        notice_data = {
+            "notices/mod/STAGING-MATERIALS.json": b"old materials snapshot",
+            "notices/mod/WebView/qtwebview-6.11.2-valmax-source.zip": b"old WebView source",
+            "notices/mod/WebView/webview-third-party-notices.zip": b"old WebView notices",
+            "notices/transfer/Qt/source-materials/QT-NOTICES.txt": b"same notice",
+        }
+        self.planned_file(plan, "mod/licenses/WebView/qtwebview-6.11.2-valmax-source.zip", b"new Evergreen source")
+        self.planned_file(plan, "mod/licenses/WebView/webview-third-party-notices.zip", b"new Evergreen notices")
+        ordinary_notice = self.planned_file(plan, "transfer/licenses/Qt/source-materials/QT-NOTICES.txt",
+                                           notice_data["notices/transfer/Qt/source-materials/QT-NOTICES.txt"])
+        source_row = {"name": archive_name, "bytes": len(source_bytes), "sha256": digest(source_bytes),
+                      "sourcePathsInP16": source_paths, "archiveTest": "passed"}
+        notice_rows = [{"path": name, "bytes": len(data), "sha256": digest(data)}
+                       for name, data in notice_data.items()]
+        manifest = {"kind": "local-qt-source-bundle-prototype",
+                    "variant": "p16-integrated-slim-no-qtwebengine", "qtVersion": "6.11.2",
+                    "distribution": "local-prototype-only", "legalCompleteness": "not-assessed",
+                    "retainedSourceArchives": [source_row], "retainedSourceArchiveCount": 1,
+                    "retainedSourceArchiveBytes": len(source_bytes),
+                    "retainedNoticeFiles": notice_rows, "retainedNoticeFileCount": len(notice_rows),
+                    "retainedNoticeBytes": sum(row["bytes"] for row in notice_rows)}
+        manifest_path = self.root / "manifest.json"
+        manifest_path.write_text(json.dumps(manifest), encoding="utf8")
+        zip_path = self.root / "qt-synthetic.zip"
+        with zipfile.ZipFile(zip_path, "w", zipfile.ZIP_DEFLATED) as bundle:
+            bundle.write(manifest_path, "manifest.json")
+            bundle.writestr("SOURCE-AVAILABILITY-DRAFT.txt", b"synthetic draft")
+            bundle.writestr("sources/" + archive_name, source_bytes)
+            for name, data in notice_data.items():
+                bundle.writestr(name, data)
+        return plan, zip_path, manifest_path, ordinary_notice, source_paths
+
+    def test_exact_external_asset_omits_duplicate_sources_and_rejects_notice_drift(self):
+        plan, archive, manifest, ordinary_notice, paths = self.source_fixture()
+        result, omitted = verify_external_qt_source_asset(plan, archive, manifest)
+        self.assertEqual(omitted, set(paths))
+        self.assertEqual(result["omittedRuntimeBytes"], 2 * len(b"synthetic Qt source archive bytes"))
+        self.assertEqual(result["manifestDistribution"], "local-prototype-only")
+        self.assertEqual(len(result["assetNoticeSnapshotDifferences"]), 3)
+        ordinary_notice.write_bytes(b"unlisted notice change")
+        with self.assertRaisesRegex(ValueError, "unexpected difference"):
+            verify_external_qt_source_asset(plan, archive, manifest)
+
+    def test_source_member_must_match_each_planned_copy(self):
+        plan, archive, manifest, _, paths = self.source_fixture()
+        Path(plan[paths[0].casefold()]["source"]).write_bytes(b"wrong source")
+        with self.assertRaisesRegex(ValueError, "asset differs from planned runtime source"):
+            verify_external_qt_source_asset(plan, archive, manifest)
+
+    def test_prototype_asset_cannot_pass_public_beta_materials_gate(self):
+        receipt = {"mode": "separate-asset", "manifestDistribution": "local-prototype-only",
+                   "availabilityDraftIncluded": True, "requiredTogetherWithInstaller": True,
+                   "legalCompleteness": "not-assessed", "assetSha256": "a" * 64}
+        limitations = package.beta_material_limitations("evergreen", "separate-asset")
+        binding = {"status": {"completeForWholeClient": False,
+                              "limitations": [item["statusText"] for item in limitations],
+                              "qtSourceDistribution": receipt}, "sha256": "b" * 64}
+        with self.assertRaisesRegex(ValueError, "prototype-only"):
+            package.beta_materials_documentation(binding, [], "c" * 64, {}, None,
+                                                 "evergreen", "separate-asset")
+
+    def test_evergreen_notices_name_system_runtime_and_external_asset(self):
+        asset = {"mode": "separate-asset", "assetName": "qt-sources.zip", "assetSha256": "a" * 64,
+                 "manifestDistribution": "local-prototype-only"}
+        notice = package.beta_information("8.9.0-native.preview.17", "evergreen", "separate-asset", asset).decode("utf-8-sig")
+        self.assertIn("Microsoft Edge WebView2 Evergreen Runtime", notice)
+        self.assertIn("qt-sources.zip", notice)
+        self.assertNotIn("Microsoft Fixed Version Runtime", notice)
+        availability = package.qt_source_availability(asset).decode("utf-8-sig")
+        self.assertIn("локальная проверка", availability)
+        self.assertIn("source-assets", availability)
+        preview = package.preview_information("0.0.0-native.preview.999", "evergreen",
+                                              "separate-asset", asset).decode("utf-8-sig")
+        self.assertIn("Microsoft Edge WebView2 Evergreen Runtime", preview)
+        self.assertIn("qt-sources.zip", preview)
+        self.assertIn("локальный ZIP", preview)
+
+    def test_launcher_pin_mode_rejects_inline_qt_archive(self):
+        runtime = self.root / "runtime"
+        for name in REQUIRED | EVERGREEN_REQUIRED:
+            target = runtime / name
+            target.parent.mkdir(parents=True, exist_ok=True)
+            target.write_bytes(b"synthetic")
+        archive = runtime / "mod/licenses/Qt/sources/qtbase-everywhere-src-6.11.2.tar.xz"
+        archive.parent.mkdir(parents=True)
+        archive.write_bytes(b"synthetic")
+        with self.assertRaisesRegex(ValueError, "Qt source archive remains"):
+            inventory(runtime, "evergreen", "separate-asset")
+        archive.unlink()
+        archive.parent.rmdir()
+        archive.parent.parent.rmdir()
+        archive.parent.parent.parent.rmdir()
+        receipt_path = self.root / "pins.json"
+        generate(runtime, self.root / "pins.h", receipt_path, "evergreen", "separate-asset")
+        self.assertEqual(json.loads(receipt_path.read_text("utf8"))["qtSourceMode"], "separate-asset")
+
+    def test_inno_compiler_requires_exact_external_asset_and_notice(self):
+        compiler = Path("D:/CodexLabs/max-mod-26.35.1/tools/InnoSetup/ISCC.exe")
+        if not compiler.is_file():
+            self.skipTest("Inno compiler unavailable")
+        payload = self.root / "payload"
+        (payload / "runtime/transfer").mkdir(parents=True)
+        (payload / "ValMAX.exe").write_bytes(b"inert launcher")
+        (payload / "runtime/transfer/valmax-transfer.exe").write_bytes(b"inert transfer")
+        package_json = payload / "native-package.json"
+        package_json.write_bytes(b'{"synthetic":true}\n')
+        preview = payload / "native-preview.txt"
+        preview.write_bytes("Local compile-only proof.\n".encode("utf-8-sig"))
+        notice = payload / "QT-SOURCE-AVAILABILITY.txt"
+        notice.write_bytes(b"synthetic source availability\n")
+        asset = self.root / "qt-sources.zip"
+        asset.write_bytes(b"synthetic source asset")
+        asset_hash, notice_hash = digest(asset.read_bytes()), digest(notice.read_bytes())
+        marker = payload / "native-release-state.iss"
+        output = self.root / "compile-only"
+        output.mkdir()
+
+        def compile_case(*, browser="evergreen", asset_pin=None, notice_pin=None,
+                         include_asset=True, include_notice=True):
+            marker.write_text(
+                '#define NativeDistributionMode "local-preview"\n'
+                '#define NativeWebView2Mode "' + browser + '"\n'
+                '#define NativeReleaseEligible 0\n'
+                '#define NativeReleaseBlockerCount 7\n'
+                '#define NativePackageManifestSha256 "' + digest(package_json.read_bytes()) + '"\n'
+                '#define NativePreviewVersion "8.9.0-native.preview.99"\n'
+                '#define NativePreviewInfoSha256 "' + digest(preview.read_bytes()) + '"\n'
+                '#define NativeQtSourceMode "separate-asset"\n'
+                '#define NativeQtSourceAssetSha256 "' + (asset_pin or asset_hash) + '"\n'
+                '#define NativeQtSourceInfoSha256 "' + (notice_pin or notice_hash) + '"\n',
+                encoding="utf8")
+            if not include_notice:
+                notice.unlink()
+            command = [str(compiler), "/Qp", "/O-", "/DPayload=" + str(payload),
+                       "/DOutput=" + str(output), "/DProductVersion=8.9.0-native.preview.99"]
+            if include_asset:
+                command.append("/DQtSourceAsset=" + str(asset))
+            command.append(str(ROOT / "native/installer/valmax-native.iss"))
+            result = subprocess.run(command, capture_output=True, timeout=60)
+            if not include_notice:
+                notice.write_bytes(b"synthetic source availability\n")
+            return result.returncode, (result.stdout + result.stderr).decode("utf8", errors="replace")
+
+        code, output_text = compile_case()
+        self.assertEqual(code, 0, output_text)
+        for options, expected in (
+            ({"include_asset": False}, "ZIP path must be supplied"),
+            ({"asset_pin": "0" * 64}, "ZIP differs from the package receipt"),
+            ({"include_notice": False}, "availability notice is missing"),
+            ({"notice_pin": "0" * 64}, "availability notice differs from the package receipt"),
+            ({"browser": "fixed"}, "requires Evergreen WebView2 mode"),
+        ):
+            code, output_text = compile_case(**options)
+            self.assertNotEqual(code, 0, options)
+            self.assertIn(expected, output_text, output_text)
+        self.assertFalse(list(output.glob("*.exe")))
+
+
+if __name__ == "__main__":
+    unittest.main()

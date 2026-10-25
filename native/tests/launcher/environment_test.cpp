@@ -59,11 +59,12 @@ void failure(const ChildEnvironment &result, EnvironmentError expected, const ch
 void defaults_and_copy() {
     const auto empty = build_child_environment(std::span<const EnvironmentEntry>{}, paths);
     const auto values = unpack(empty);
-    check(values.size() == 4, "only four fixed variables in empty input");
+    check(values.size() == 5, "five canonical fixed variables in empty input");
     check(values.at(L"WEBVIEW2_BROWSER_EXECUTABLE_FOLDER") == paths.fixed_webview_runtime, "fixed runtime");
     check(values.at(L"WEBVIEW2_USER_DATA_FOLDER") == L"C:\\Synthetic\\Local\\MXMOD\\business-webview2", "own data");
     check(values.at(L"QT_WEBVIEW_PLUGIN") == L"webview2", "fixed native plugin");
     check(values.at(L"QML_XHR_ALLOW_FILE_READ") == L"1", "legacy optimization contract retained");
+    check(values.at(L"VALMAX_WEBVIEW2_MODE") == L"fixed", "explicit fixed browser mode");
     constexpr std::array input{
         EnvironmentEntry{L"Path", L";relative;\"C:\\Synthetic Bundle\";C:\\Other;"},
         EnvironmentEntry{L"TEMP", L"C:\\Synthetic Temp"},
@@ -100,7 +101,7 @@ void stripped_overrides() {
         L"QT_IM_MODULES", L"QT_STYLE_OVERRIDE", L"QT_QUICK_CONTROLS_STYLE",
         L"QT_QUICK_CONTROLS_FALLBACK_STYLE", L"QT_QUICK_CONTROLS_CONF", L"QML_DISK_CACHE_PATH",
         L"QT_QPA_FONTDIR", L"QT_WEBVIEW_PLUGIN", L"QML_XHR_ALLOW_FILE_READ",
-        L"VALMAX_NATIVE_RUNTIME_CONFIG", L"MAX_MOD_STARTUP_OPERATION"
+        L"VALMAX_NATIVE_RUNTIME_CONFIG", L"MAX_MOD_STARTUP_OPERATION", L"VALMAX_WEBVIEW2_MODE"
     };
     const auto baseline = build_child_environment(std::span<const EnvironmentEntry>{}, paths);
     for (const auto *key : keys) {
@@ -208,6 +209,30 @@ void path_guards() {
     const std::wstring long_path = L"C:/" + std::wstring(kEnvironmentMaximumPathUnits, L'a');
     failure(build_child_environment(empty, {long_path, paths.prepared_mxmod_root}), EnvironmentError::InvalidPath, "path size limit");
 }
+void evergreen_mode() {
+    constexpr LexicalEnvironmentPaths evergreen{L"", L"C:\\Synthetic\\Local\\MXMOD", WebView2Mode::Evergreen};
+    const std::array inherited{
+        EnvironmentEntry{L"WEBVIEW2_BROWSER_EXECUTABLE_FOLDER", L"C:\\Untrusted\\msedge"},
+        EnvironmentEntry{L"VALMAX_WEBVIEW2_MODE", L"fixed"},
+        EnvironmentEntry{L"WEBVIEW2_USER_DATA_FOLDER", L"C:\\Untrusted\\data"},
+        EnvironmentEntry{L"KEEP", L"ordinary"}
+    };
+    const auto result = build_child_environment(inherited, evergreen);
+    const auto values = unpack(result);
+    check(values.size() == 5, "evergreen canonical values and ordinary entry");
+    check(!values.contains(L"WEBVIEW2_BROWSER_EXECUTABLE_FOLDER"), "evergreen has no fixed runtime override");
+    check(values.at(L"VALMAX_WEBVIEW2_MODE") == L"evergreen", "host chooses evergreen mode");
+    check(values.at(L"WEBVIEW2_USER_DATA_FOLDER") == L"C:\\Synthetic\\Local\\MXMOD\\business-webview2", "evergreen keeps owned data");
+    check(values.at(L"QT_WEBVIEW_PLUGIN") == L"webview2", "evergreen uses same Qt plugin");
+    check(values.at(L"KEEP") == L"ordinary", "ordinary inherited entry survives");
+    check(build_child_environment(result.block, evergreen).block == result.block, "evergreen roundtrip is stable");
+    failure(build_child_environment(std::span<const EnvironmentEntry>{},
+        {paths.fixed_webview_runtime, evergreen.prepared_mxmod_root, WebView2Mode::Evergreen}),
+        EnvironmentError::InvalidPath, "evergreen rejects fixed runtime path");
+    failure(build_child_environment(std::span<const EnvironmentEntry>{},
+        {L"", evergreen.prepared_mxmod_root, static_cast<WebView2Mode>(999)}),
+        EnvironmentError::InvalidPath, "unknown browser mode rejected");
+}
 void capacities() {
     const std::wstring exact_value(kEnvironmentMaximumEntryUnits - 2, L'x');
     const std::array exact{EnvironmentEntry{L"A", exact_value}};
@@ -225,7 +250,7 @@ void capacities() {
     names.reserve(kEnvironmentMaximumEntries);
     for (size_t i = 0; i < kEnvironmentMaximumEntries; ++i) names.push_back(L"N" + std::to_wstring(i));
     std::vector<EnvironmentEntry> unique;
-    for (size_t i = 0; i < kEnvironmentMaximumEntries - 4; ++i) unique.push_back({names[i], L"x"});
+    for (size_t i = 0; i < kEnvironmentMaximumEntries - 5; ++i) unique.push_back({names[i], L"x"});
     check(build_child_environment(unique, paths).ok(), "exact output entry count accepted");
     unique.push_back({names.back(), L"x"});
     failure(build_child_environment(unique, paths), EnvironmentError::TooLarge, "output count includes fixed entries");
@@ -281,7 +306,7 @@ void permutation_and_roundtrip() {
 }
 int main() {
     defaults_and_copy(); stripped_overrides(); shell_bookkeeping(); duplicate_guards(); malformed();
-    path_guards(); capacities(); permutation_and_roundtrip();
+    path_guards(); evergreen_mode(); capacities(); permutation_and_roundtrip();
     std::cout << "{\"schema\":1,\"syntheticOnly\":true,\"checks\":" << checks
               << ",\"processesStarted\":0,\"filesystemOperations\":0,\"parentEnvironmentAccess\":false}\n";
 }

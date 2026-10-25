@@ -1,6 +1,7 @@
 #include "launch_session.h"
 #include "activation.h"
 #include "profile_client.h"
+#include "webview2_probe.h"
 #include "../transfer/closed_clients.h"
 #include <windows.h>
 #include <tlhelp32.h>
@@ -83,6 +84,7 @@ const char* launch_code(LaunchCode code) noexcept {
     case LaunchCode::SpawnFailed:return "native_spawn_failed";case LaunchCode::ChildExited:return "client_exited";
     case LaunchCode::ProfileInUse:return "profile_in_use";
     case LaunchCode::UnsupportedContext:return "unsupported_context";
+    case LaunchCode::WebView2Unavailable:return "webview2_runtime_unavailable";
     default:return "internal_error";}
 }
 bool parse_action(std::span<const std::wstring_view> args,LaunchAction& result) noexcept {
@@ -110,7 +112,8 @@ LaunchResult run_launch(LaunchDriver& driver,LaunchAction action) noexcept {
         };
         auto presence=driver.scan();
         if(const auto done=absent_or_existing(presence))return *done;
-        for(const auto step:{&LaunchDriver::check_profile,&LaunchDriver::prepare_profile,
+        for(const auto step:{&LaunchDriver::check_profile,&LaunchDriver::check_webview2_runtime,
+                            &LaunchDriver::prepare_profile,
                             &LaunchDriver::prepare_runtime,&LaunchDriver::prepare_environment,&LaunchDriver::check_profile}){
             code=(driver.*step)();if(code!=LaunchCode::Launched)return {code};}
         // Recheck directly before creation. The transfer mutex serializes our
@@ -193,7 +196,8 @@ Win32LaunchDriver::~Win32LaunchDriver()=default;
 LaunchCode Win32LaunchDriver::verify(){
     auto& s=*impl_;if(!s.owned()||s.payload.verified()||s.options.package_directory.empty())return LaunchCode::InvalidOptions;
     s.runtime=s.options.package_directory+L"\\runtime";s.mod=s.runtime+L"\\mod";
-    s.webview=s.runtime+L"\\webview2";s.profile=s.options.local_appdata+L"\\MXMOD";
+    s.webview=s.options.webview2_mode==WebView2Mode::Fixed?s.runtime+L"\\webview2":L"";
+    s.profile=s.options.local_appdata+L"\\MXMOD";
     s.executable=s.mod+L"\\max.exe";s.service=s.mod+L"\\max-service\\max-service.exe";
     return verify_native_payload(s.runtime,s.pins,s.payload)==PreflightError::Ok?LaunchCode::Launched:LaunchCode::PayloadInvalid;
 }
@@ -230,6 +234,12 @@ LaunchCode Win32LaunchDriver::check_profile(){
     if(result.code==ProfileCode::RecoveryRequired)return LaunchCode::RecoveryRequired;
     if(result.code==ProfileCode::TransferBusy)return LaunchCode::TransferBusy;
     return LaunchCode::ProfileFailed;
+}
+LaunchCode Win32LaunchDriver::check_webview2_runtime(){
+    auto& s=*impl_;if(!s.held())return LaunchCode::InvalidOptions;
+    if(s.options.webview2_mode==WebView2Mode::Fixed)return LaunchCode::Launched;
+    return probe_evergreen_runtime(s.mod+L"\\WebView2Loader.dll")==EvergreenProbeResult::Available
+        ?LaunchCode::Launched:LaunchCode::WebView2Unavailable;
 }
 ClientPresence Win32LaunchDriver::scan(){
     auto& s=*impl_;if(!s.held())return ClientPresence::Unknown;s.existing.reset();
@@ -300,7 +310,7 @@ LaunchCode Win32LaunchDriver::prepare_runtime(){
 LaunchCode Win32LaunchDriver::prepare_environment(){
     auto& s=*impl_;if(!s.held())return LaunchCode::InvalidOptions;
     const auto input=inherited_environment();
-    auto result=configured_environment(input,{s.webview,s.profile},runtime_config(s.profile,s.mod,true));
+    auto result=configured_environment(input,{s.webview,s.profile,s.options.webview2_mode},runtime_config(s.profile,s.mod,true));
     if(!result.ok())return LaunchCode::EnvironmentFailed;s.environment=std::move(result.block);return LaunchCode::Launched;
 }
 LaunchResult Win32LaunchDriver::spawn(){
@@ -311,7 +321,7 @@ LaunchResult Win32LaunchDriver::spawn_transfer(bool recovery){
     auto& s=*impl_;if(!s.owned()||!s.payload.verified())return {LaunchCode::InvalidOptions};
     // Helper owns its own transfer transaction and profile selection. The
     // launcher neither prepares MXMOD nor acquires the transfer mutex here.
-    const auto input=inherited_environment();auto env=configured_environment(input,{s.webview,s.profile},{});
+    const auto input=inherited_environment();auto env=configured_environment(input,{s.webview,s.profile,s.options.webview2_mode},{});
     if(!env.ok())return {LaunchCode::EnvironmentFailed,false,false,false,env.error};
     const auto directory=s.runtime+L"\\transfer";
     return create_child(directory+L"\\valmax-transfer.exe",directory,env.block,recovery,LaunchCode::HelperLaunched);

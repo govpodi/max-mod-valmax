@@ -236,6 +236,43 @@ class AssemblyTests(unittest.TestCase):
         self.assertFalse(future.exists())
         self.assertEqual(result["edges"][0]["target"], "mod/dependency.dll")
 
+    def test_webengine_slim_removes_exact_stock_orphan_and_preserves_webview(self):
+        root = self.fresh("webengine-stock")
+        for name in assembly.QT_WEBENGINE_BASELINE_FILES | assembly.QT_WEBVIEW_RUNTIME_FILES:
+            path = root / name.removeprefix("mod/")
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_bytes(name.encode("utf8"))
+        qml = root / "qml/Chat.qml"
+        qml.write_text("import QtQuick\nItem {}\n", "utf8")
+        rows = assembly.inventory(root)
+        plan = assembly.Plan()
+        plan.tree("mod", root, rows, "synthetic")
+        result = assembly.omit_orphan_qt_webengine(plan, root, rows)
+        remaining = {entry["path"] for entry in plan.entries.values()}
+        self.assertEqual(set(result["omittedBaselineHashes"]), assembly.QT_WEBENGINE_BASELINE_FILES)
+        self.assertTrue(assembly.QT_WEBVIEW_RUNTIME_FILES <= remaining)
+        self.assertFalse(any(assembly.is_qt_webengine_runtime_path(path) for path in remaining))
+
+        qml.write_text("import QtWebEngine\nItem {}\n", "utf8")
+        rows = assembly.inventory(root)
+        plan = assembly.Plan()
+        plan.tree("mod", root, rows, "synthetic")
+        with self.assertRaisesRegex(ValueError, "stock QML imports QtWebEngine"):
+            assembly.omit_orphan_qt_webengine(plan, root, rows)
+
+    def test_webengine_slim_rejects_files_imports_and_missing_webview(self):
+        present = set(assembly.QT_WEBVIEW_RUNTIME_FILES) | {"mod/max.exe"}
+        clean = {"edges": [{"import": "Qt6Core.dll"}]}
+        self.assertTrue(assembly.verify_qt_webengine_absent(present, clean)["verified"])
+        self.assertFalse(assembly.is_qt_webengine_runtime_path("mod/qml/QtWebEngineOther/qmldir"))
+        for path in assembly.QT_WEBENGINE_ROOT_IMAGES | assembly.QT_WEBENGINE_RESOURCE_FILES:
+            with self.subTest(path=path), self.assertRaisesRegex(ValueError, "QtWebEngine files remain"):
+                assembly.verify_qt_webengine_absent(present | {path}, clean)
+        with self.assertRaisesRegex(ValueError, "PE imports remain"):
+            assembly.verify_qt_webengine_absent(present, {"edges": [{"import": "Qt6WebEngineCore.dll"}]})
+        with self.assertRaisesRegex(ValueError, "QtWebView runtime files missing"):
+            assembly.verify_qt_webengine_absent(present - {"mod/Qt6WebViewQuick.dll"}, clean)
+
     def test_exact_qt_lottie_omission_retains_custom_module(self):
         root = self.fresh("lottie")
         plan = assembly.Plan()

@@ -139,6 +139,8 @@ def main():
             mode, eligible, blockers, digest, info, marked, version = values[:7]
             beta_core = values[7] if len(values) == 8 else None
             text = ('#define NativeDistributionMode "' + mode + '"\n'
+                    '#define NativeWebView2Mode "fixed"\n'
+                    '#define NativeQtSourceMode "inline"\n'
                     '#define NativeReleaseEligible ' + str(eligible) + '\n'
                     '#define NativeReleaseBlockerCount ' + str(blockers) + '\n'
                     '#define NativePackageManifestSha256 "' + digest + '"\n')

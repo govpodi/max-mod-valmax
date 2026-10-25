@@ -23,6 +23,7 @@ import zipfile
 
 import pefile
 from package_transfer_helper import system_dependency
+from qt_source_asset import verify_external_qt_source_asset
 
 ROOT = Path(__file__).resolve().parents[2]
 REPORTS = ROOT / "analysis/native-migration-v1"
@@ -37,6 +38,27 @@ FORBIDDEN_NAMES = {"privacy_monitor.js", "ghost_monitor.js", "notification_monit
 LOCAL_ENDPOINT = re.compile(rb"127\.0\.0\.1:18973|localhost:18973|privacy_server|privacy_monitor\.js")
 QT_CONF = b"[Paths]\nPrefix=.\nLibraries=.\nPlugins=plugins\nQmlImports=qml\nTranslations=translations\n"
 QT_WEBENGINE_CONF = QT_CONF + b"LibraryExecutables=.\nData=.\n"
+QT_WEBENGINE_BASELINE_FILES = frozenset({
+    "mod/qml/QtWebEngine/qmldir",
+    "mod/qml/QtWebEngine/qtwebenginequickplugin.dll",
+    "mod/qml/QtWebEngine/ControlsDelegates/qmldir",
+    "mod/qml/QtWebEngine/ControlsDelegates/qtwebenginequickdelegatesplugin.dll",
+})
+QT_WEBVIEW_RUNTIME_FILES = frozenset({
+    "mod/Qt6WebView.dll", "mod/Qt6WebViewQuick.dll",
+    "mod/plugins/webview/qtwebview_webview2.dll",
+    "mod/qml/QtWebView/qmldir", "mod/qml/QtWebView/qtwebviewquickplugin.dll",
+})
+QT_WEBENGINE_ROOT_IMAGES = frozenset({
+    "mod/Qt6WebEngineCore.dll", "mod/Qt6WebEngineQuick.dll",
+    "mod/Qt6WebEngineQuickDelegatesQml.dll", "mod/Qt6WebEngineWidgets.dll",
+    "mod/QtWebEngineProcess.exe",
+})
+QT_WEBENGINE_RESOURCE_FILES = frozenset({
+    # These two completion resources are absent from stock MAX. WebView2 keeps
+    # separate copies under runtime/webview2, outside this mod/ allowlist.
+    "mod/resources/icudtl.dat", "mod/resources/v8_context_snapshot.bin",
+})
 LIMITATIONS = [
     {"id": "message_retention", "reason": "Passive native capture and the account-scoped local archive are integrated as BETA. Mixed-account installed lifecycle, failure recovery and restart evidence remain insufficient for a full release."},
     {"id": "early_protection", "reason": "Dynamic ghost/notification readiness before first use remains unverified. Ordinary DLL presence is not a lifecycle barrier."},
@@ -251,7 +273,7 @@ def generated_sources(directory):
     return proof, unresolved
 
 
-def add_qt_completion(plan, binary_path, materials_path):
+def add_qt_completion(plan, binary_path, materials_path, *, include_webengine=True):
     """Admit exact official release runtime files, not SDK tools/debug builds."""
     binary, materials = read_json(binary_path), read_json(materials_path)
     require(binary.get("verified") is True and binary.get("downloadOnly") is False
@@ -260,10 +282,13 @@ def add_qt_completion(plan, binary_path, materials_path):
     admitted, overlaps, release_images, versions = [], [], [], []
     modules = {row["module"]: row for row in materials["modules"]}
     require(set(modules) == {"qtserialport", "qtwebengine"}, "both corresponding-source modules required")
+    selected_modules = {"qtserialport", "qtwebengine"} if include_webengine else {"qtserialport"}
     for package in binary["archives"]:
         module = package["module"]
         require(module in modules and package.get("publishedSha256Verified") is True
                 and package["url"].startswith("https://download.qt.io/"), "official Qt completion provenance required")
+        if module not in selected_modules:
+            continue
         require(sha(Path(package["path"])) == package["sha256"], "Qt binary archive changed")
         root = Path(package["extracted"])
         verify_inventory(root, package["files"])
@@ -313,12 +338,16 @@ def add_qt_completion(plan, binary_path, materials_path):
                     plan.add(destination, root / relative(name), row["sha256"], "official-qt-runtime-completion")
                     admitted.append(destination)
         require(release_bins <= set(release_images), "required release Qt DLL/process missing")
-    require({"mod/qml/QtWebEngine/qtwebenginequickplugin.dll", "mod/qml/QtWebEngine/ControlsDelegates/qtwebenginequickdelegatesplugin.dll"} <= set(overlaps),
-            "baseline WebEngine plugins must be byte-identical to the official completion package")
-    return {"modules": sorted(modules), "newRuntimeFiles": admitted, "byteIdenticalBaselineOverlaps": overlaps,
-            "releaseImages": release_images, "resourcesAndAllLocalesIncluded": True,
+    if include_webengine:
+        require({"mod/qml/QtWebEngine/qtwebenginequickplugin.dll", "mod/qml/QtWebEngine/ControlsDelegates/qtwebenginequickdelegatesplugin.dll"} <= set(overlaps),
+                "baseline WebEngine plugins must be byte-identical to the official completion package")
+    return {"modules": sorted(selected_modules), "webEngineIncluded": include_webengine,
+            "newRuntimeFiles": admitted, "byteIdenticalBaselineOverlaps": overlaps,
+            "releaseImages": release_images, "resourcesAndAllLocalesIncluded": include_webengine,
             "binaryVersions": versions,
-            "deploymentReference": "https://doc.qt.io/qt-6.11/qtwebengine-deploying.html", "targetsExecuted": False}
+            "deploymentReference": ("https://doc.qt.io/qt-6.11/qtwebengine-deploying.html"
+                                    if include_webengine else None),
+            "targetsExecuted": False}
 
 
 def add_qt_remaining_materials(plan, source_path, binary_path):
@@ -527,6 +556,53 @@ def planned_sha(plan, path):
     return row["sha256"]
 
 
+def is_qt_webengine_runtime_path(name):
+    folded = name.casefold()
+    return (folded.startswith(("mod/qt6webengine", "mod/qml/qtwebengine/",
+                               "mod/resources/qtwebengine_", "mod/translations/qtwebengine_locales/",
+                               "mod/licenses/qtruntimecompletion/qtwebengine/",
+                               "mod/licenses/qtruntimecompletion/sources/qtwebengine-"))
+            or folded == "mod/qtwebengineprocess.exe"
+            or folded in QT_WEBENGINE_RESOURCE_FILES)
+
+
+def omit_orphan_qt_webengine(plan, baseline, baseline_rows):
+    """Opt-in removal of the exact stock orphan plugin, with QtWebView retained."""
+    existing = {"mod/" + row["path"] for row in baseline_rows
+                if row["path"].startswith("qml/QtWebEngine/")}
+    require(existing == QT_WEBENGINE_BASELINE_FILES,
+            "baseline QtWebEngine plugin inventory changed")
+    qml_scanned = 0
+    for row in baseline_rows:
+        if row["path"].endswith((".qml", ".js")):
+            qml_scanned += 1
+            source = (Path(baseline) / relative(row["path"])).read_bytes()
+            require(not re.search(rb"(?m)^\s*import\s+QtWebEngine\b", source),
+                    "stock QML imports QtWebEngine: " + row["path"])
+    require(b"import QtWebView" in (ROOT / "native/qt/BusinessPanel.qml").read_bytes(),
+            "business WebView import missing")
+    for path in QT_WEBVIEW_RUNTIME_FILES:
+        planned_sha(plan, path)
+    removed = {path: plan.entries.pop(path.casefold())["sha256"]
+               for path in sorted(QT_WEBENGINE_BASELINE_FILES)}
+    return {"enabled": True, "omittedBaselineHashes": removed,
+            "stockQmlFilesScanned": qml_scanned,
+            "requiredQtWebViewFiles": sorted(QT_WEBVIEW_RUNTIME_FILES),
+            "actualBusinessWebViewExecuted": False}
+
+
+def verify_qt_webengine_absent(paths, closure):
+    remaining = sorted(path for path in paths if is_qt_webengine_runtime_path(path))
+    require(not remaining, "QtWebEngine files remain in slim runtime: " + ", ".join(remaining[:5]))
+    imports = sorted({edge["import"] for edge in closure["edges"]
+                      if "qt6webengine" in edge["import"].casefold()})
+    require(not imports, "QtWebEngine PE imports remain: " + ", ".join(imports))
+    require(QT_WEBVIEW_RUNTIME_FILES <= set(paths), "QtWebView runtime files missing")
+    return {"verified": True, "qtWebEngineFiles": 0, "qtWebEnginePeImports": 0,
+            "qtWebViewRuntimeFiles": sorted(QT_WEBVIEW_RUNTIME_FILES),
+            "dynamicQtWebViewTested": False}
+
+
 def omit_qt_lottie(plan, qml, qml_root):
     """Drop only the pinned Qt Lottie runtime after native recorder replacement."""
     source_hashes = qml.get("sourceHashes", {})
@@ -570,17 +646,18 @@ def require_no_lottie_pe_imports(closure):
     return closure["images"]
 
 
-def audit_qt_lottie_runtime(mod, expected_pe_inventory):
+def audit_qt_lottie_runtime(mod, expected_pe_inventory, *, expected_pe_count=318):
     """Run the independent packed-QML and all-PE scanner on staged bytes."""
     gate = ROOT / "native/tests/qt/verify_recording_no_lottie.py"
     spec = importlib.util.spec_from_file_location("valmax_no_qt_lottie_gate", gate)
     require(spec is not None and spec.loader is not None, "Qt Lottie scanner unavailable")
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
-    result = module.verify_runtime(mod, expected_pe_inventory=expected_pe_inventory)
+    result = module.verify_runtime(mod, expected_pe_inventory=expected_pe_inventory,
+                                   expected_pe_count=expected_pe_count)
     require(result.get("verified") is True and result.get("syntheticOnly") is False
             and result.get("exactPeInventoryMatched") is True
-            and result.get("peScanned") == len(expected_pe_inventory) == 318
+            and result.get("peScanned") == len(expected_pe_inventory) == expected_pe_count
             and result.get("lottieFiles") == result.get("lottieImports") == 0,
             "staged Qt Lottie scanner did not verify the real runtime")
     result["scannerSha256"] = sha(gate)
@@ -925,9 +1002,91 @@ def write_exact_or_new(path, data):
         write_new(path, data)
 
 
+def replace_plan_bytes(plan, output, destination, data, component):
+    """Build a content-addressed replacement outside the still-uncreated runtime."""
+    digest = hashlib.sha256(data).hexdigest()
+    source = output.with_name(output.name + "-material-" + digest[:16] + "-" +
+                              PurePosixPath(destination).name)
+    write_exact_or_new(source, data)
+    plan.add(destination, source, digest, component, replace=True)
+
+
+def externalize_nested_qt_materials(plan, output, source_asset, omitted_paths):
+    """Keep license text but remove stale claims that Qt archives are installed."""
+    material_roots = (
+        "transfer/licenses/Qt/source-materials/",
+        "mod/licenses/shared-component-materials/Qt/source-materials/",
+    )
+    asset_ref = {"mode": "separate-asset", "assetName": source_asset["assetName"],
+                 "assetSha256": source_asset["assetSha256"],
+                 "manifestSha256": source_asset["manifestSha256"],
+                 "memberRoot": "sources/", "publicationVerified": False}
+    changed = []
+    for prefix in material_roots:
+        destination = prefix + "materials-manifest.json"
+        existing = plan.entries[destination.casefold()]
+        document = read_json(Path(existing["source"]))
+        removed = {name[len(prefix):] for name in omitted_paths if name.startswith(prefix)}
+        require(removed == {"sources/qtbase-everywhere-src-6.11.2.tar.xz",
+                            "sources/qtdeclarative-everywhere-src-6.11.2.tar.xz"},
+                "nested Qt material source set differs")
+        files = document.get("files")
+        require(isinstance(files, list) and {row["path"] for row in files if row["path"] in removed} == removed,
+                "nested Qt material inventory does not list both source archives")
+        document["files"] = [row for row in files if row["path"] not in removed]
+        document["sourceArchiveDelivery"] = asset_ref
+        document["installedSourceArchiveCount"] = 0
+        document["sourceMaterialsManifestSha256"] = existing["sha256"]
+        document["materialsComplete"] = False
+        document["gaps"] = [*document.get("gaps", []),
+                             "Separate Qt source asset publication and full legal scope are not verified."]
+        archives = document.get("archives")
+        require(isinstance(archives, list) and {row["path"] for row in archives} == removed,
+                "nested Qt archive provenance differs")
+        for row in archives:
+            row["installedRuntimePath"] = None
+            row["separateAssetMember"] = row["path"]
+        replace_plan_bytes(plan, output, destination,
+                           json.dumps(document, ensure_ascii=False, sort_keys=True, indent=2).encode("utf8") + b"\n",
+                           "slim-qt-material-inventory")
+        changed.append(destination)
+
+        destination = prefix + "QT-NOTICES.txt"
+        existing = plan.entries[destination.casefold()]
+        original = Path(existing["source"]).read_bytes()
+        old = ("Qt library sources are supplied in full official archives under sources/. Their license texts are under notices/<module>/LICENSES/. See LGPL-3.0-only.txt and GPL-3.0-only.txt for the LGPL route; each individual third-party component keeps its own terms.").encode("utf8")
+        new = ("Qt library sources are in the separate ZIP asset " + source_asset["assetName"] +
+               " (SHA-256 " + source_asset["assetSha256"] + "), under sources/. They are not installed by this setup. "
+               "Original license texts remain under notices/<module>/LICENSES/. See LGPL-3.0-only.txt and GPL-3.0-only.txt for the LGPL route; each individual third-party component keeps its own terms.").encode("utf8")
+        require(original.count(old) == 1, "Qt notice source-delivery text changed")
+        replace_plan_bytes(plan, output, destination, original.replace(old, new),
+                           "slim-qt-notice-location")
+        changed.append(destination)
+    destination = "transfer/THIRD-PARTY-NOTICES.txt"
+    existing = plan.entries[destination.casefold()]
+    original = Path(existing["source"]).read_bytes()
+    newline = b"\r\n" if b"\r\n" in original else b"\n"
+    old = newline.join((
+        b"Applicable Qt license texts, third-party notices and complete original source archives",
+        b"are supplied in licenses/Qt/source-materials. The receipt records upstream versions,",
+        b"source trees and binary SDK provenance. The source archives are not required at runtime.",
+    ))
+    new = newline.join((
+        b"Applicable Qt license texts and third-party notices remain in licenses/Qt/source-materials.",
+        ("Complete original Qt source archives are in separate asset " + source_asset["assetName"] +
+         " (SHA-256 " + source_asset["assetSha256"] + ").").encode("utf8"),
+        b"The receipt records upstream versions and binary SDK provenance; the archives are not needed at runtime.",
+    ))
+    require(original.count(old) == 1, "transfer third-party notice source-delivery text changed")
+    replace_plan_bytes(plan, output, destination, original.replace(old, new),
+                       "slim-transfer-notice-location")
+    changed.append(destination)
+    return changed
+
+
 def materials_status(helper, baseline_rows, browser, native_core, remaining_qt=None,
                      imageformats=None, baseline_notices=None, gum_notice=None,
-                     native_rust=None, lottie_omission=None):
+                     native_rust=None, lottie_omission=None, qt_source_asset=None):
     rust = read_json(helper / "licenses/Rust/rust-crates.json")
     packages = {(p["name"], p["version"]) for p in rust["packages"]}
     lock = tomllib.loads((ROOT / "native/Cargo.lock").read_text("utf8"))
@@ -936,18 +1095,23 @@ def materials_status(helper, baseline_rows, browser, native_core, remaining_qt=N
     qt = read_json(helper / "licenses/Qt/source-materials/materials-manifest.json")
     limitations = [
         "The baseline MAX runtime contains no license/notice files; applicable MAX and bundled third-party redistribution materials have not been assembled.",
-        "Modified Qt WebView source and original SDK notices are included; applicable Microsoft Fixed Version Runtime redistribution terms have not been independently collected here.",
+        ("Modified Qt WebView source and original SDK notices are included; applicable Microsoft Fixed Version Runtime redistribution terms have not been independently collected here."
+         if browser else "Evergreen WebView2 is a system prerequisite; clean-PC, absent-runtime and offline installation behavior remain unverified."),
     ]
     if remaining_qt is None:
         limitations.insert(1, "Copied Qt materials are complete for the standalone helper, not every Qt module bundled by MAX (including multimedia/positioning/svg/webchannel). Whole-runtime applicability remains unverified.")
     elif lottie_omission:
-        limitations.insert(1, "Six additional root Qt DLLs and two service copies remain after Qt Lottie was omitted. Their official 6.11.2 source/license texts are staged; other bundled Qt plugins and third-party materials still require whole-client review.")
+        limitations.insert(1, ("Six additional root Qt DLLs and two service copies remain after Qt Lottie was omitted. Their official 6.11.2 source archives are pinned to a separate Qt asset and license texts remain installed; other bundled Qt plugins and third-party materials still require whole-client review."
+                               if qt_source_asset else "Six additional root Qt DLLs and two service copies remain after Qt Lottie was omitted. Their official 6.11.2 source/license texts are staged; other bundled Qt plugins and third-party materials still require whole-client review."))
     else:
         limitations.insert(1, "Eight additional root Qt DLLs and four service copies now match official 6.11.2 binary archives and carry corresponding source/license texts; other bundled Qt plugins and third-party material scope still require whole-client review.")
     if imageformats is None:
         limitations.insert(1, "Five QtImageFormats plugins lack staged corresponding sources and original codec notices.")
     else:
-        limitations.insert(1, "Five QtImageFormats plugins now match official 6.11.2 binaries and carry corresponding sources and original libtiff/libwebp notices; actual codec linkage and whole-client license scope remain unverified.")
+        limitations.insert(1, ("Five QtImageFormats plugins match official 6.11.2 binaries; corresponding source archives are pinned to a separate Qt asset and original libtiff/libwebp notices remain installed; actual codec linkage and whole-client license scope remain unverified."
+                               if qt_source_asset else "Five QtImageFormats plugins now match official 6.11.2 binaries and carry corresponding sources and original libtiff/libwebp notices; actual codec linkage and whole-client license scope remain unverified."))
+    if qt_source_asset:
+        limitations.insert(3, "Qt 6.11.2 source archives are outside the installer in a separate SHA-256-pinned asset; its publication and complete legal coverage remain unverified.")
     if baseline_notices is None:
         limitations.append("FFmpeg, OpenSSL and WinSparkle notices are not staged with exact runtime-image checks; corresponding FFmpeg source/build provenance is unknown.")
     else:
@@ -960,9 +1124,9 @@ def materials_status(helper, baseline_rows, browser, native_core, remaining_qt=N
         limitations.append("Rust crate license files are reused from the helper by name/version only; its receipt is not a receipt for the new common core.")
     else:
         limitations.append("Windows Rust crate archives and original notices match Cargo.lock and the exact compiled-core proof; linked-object and bundled C/ASM license review remain open.")
-    return {"completeForWholeClient": False, "commonCoreSha256": native_core,
+    result = {"completeForWholeClient": False, "commonCoreSha256": native_core,
             "helperMaterialsKeptIndependent": True,
-            "copiedQtCorrespondingSourceModules": qt["modules"],
+            "copiedQtCorrespondingSourceModules": [] if qt_source_asset else qt["modules"],
             "additionalQtMaterialProof": remaining_qt,
             "additionalQtImageFormatsMaterialProof": imageformats,
             "baselineUpstreamNoticeProof": baseline_notices,
@@ -973,8 +1137,14 @@ def materials_status(helper, baseline_rows, browser, native_core, remaining_qt=N
             "commonRustCargoLockMatchesWindowsNotices": sha(ROOT / "native/Cargo.lock") == rust["cargoLockSha256"],
             "crossPlatformLockEntriesAbsentFromWindowsTargetMaterials": missing_crates,
             "baselineNoticeFiles": [r["path"] for r in baseline_rows if re.search(r"license|notice|copying", r["path"], re.I)],
-            "fixedBrowserFilesUnmodified": True,
+             "fixedBrowserFilesUnmodified": browser is not None,
             "limitations": limitations}
+    if qt_source_asset:
+        require(set(qt["modules"]) == {"qtbase", "qtdeclarative"},
+                "unexpected helper Qt source modules for external delivery")
+        result["externalQtCorrespondingSourceModules"] = qt["modules"]
+        result["qtSourceDistribution"] = qt_source_asset
+    return result
 
 
 def assemble(args):
@@ -1034,6 +1204,8 @@ def assemble(args):
         require(sha(name) == digest, "ordinary binary changed")
     plan = Plan()
     plan.tree("mod", args.baseline, baseline_rows, "immutable-baseline")
+    webengine_omission = (omit_orphan_qt_webengine(plan, args.baseline, baseline_rows)
+                          if args.without_qt_webengine else None)
     build_root, hooks = Path(build["qtBuild"]), Path(build["hookBuild"])
     from hook_target_identity import verify_hook_targets
     for name in ("privacy-pins.json", "privacy_pins.generated.h", "ghost-pins.json",
@@ -1064,17 +1236,81 @@ def assemble(args):
     manifest = read_json(helper_root / "package-manifest.json")
     helper_rows = [*manifest["files"], {"path": "package-manifest.json", "bytes": (helper_root / "package-manifest.json").stat().st_size, "sha256": helper["manifestSha256"]}]
     plan.tree("transfer", helper_root, helper_rows, "standalone-transfer-with-independent-core-and-materials")
-    browser = receipt("fixedWebView2", args.browser_proof)
-    require(browser.get("verified") is True and browser["architecture"] == "x64", "verified fixed browser required")
-    plan.tree("webview2", Path(browser["runtime"]), browser["files"], "fixed-webview2-unmodified")
+    browser = None
+    if args.webview2_mode == "fixed":
+        browser = receipt("fixedWebView2", args.browser_proof)
+        require(browser.get("verified") is True and browser["architecture"] == "x64", "verified fixed browser required")
+        plan.tree("webview2", Path(browser["runtime"]), browser["files"], "fixed-webview2-unmodified")
+    else:
+        require("mod/webview2loader.dll" in plan.entries, "owned WebView2Loader.dll required for Evergreen probe")
     webview = receipt("guardedWebView", args.webview_proof)
     require(webview.get("verified") is True and webview.get("guardedBackend") is True
             and webview.get("fakeLoaderCalls") == 0, "production guarded WebView proof required")
-    guarded = Path("C:/ValMAXBuild/build/qt-webview-guard/qtwebview_webview2.dll")
+    if args.webview2_mode == "evergreen":
+        require(webview.get("webview2Mode") == "evergreen", "Evergreen-specific guarded WebView proof required")
+    guarded = args.guarded_webview_plugin
     plan.add("mod/plugins/webview/qtwebview_webview2.dll", guarded,
              webview["qtHashes"]["plugins/webview/qtwebview_webview2.dll"], "existing-guarded-qt-webview", replace=True)
     sources = receipt("webViewSources", args.webview_source_proof)
     require(sources.get("verified") is True and len(sources["archives"]) == 2, "WebView source/notice archives required")
+    if args.webview2_mode == "evergreen":
+        require(sources.get("webview2Mode") == "evergreen", "Evergreen corresponding-source proof required")
+        binding = sources.get("sourceBinding")
+        require(isinstance(binding, dict), "Evergreen WebView sources must be bound to guarded plugin proof")
+        guard_proof_path = Path(binding["guardSourceProof"])
+        require(sha(guard_proof_path) == binding.get("guardSourceProofSha256"),
+                "guarded WebView source proof changed")
+        guard_source = read_json(guard_proof_path)
+        original_names = {"qwebview2webview.cpp", "qwebview2webview_p.h",
+                          "qwebview2webviewplugin.cpp", "windows.json"}
+        expected_names = original_names | {"user_data_preflight.h"}
+        require(args.webview2_mode in guard_source.get("supportedWebView2Modes", ())
+                and set(guard_source.get("outputs", {})) == expected_names
+                and set(guard_source.get("sourcePins", {})) == original_names
+                and binding.get("generatedSourceSha256") == guard_source["outputs"],
+                "guarded source outputs do not match Evergreen source distribution")
+        for name in ("qwebview2webviewplugin.cpp", "windows.json"):
+            require(guard_source["outputs"][name] == guard_source["sourcePins"][name],
+                    "copied Qt plugin input differs from upstream pin: " + name)
+        patch_bytes = (ROOT / "native/qt/webview/qt-6.11.2-init.patch").read_bytes().replace(b"\r\n", b"\n")
+        patch_sha = hashlib.sha256(patch_bytes).hexdigest()
+        require(binding.get("guardSourcePatchSha256") == guard_source.get("patchSha256") == patch_sha,
+                "Evergreen WebView source patch does not match guarded generator")
+        guarded_dll_sha = webview["qtHashes"]["plugins/webview/qtwebview_webview2.dll"]
+        require(binding.get("guardedWebViewProofSha256") == input_refs["guardedWebView"]["sha256"]
+                and Path(binding["guardedWebViewProof"]).resolve() == args.webview_proof.resolve()
+                and binding.get("guardedWebViewDllSha256") == guarded_dll_sha
+                and Path(binding["guardedWebViewPlugin"]).resolve() == guarded.resolve()
+                and sha(guarded) == guarded_dll_sha,
+                "Evergreen source distribution does not match guarded DLL proof")
+        build_proof_path = Path(binding["guardedBuildProof"])
+        require(sha(build_proof_path) == binding.get("guardedBuildProofSha256"),
+                "guarded WebView build proof changed")
+        guarded_build = read_json(build_proof_path)
+        require(guarded_build.get("schema") == 1 and guarded_build.get("verified") is True
+                and guarded_build.get("webview2Mode") == "evergreen"
+                and guarded_build.get("sourceInputsUnchanged") is True
+                and guarded_build.get("windowsJsonConsumedByMoc") is True
+                and guarded_build.get("sourceHashes") == guard_source["outputs"]
+                and guarded_build.get("guardSourceProofSha256") == binding["guardSourceProofSha256"]
+                and Path(guarded_build["generatedSource"]).resolve() == Path(guard_source["output"]).resolve()
+                and guarded_build.get("dllSha256") == binding.get("guardedBuildDllSha256") == guarded_dll_sha
+                and sha(Path(guarded_build["dll"])) == guarded_dll_sha,
+                "Evergreen source archive does not match the guarded DLL build")
+        cmake_input = guarded_build.get("pinnedBuildInputs", {}).get("CMakeLists", {})
+        require(cmake_input.get("sha256") == sha(ROOT / "native/qt/webview/CMakeLists.txt")
+                and sha(Path(cmake_input["path"])) == cmake_input["sha256"],
+                "guarded WebView CMake source differs from the DLL build")
+        source_archives = [row for row in sources["archives"]
+                           if Path(row["path"]).name == "qtwebview-6.11.2-valmax-source.zip"]
+        require(len(source_archives) == 1, "single guarded WebView source archive required")
+        with zipfile.ZipFile(source_archives[0]["path"]) as archive:
+            require(hashlib.sha256(archive.read("qt-6.11.2-init.patch")).hexdigest() == patch_sha,
+                    "Evergreen source archive patch differs from guarded generator")
+            for name, expected in guard_source["outputs"].items():
+                archived = archive.read("qtwebview-6.11.2/src/plugins/windows/" + name)
+                require(hashlib.sha256(archived).hexdigest() == expected,
+                        "Evergreen source archive contains stale guarded source: " + name)
     for row in sources["archives"]:
         source = Path(row["path"])
         require(source.stat().st_size == row["bytes"] and sha(source) == row["sha256"], "source archive changed")
@@ -1087,8 +1323,12 @@ def assemble(args):
     if args.qt_completion_proof:
         receipt("qtRuntimeCompletion", args.qt_completion_proof)
         receipt("qtRuntimeCompletionMaterials", args.qt_completion_materials)
-        completion = add_qt_completion(plan, args.qt_completion_proof, args.qt_completion_materials)
-        qt_conf = QT_WEBENGINE_CONF
+        completion = add_qt_completion(plan, args.qt_completion_proof, args.qt_completion_materials,
+                                       include_webengine=not args.without_qt_webengine)
+        qt_conf = QT_CONF if args.without_qt_webengine else QT_WEBENGINE_CONF
+    if args.without_qt_webengine:
+        require(completion is not None and completion["modules"] == ["qtserialport"],
+                "slim runtime requires the verified QtSerialPort completion")
     require(bool(args.qt_remaining_source_proof) == bool(args.qt_remaining_binary_proof),
             "both remaining Qt source/binary receipts required")
     qt_remaining = None
@@ -1142,9 +1382,90 @@ def assemble(args):
         native_rust = add_native_rust_materials(plan, args.rust_windows_sbom,
                                                 core_source_proof, build["coreSha256"])
     lottie_omission = omit_qt_lottie(plan, qml, args.qml)
+    qt_source_asset = None
+    transfer_package_sha = helper["manifestSha256"]
+    if args.qt_source_mode == "separate-asset":
+        require(args.webview2_mode == "evergreen" and args.without_qt_webengine,
+                "separate Qt source asset requires the tested Evergreen/no-QtWebEngine slim mode")
+        require(args.qt_source_bundle is not None and args.qt_source_bundle_manifest is not None,
+                "separate Qt source asset and manifest are both required")
+        qt_source_asset, omitted_qt_paths = verify_external_qt_source_asset(
+            plan.entries, args.qt_source_bundle, args.qt_source_bundle_manifest)
+        input_refs["qtSourceBundle"] = {"path": str(args.qt_source_bundle),
+                                        "sha256": qt_source_asset["assetSha256"]}
+        input_refs["qtSourceBundleManifest"] = {"path": str(args.qt_source_bundle_manifest),
+                                                "sha256": qt_source_asset["manifestSha256"]}
+        for name in omitted_qt_paths:
+            del plan.entries[name.casefold()]
+        imageformat_source = {
+            name for name in omitted_qt_paths
+            if name.startswith("mod/licenses/QtImageFormats/sources/")
+        }
+        require(qt_imageformats is not None and imageformat_source == {
+            "mod/licenses/QtImageFormats/sources/qtimageformats-everywhere-src-6.11.2.tar.xz"},
+            "QtImageFormats external source archive differs")
+        planned_imageformat_count = qt_imageformats["copiedMaterialFiles"]
+        installed_imageformat_count = sum(
+            row["path"].startswith("mod/licenses/QtImageFormats/")
+            for row in plan.entries.values())
+        require(installed_imageformat_count == planned_imageformat_count - len(imageformat_source),
+                "QtImageFormats installed material count differs from external source plan")
+        qt_imageformats = {**qt_imageformats,
+                           "plannedMaterialFiles": planned_imageformat_count,
+                           "copiedMaterialFiles": installed_imageformat_count,
+                           "externalSourceArchiveCount": len(imageformat_source),
+                           "externalSourceAssetSha256": qt_source_asset["assetSha256"]}
+        adapted_qt_notice_paths = {
+            "transfer/licenses/Qt/source-materials/materials-manifest.json",
+            "mod/licenses/shared-component-materials/Qt/source-materials/materials-manifest.json",
+            "transfer/licenses/Qt/source-materials/QT-NOTICES.txt",
+            "mod/licenses/shared-component-materials/Qt/source-materials/QT-NOTICES.txt",
+        }
+        qt_source_asset["assetNoticeSnapshotDifferences"] = sorted(
+            set(qt_source_asset["assetNoticeSnapshotDifferences"]) | adapted_qt_notice_paths)
+        changed_notices = externalize_nested_qt_materials(
+            plan, output, qt_source_asset, omitted_qt_paths)
+        require(set(changed_notices) == adapted_qt_notice_paths | {"transfer/THIRD-PARTY-NOTICES.txt"},
+                "nested Qt source delivery notices were not all adapted")
+        transfer_omitted = {name[len("transfer/"):] for name in omitted_qt_paths
+                            if name.startswith("transfer/")}
+        require(transfer_omitted, "expected verified transfer Qt source copies")
+        transfer_files = []
+        for row in manifest["files"]:
+            if row["path"] in transfer_omitted:
+                continue
+            planned = plan.entries[("transfer/" + row["path"]).casefold()]
+            if planned["sha256"] == row["sha256"]:
+                transfer_files.append(row)
+            else:
+                require("transfer/" + row["path"] in changed_notices,
+                        "unexpected changed transfer file during Qt source split")
+                transfer_files.append({**row, "bytes": Path(planned["source"]).stat().st_size,
+                                       "sha256": planned["sha256"],
+                                       "origin": {"component": "slim-qt-source-delivery-notice",
+                                                  "source": "assemble_native_runtime.py"}})
+        slimmer_transfer = {**manifest,
+            "files": transfer_files,
+            "sourcePackageManifestSha256": helper["manifestSha256"],
+            "qtSourceDistribution": qt_source_asset,
+            "redistributionMaterialsComplete": False,
+            "distributionBlockers": [*manifest.get("distributionBlockers", []),
+                "Qt corresponding sources are in a separate local prototype asset; publication and whole-helper materials status remain unverified."]}
+        require(len(manifest["files"]) - len(slimmer_transfer["files"]) == len(transfer_omitted),
+                "transfer package Qt source inventory differs")
+        transfer_bytes = canonical(slimmer_transfer) + b"\n"
+        transfer_package_sha = hashlib.sha256(transfer_bytes).hexdigest()
+        transfer_manifest_source = output.with_name(output.name + "-transfer-manifest-" +
+                                                   transfer_package_sha[:16] + ".json")
+        write_exact_or_new(transfer_manifest_source, transfer_bytes)
+        plan.add("transfer/package-manifest.json", transfer_manifest_source,
+                 transfer_package_sha, "slim-transfer-manifest-with-external-qt-sources", replace=True)
+    else:
+        require(args.qt_source_bundle is None and args.qt_source_bundle_manifest is None,
+                "Qt source bundle inputs require separate-asset mode")
     material_status = materials_status(helper_root, baseline_rows, browser, build["coreSha256"],
                                        qt_remaining, qt_imageformats, baseline_notices,
-                                       gum_notice, native_rust, lottie_omission)
+                                       gum_notice, native_rust, lottie_omission, qt_source_asset)
     materials_bytes = json.dumps(material_status, indent=2).encode("utf8") + b"\n"
     warning = ("DEVELOPER STAGING ONLY - NOT A USER RELEASE\n"
                "No installed MAX or real profile was launched. No Python, external JS observer or local server is bundled.\n"
@@ -1158,6 +1479,8 @@ def assemble(args):
     planned_patches = {"mod/" + name: data for name, data, _ in prepared}
     planned_closure = dependency_closure(output / "runtime", planned_rows, planned_paths, planned_patches)
     require_no_lottie_pe_imports(planned_closure)
+    if webengine_omission:
+        verify_qt_webengine_absent({row["path"] for row in planned_rows}, planned_closure)
     print(json.dumps({"plannedPeImages": planned_closure["images"], "plannedMissingDependencies": planned_closure["missing"],
                       "plannedDependencyClosureVerified": planned_closure["verified"], "runtimeCopyStarted": False}), flush=True)
     if completion:
@@ -1200,6 +1523,8 @@ def assemble(args):
             "staged passive retention image pair differs from compiled pins")
     closure = dependency_closure(runtime, rows)
     require_no_lottie_pe_imports(closure)
+    webengine_runtime_audit = (verify_qt_webengine_absent({row["path"] for row in rows}, closure)
+                               if webengine_omission else None)
     expected_mod_pe = {
         row["path"][4:]: row["sha256"] for row in plan.entries.values()
         if row["path"].startswith("mod/") and Path(row["path"]).suffix.lower() in {".exe", ".dll"}
@@ -1207,8 +1532,10 @@ def assemble(args):
     for name, _, row in prepared:
         if Path(name).suffix.lower() in {".exe", ".dll"}:
             expected_mod_pe[name] = row["sha256"]
-    require(len(expected_mod_pe) == 318, "frozen p15 mod PE plan count changed")
-    lottie_runtime_audit = audit_qt_lottie_runtime(runtime / "mod", expected_mod_pe)
+    expected_pe_count = 311 if webengine_omission else 318
+    require(len(expected_mod_pe) == expected_pe_count, "frozen mod PE plan count changed")
+    lottie_runtime_audit = audit_qt_lottie_runtime(runtime / "mod", expected_mod_pe,
+                                                  expected_pe_count=expected_pe_count)
     require(lottie_runtime_audit["recordingResources"] == lottie_omission["nativeRecorderResources"],
             "packed native recording replacement hashes differ from selected resources")
     required = ["mod/" + name for name in qml["requiredNativeFiles"]]
@@ -1236,11 +1563,19 @@ def assemble(args):
               "nativeQmlUnresolvedResources": unresolved, "requiredNativeFiles": required,
               "ordinaryPluginSha256": runtime_proof["pluginSha256"], "commonCoreSha256": build["coreSha256"],
               "hookInputsRoot": str(hooks), "hookTargetIdentity": hook_identity,
-              "transferCoreSha256": manifest["coreSha256"], "transferPackageManifestSha256": helper["manifestSha256"],
-              "fixedWebView2Version": browser["version"], "bundledSchannelSha256": sha(runtime / relative(tls)),
+              "transferCoreSha256": manifest["coreSha256"], "transferPackageManifestSha256": transfer_package_sha,
+              "transferSourcePackageManifestSha256": helper["manifestSha256"],
+               "webview2Mode": args.webview2_mode,
+              "webViewSourceBinding": sources.get("sourceBinding"),
+              "qtSourceMode": args.qt_source_mode,
+              "qtSourceDistribution": qt_source_asset,
+               "fixedWebView2Version": browser["version"] if browser else None,
+               "bundledSchannelSha256": sha(runtime / relative(tls)),
               "dependencyClosure": closure, "materials": material_status,
               "plannedDependencyClosureVerifiedBeforeCopy": planned_closure["verified"],
               "qtRuntimeCompletion": completion,
+               "qtWebEngineOmission": webengine_omission,
+               "qtWebEngineRuntimeAudit": webengine_runtime_audit,
                "qtRemainingMaterials": qt_remaining,
                "qtImageFormatsMaterials": qt_imageformats,
               "qtLottieOmission": lottie_omission,
@@ -1277,9 +1612,19 @@ def main():
     }.items():
         parser.add_argument("--" + option, type=Path, default=REPORTS / name)
     parser.add_argument("--output", required=True, type=Path)
+    parser.add_argument("--webview2-mode", choices=("fixed", "evergreen"), default="fixed")
+    parser.add_argument("--qt-source-mode", choices=("inline", "separate-asset"), default="inline")
+    parser.add_argument("--qt-source-bundle", type=Path,
+                        help="Separate verified Qt source ZIP; required only for separate-asset mode.")
+    parser.add_argument("--qt-source-bundle-manifest", type=Path,
+                        help="Pinned manifest embedded in the separate Qt source ZIP.")
+    parser.add_argument("--guarded-webview-plugin", type=Path,
+                        default=Path("C:/ValMAXBuild/build/qt-webview-guard/qtwebview_webview2.dll"))
     parser.add_argument("--report", required=True, type=Path)
     parser.add_argument("--qt-completion-proof", type=Path, help="Exact official QtSerialPort/QtWebEngine binary acquisition receipt.")
     parser.add_argument("--qt-completion-materials", type=Path, help="Matching full corresponding-source archives and original license texts.")
+    parser.add_argument("--without-qt-webengine", action="store_true",
+                        help="Opt in to excluding the pinned stock orphan QtWebEngine plugin and completion family.")
     parser.add_argument("--qt-remaining-source-proof", type=Path, help="Official corresponding sources and original license texts for five additional Qt modules.")
     parser.add_argument("--qt-remaining-binary-proof", type=Path, help="Exact official binary identity for the five additional Qt DLLs.")
     parser.add_argument("--qt-imageformats-audit-proof", type=Path, help="Official QtImageFormats source/binary identity receipt for five exact runtime plugins.")

@@ -392,6 +392,17 @@ function PrepareToInstall(var NeedsRestart: Boolean): String;
 var Entries: Integer;
 begin
   NeedsRestart := False;
+#if ValMAXInstallerFixture != "1"
+  #ifdef NativeWebView2Mode
+    #if NativeWebView2Mode == "evergreen"
+  if not EvergreenWebView2Present then
+  begin
+    Result := CustomMessage('EvergreenMissing');
+    Exit;
+  end;
+    #endif
+  #endif
+#endif
   Result := CustomMessage('UpgradeUnsafe');
   if not LockTransfer then Exit;
   Result := OwnedProcessPreflight;

@@ -43,6 +43,8 @@ def main():
     parser.add_argument("--build", required=True, type=Path)
     parser.add_argument("--runtime-root", required=True, type=Path)
     parser.add_argument("--report", required=True, type=Path)
+    parser.add_argument("--webview2-mode", choices=("fixed", "evergreen"), default="fixed")
+    parser.add_argument("--qt-source-mode", choices=("inline", "separate-asset"), default="inline")
     args = parser.parse_args()
     build = owned_build(args.build)
     runtime = owned_build(args.runtime_root)
@@ -58,7 +60,7 @@ def main():
     spec = importlib.util.spec_from_file_location("valmax_launcher_generator", ROOT / "native/launcher/launcher_generate_pins.py")
     generator = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(generator)
-    inventory = generator.inventory(runtime)
+    inventory = generator.inventory(runtime, args.webview2_mode, args.qt_source_mode)
     sources = {path for path in (ROOT / "native/launcher").glob("*") if path.is_file()
         and (path.suffix in (".cpp", ".h", ".cmake", ".py") or path.name == "CMakeLists.txt")}
     sources.update(ROOT / name for name in ("native/core/valmax_core.h", "native/tooling/msvc_env.ps1",
@@ -70,7 +72,9 @@ def main():
     commands = {
         "configure": ["cmake", "-S", str(ROOT / "native/launcher"), "-B", str(build), "-G", "Ninja",
             "-DCMAKE_BUILD_TYPE=Release", f"-DVALMAX_LAUNCHER_RUNTIME_ROOT={runtime}",
-            f"-DVALMAX_BUILD_PYTHON={sys.executable}"],
+            f"-DVALMAX_BUILD_PYTHON={sys.executable}",
+            f"-DVALMAX_WEBVIEW2_MODE={args.webview2_mode}",
+            f"-DVALMAX_QT_SOURCE_MODE={args.qt_source_mode}"],
         "build": ["cmake", "--build", str(build), "--target", "ValMAX", "--parallel", "1"],
     }
     build.mkdir(parents=True)
@@ -79,11 +83,13 @@ def main():
             creationflags=subprocess.CREATE_NO_WINDOW)
         (build / (label + ".log")).write_text(result.stdout + result.stderr, encoding="utf8")
         require(result.returncode == 0, label + " failed; inspect owned build log")
-    require(inventory == generator.inventory(runtime), "payload changed during compilation")
+    require(inventory == generator.inventory(runtime, args.webview2_mode, args.qt_source_mode), "payload changed during compilation")
     require(hashes == {path.relative_to(ROOT).as_posix(): sha(path) for path in sorted(sources)}, "source changed during compilation")
     pins = build / "launcher-pins.json"
     pinned = json.loads(pins.read_text(encoding="utf8"))
-    require(pinned["files"] == inventory, "compiled inventory differs")
+    require(pinned["files"] == inventory and pinned["webview2Mode"] == args.webview2_mode
+            and pinned["qtSourceMode"] == args.qt_source_mode,
+            "compiled inventory, WebView2 or Qt source mode differs")
     executable = build / "ValMAX.exe"
     require(executable.is_file(), "launcher artifact missing")
     icon_spec = importlib.util.spec_from_file_location("valmax_launcher_icon", ROOT / "native/launcher/launcher_icon.py")
@@ -92,6 +98,8 @@ def main():
     icon_receipt = build / "stock-icon/launcher-icon.json"
     icon_verification = icon_generator.verify(runtime / "mod/max.exe", executable, icon_receipt)
     receipt = {"schema": 1, "compiled": True, "build": str(build), "runtimeRoot": str(runtime),
+        "webview2Mode": args.webview2_mode,
+        "qtSourceMode": args.qt_source_mode,
         "artifacts": {str(executable): sha(executable)}, "sourceHashes": hashes,
         "pinsReceipt": {"path": str(pins), "sha256": sha(pins)},
         "iconReceipt": {"path": str(icon_receipt), "sha256": sha(icon_receipt)},

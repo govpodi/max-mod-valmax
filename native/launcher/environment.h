@@ -16,13 +16,16 @@ struct EnvironmentEntry {
     std::wstring_view name;
     std::wstring_view value;
 };
+enum class WebView2Mode : uint32_t { Fixed, Evergreen };
 // These strings are checked LEXICALLY ONLY. This type is not a proof of path
-// ownership. The host must independently verify the complete fixed runtime,
-// prepare MXMOD/business-webview2 and retain the appropriate directory/payload
-// guards through startup. No discovery, directory creation or FS access here.
+// ownership. The host must independently verify the fixed runtime or system
+// Evergreen availability, prepare MXMOD/business-webview2 and retain the
+// appropriate directory/payload guards through startup. No discovery or FS
+// access here.
 struct LexicalEnvironmentPaths {
     std::wstring_view fixed_webview_runtime;
     std::wstring_view prepared_mxmod_root;
+    WebView2Mode webview2_mode = WebView2Mode::Fixed;
 };
 enum class EnvironmentError : uint32_t {
     Ok, InvalidBlock, InvalidEntry, InvalidUnicode, DuplicateVariable,
@@ -43,7 +46,7 @@ struct ChildEnvironment {
 
 // Ordinary names/values (including PATH, TEMP and render settings) are kept
 // byte-for-byte in UTF-16. Known browser/plugin overrides and inherited trusted
-// host config/receipt IDs are removed before four canonical values are inserted.
+// host config/receipt IDs are removed before canonical values are inserted.
 // Known shell-private pseudoentries (=::, =ExitCode, =ExitCodeAscii) are validated
 // for size/Unicode and omitted; valid =C: per-drive entries remain unchanged.
 // This is NOT complete launch-ready host assembly: the future verified host

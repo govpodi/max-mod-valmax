@@ -10,7 +10,8 @@ enum class LaunchCode : uint32_t {
     Launched, Activated, HelperLaunched, InvalidOptions, PayloadInvalid, CoreUnavailable,
     TransferBusy, ProfileFailed, RecoveryRequired, ProcessUnknown,
     ExistingUnavailable, ActivationFailed, RuntimeFailed, EnvironmentFailed,
-    SpawnFailed, ChildExited, InternalError, ProfileInUse, UnsupportedContext
+    SpawnFailed, ChildExited, InternalError, ProfileInUse, UnsupportedContext,
+    WebView2Unavailable
 };
 const char* launch_code(LaunchCode) noexcept;
 struct LaunchResult {
@@ -26,7 +27,10 @@ enum class ClientPresence {Absent, Running, Unavailable, Unknown, ProfileInUse};
 // and LocalAppData via Windows; command-line/environment path overrides do not
 // reach this object. Runtime layout is fixed below package_directory/runtime.
 enum class LaunchAction {Client, Import, Recover};
-struct LaunchOptions {std::wstring package_directory, local_appdata;};
+struct LaunchOptions {
+    std::wstring package_directory, local_appdata;
+    WebView2Mode webview2_mode = WebView2Mode::Fixed;
+};
 bool parse_action(std::span<const std::wstring_view>,LaunchAction&) noexcept;
 
 // Narrow seam for order/failure tests. An instance owns all guards and handles;
@@ -37,6 +41,7 @@ public:
     virtual LaunchCode verify()=0;
     virtual LaunchCode acquire_transfer()=0;
     virtual LaunchCode check_profile()=0;
+    virtual LaunchCode check_webview2_runtime()=0;
     virtual LaunchCode prepare_profile()=0;
     virtual ClientPresence scan()=0;
     virtual LaunchResult activate()=0;
@@ -63,6 +68,7 @@ public:
     LaunchCode verify() override;
     LaunchCode acquire_transfer() override;
     LaunchCode check_profile() override;
+    LaunchCode check_webview2_runtime() override;
     LaunchCode prepare_profile() override;
     ClientPresence scan() override;
     LaunchResult activate() override;

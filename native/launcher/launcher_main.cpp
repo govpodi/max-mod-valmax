@@ -23,6 +23,7 @@ const wchar_t* message(valmax::launcher::LaunchCode code) {
     case C::UnsupportedContext:return valmax::startup::refusal_message();
     case C::RuntimeFailed:return L"Не удалось подготовить нативные настройки ValMAX. Клиент не запущен.";
     case C::EnvironmentFailed:return L"Не удалось подготовить окружение ValMAX. Клиент не запущен.";
+    case C::WebView2Unavailable:return L"Для ValMAX требуется Microsoft Edge WebView2 Runtime. Установите его с официального сайта Microsoft и повторите запуск.";
     case C::ChildExited:return L"Запущенная программа завершилась до открытия окна. Повторите запуск; при повторении ошибки переустановите полный пакет ValMAX.";
     default:return L"Не удалось запустить ValMAX. Повторите запуск; при повторении ошибки переустановите полный пакет.";
     }
@@ -52,7 +53,8 @@ int WINAPI wWinMain(HINSTANCE,HINSTANCE,PWSTR,int) {
                 KF_FLAG_DONT_VERIFY|KF_FLAG_NO_PACKAGE_REDIRECTION,nullptr,&local);
             struct FreePath{PWSTR value;~FreePath(){CoTaskMemFree(value);}}folder{local};
             if(FAILED(status)||!local)throw 0;
-            LaunchOptions options{std::filesystem::path(std::wstring(module.data(),length)).parent_path().wstring(),local};
+            LaunchOptions options{std::filesystem::path(std::wstring(module.data(),length)).parent_path().wstring(),local,
+                pins::kUseEvergreenWebView2 ? WebView2Mode::Evergreen : WebView2Mode::Fixed};
             // Driver destruction releases package/module/mutex handles BEFORE
             // displaying an error. No caller-provided runtime path or hash.
             Win32LaunchDriver driver(std::move(options),pins::kFiles);

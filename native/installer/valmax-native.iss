@@ -137,6 +137,44 @@
   #if GetSHA256OfFile(Payload + "\native-package.json") != NativePackageManifestSha256
     #error Native eligibility include belongs to another package manifest
   #endif
+  #ifndef NativeWebView2Mode
+    #error Native WebView2 packaging mode must be pinned
+  #endif
+  #if (NativeWebView2Mode != "fixed") && (NativeWebView2Mode != "evergreen")
+    #error Unknown native WebView2 packaging mode
+  #endif
+  #ifndef NativeQtSourceMode
+    #error Native Qt source packaging mode must be pinned
+  #endif
+  #if (NativeQtSourceMode != "inline") && (NativeQtSourceMode != "separate-asset")
+    #error Unknown native Qt source packaging mode
+  #endif
+  #if NativeQtSourceMode == "separate-asset"
+    #if NativeWebView2Mode != "evergreen"
+      #error Separate Qt source asset requires Evergreen WebView2 mode
+    #endif
+    #ifndef NativeQtSourceAssetSha256
+      #error Separate Qt source asset digest is missing
+    #endif
+    #ifndef NativeQtSourceInfoSha256
+      #error Separate Qt source notice digest is missing
+    #endif
+    #ifndef QtSourceAsset
+      #error Separate Qt source ZIP path must be supplied to the compiler
+    #endif
+    #if !FileExists(QtSourceAsset)
+      #error Separate Qt source ZIP is missing
+    #endif
+    #if GetSHA256OfFile(QtSourceAsset) != NativeQtSourceAssetSha256
+      #error Separate Qt source ZIP differs from the package receipt
+    #endif
+    #if !FileExists(Payload + "\QT-SOURCE-AVAILABILITY.txt")
+      #error Separate Qt source availability notice is missing
+    #endif
+    #if GetSHA256OfFile(Payload + "\QT-SOURCE-AVAILABILITY.txt") != NativeQtSourceInfoSha256
+      #error Separate Qt source availability notice differs from the package receipt
+    #endif
+  #endif
   #define NativeAppId "{419706B9-6FC7-46F8-B9FB-D7212FC91BAC}"
   #define NativeCanonicalAppName "ValMAX"
   #define NativePreviewAppName "ValMAX native preview"
@@ -230,6 +268,8 @@ russian.UpgradeUnsafe=Не удалось безопасно обновить э
 english.UpgradeUnsafe=This folder cannot be upgraded safely. Select an empty folder or a registered ValMAX installation without directory links. Account data has not been changed.
 russian.UpgradeRecovery=Предыдущее обновление не завершилось. Старая установка и незавершённые файлы сохранены рядом. Повторите установку для проверки и восстановления; при повторной ошибке сохраните эти папки.
 english.UpgradeRecovery=The previous update did not finish. The old installation and incomplete files are preserved beside the install folder. Retry Setup to check and restore them; keep these folders if recovery fails.
+russian.EvergreenMissing=Для этой компактной сборки нужен Microsoft Edge WebView2 Evergreen Runtime. Установите его с официальной страницы Microsoft https://developer.microsoft.com/en-us/microsoft-edge/webview2/ и повторите установку. Без сети можно заранее скачать официальный автономный установщик Runtime или использовать опубликованную полную p16. ValMAX и аккаунты не изменены.
+english.EvergreenMissing=This compact build requires Microsoft Edge WebView2 Evergreen Runtime. Install it from the official Microsoft page https://developer.microsoft.com/en-us/microsoft-edge/webview2/ and retry Setup. For an offline PC, prepare Microsoft's standalone Runtime installer in advance or use the published full p16. ValMAX and account data were not changed.
 
 #if ValMAXInstallerFixture != "1"
 [Tasks]
@@ -255,6 +295,26 @@ Filename: "{app}\ValMAX.exe"; Description: "{cm:StartClient}"; WorkingDir: "{app
 #endif
 
 [Code]
+function WebView2VersionPresent(const Version: String): Boolean;
+var
+  Dot: Integer;
+begin
+  Dot := Pos('.', Trim(Version));
+  Result := (Dot > 1) and (StrToIntDef(Copy(Trim(Version), 1, Dot - 1), 0) > 0);
+end;
+
+function EvergreenWebView2Present: Boolean;
+var
+  ClientKey, Version: String;
+begin
+  ClientKey := 'Software\Microsoft\EdgeUpdate\Clients\{F3017226-FE2A-4295-8BDF-00C3A9A7E4C5}';
+  { Microsoft documents pv in the 32-bit machine view or per-user key. }
+  Result := (RegQueryStringValue(HKLM32, ClientKey, 'pv', Version) and
+             WebView2VersionPresent(Version)) or
+            (RegQueryStringValue(HKCU, ClientKey, 'pv', Version) and
+             WebView2VersionPresent(Version));
+end;
+
 function NormalizedPath(const Value: String): String;
 begin
   Result := Value;

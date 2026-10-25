@@ -3,9 +3,19 @@ if(NOT TARGET valmax_closed_clients)
 endif()
 include("${CMAKE_CURRENT_LIST_DIR}/../common/startup_context.cmake")
 add_library(valmax_launch_session STATIC launch_session.cpp launch_session.h)
-target_link_libraries(valmax_launch_session PUBLIC valmax_preflight_support valmax_activation valmax_profile_client valmax_environment valmax_closed_clients)
+target_link_libraries(valmax_launch_session PUBLIC valmax_preflight_support valmax_activation valmax_profile_client valmax_environment valmax_webview2_probe valmax_closed_clients)
 target_compile_options(valmax_launch_session PRIVATE /W4 /WX /permissive- /utf-8)
 set(VALMAX_LAUNCHER_RUNTIME_ROOT "" CACHE PATH "Final native runtime tree; build-only inventory input")
+set(VALMAX_WEBVIEW2_MODE "fixed" CACHE STRING "Bundled fixed or system Evergreen WebView2")
+set_property(CACHE VALMAX_WEBVIEW2_MODE PROPERTY STRINGS fixed evergreen)
+set(VALMAX_QT_SOURCE_MODE "inline" CACHE STRING "Qt source archives inline or in a separate asset")
+set_property(CACHE VALMAX_QT_SOURCE_MODE PROPERTY STRINGS inline separate-asset)
+if(NOT VALMAX_WEBVIEW2_MODE STREQUAL "fixed" AND NOT VALMAX_WEBVIEW2_MODE STREQUAL "evergreen")
+    message(FATAL_ERROR "VALMAX_WEBVIEW2_MODE must be fixed or evergreen")
+endif()
+if(NOT VALMAX_QT_SOURCE_MODE STREQUAL "inline" AND NOT VALMAX_QT_SOURCE_MODE STREQUAL "separate-asset")
+    message(FATAL_ERROR "VALMAX_QT_SOURCE_MODE must be inline or separate-asset")
+endif()
 if(VALMAX_LAUNCHER_RUNTIME_ROOT)
     enable_language(RC)
     if(NOT VALMAX_BUILD_PYTHON)
@@ -16,6 +26,8 @@ if(VALMAX_LAUNCHER_RUNTIME_ROOT)
         COMMAND "${VALMAX_BUILD_PYTHON}" "${CMAKE_CURRENT_SOURCE_DIR}/launcher_generate_pins.py"
             --runtime-root "${VALMAX_LAUNCHER_RUNTIME_ROOT}" --output "${CMAKE_CURRENT_BINARY_DIR}/launcher_pins.generated.h"
             --receipt "${CMAKE_CURRENT_BINARY_DIR}/launcher-pins.json"
+            --webview2-mode "${VALMAX_WEBVIEW2_MODE}"
+            --qt-source-mode "${VALMAX_QT_SOURCE_MODE}"
         DEPENDS launcher_generate_pins.py ${VALMAX_LAUNCHER_PAYLOAD} VERBATIM)
     set(VALMAX_LAUNCHER_ICON_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}/stock-icon")
     add_custom_command(OUTPUT "${VALMAX_LAUNCHER_ICON_DIRECTORY}/launcher-stock.rc"
@@ -49,5 +61,5 @@ target_link_options(valmax_launcher_test_core PRIVATE /EXPORT:valmax_core_abi_ve
 add_executable(valmax_launcher_owned_test ../tests/launcher/launcher_owned_test.cpp launch_session.cpp transfer_mutex.cpp profile_client.cpp)
 target_compile_definitions(valmax_launcher_owned_test PRIVATE VALMAX_TRANSFER_TESTING WIN32_LEAN_AND_MEAN NOMINMAX)
 target_include_directories(valmax_launcher_owned_test PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}")
-target_link_libraries(valmax_launcher_owned_test PRIVATE valmax_preflight_support valmax_activation valmax_environment valmax_closed_clients bcrypt)
+target_link_libraries(valmax_launcher_owned_test PRIVATE valmax_preflight_support valmax_activation valmax_environment valmax_webview2_probe valmax_closed_clients bcrypt)
 target_compile_options(valmax_launcher_owned_test PRIVATE /W4 /WX /permissive- /utf-8)

@@ -56,14 +56,20 @@ def require(value, label):
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--mode", choices=("good", "missing-runtime", "blocked-data", "blocked-child", "unset-data", "timeout", "delete-on-signal", "failed-controller", "failed-controller-delete"), default="good")
+    parser.add_argument("--mode", choices=("good", "missing-runtime", "missing-runtime-mode", "invalid-runtime-mode", "evergreen-fixed-path", "blocked-data", "blocked-child", "unset-data", "timeout", "delete-on-signal", "failed-controller", "failed-controller-delete"), default="good")
     parser.add_argument("--guarded-backend", action="store_true")
+    parser.add_argument("--evergreen", action="store_true", help="Use the system WebView2 Runtime in an owned synthetic fixture")
+    parser.add_argument("--fixture", type=Path, default=Path("C:/ValMAXBuild/build/qt-webview-blank-eifyoipa"))
+    parser.add_argument("--guarded-plugin", type=Path, help="Explicit guarded Qt WebView plugin copied into the fixture")
+    parser.add_argument("--proof-output", type=Path)
     args = parser.parse_args()
     if args.mode != "good" and not args.guarded_backend: raise RuntimeError("negative_requires_guarded_backend")
-    bundle = json.loads(Path("C:/ValMAXBuild/deps/webview2/verification.json").read_text())
-    browser_root = Path(bundle["runtime"]).resolve(strict=True)
+    if args.evergreen and args.mode == "missing-runtime": raise RuntimeError("use_loader_probe_for_missing_evergreen_runtime")
+    if not args.evergreen and args.mode == "evergreen-fixed-path": raise RuntimeError("mode_requires_evergreen")
+    bundle = None if args.evergreen else json.loads(Path("C:/ValMAXBuild/deps/webview2/verification.json").read_text())
+    browser_root = None if args.evergreen else Path(bundle["runtime"]).resolve(strict=True)
     # Reuse only our completed failed-probe Qt files; fresh profile per run.
-    fixture = Path("C:/ValMAXBuild/build/qt-webview-blank-eifyoipa").resolve(strict=True)
+    fixture = args.fixture.resolve(strict=True)
     exe = fixture / "valmax_webview_blank_test.exe"
     if args.mode in ("delete-on-signal", "failed-controller-delete"):
         import shutil
@@ -75,9 +81,12 @@ def main():
         # The previous fixture file was hard-linked to immutable MAX Qt files.
         # Unlink this owned directory entry before writing a replacement.
         target.unlink()
-        guard_source = Path("C:/ValMAXBuild/build/qt-webview-guard")
-        if args.mode != "good": guard_source /= "timeout-test"
-        shutil.copy2(guard_source / "qtwebview_webview2.dll", target)
+        guarded_plugin = args.guarded_plugin
+        if guarded_plugin is None:
+            guard_source = Path("C:/ValMAXBuild/build/qt-webview-guard")
+            if args.mode != "good": guard_source /= "timeout-test"
+            guarded_plugin = guard_source / "qtwebview_webview2.dll"
+        shutil.copy2(guarded_plugin, target)
     profile = fixture / ("native-profile-" + uuid.uuid4().hex)
     for name in ("home", "local", "roaming", "temp", "MXMOD/business-webview2"): (profile / name).mkdir(parents=True)
     userdata = profile / "MXMOD/business-webview2"
@@ -93,11 +102,15 @@ def main():
     env = {key: value for key, value in os.environ.items() if not key.upper().startswith(("QT_", "QML", "WEBVIEW2_", "MAX_MOD", "MXMOD", "VALMAX_NATIVE", "PYTHON"))}
     env.update(PATH=str(fixture) + os.pathsep + os.path.join(os.environ["SystemRoot"], "System32"),
         QT_QPA_PLATFORM="windows", QT_DEBUG_PLUGINS="1", QT_QUICK_BACKEND="software", QML_DISABLE_DISK_CACHE="1",
-        QT_WEBVIEW_PLUGIN="webview2", WEBVIEW2_BROWSER_EXECUTABLE_FOLDER=str(runtime_input),
+        QT_WEBVIEW_PLUGIN="webview2", VALMAX_WEBVIEW2_MODE="evergreen" if args.evergreen else "fixed",
         WEBVIEW2_USER_DATA_FOLDER=str(userdata),
         WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS="--disable-background-networking --disable-component-update --disable-sync --no-first-run --no-default-browser-check --disable-gpu",
         APPDATA=str(profile / "roaming"), LOCALAPPDATA=str(profile / "local"), USERPROFILE=str(profile / "home"),
         TEMP=str(profile / "temp"), TMP=str(profile / "temp"))
+    if runtime_input is not None: env["WEBVIEW2_BROWSER_EXECUTABLE_FOLDER"] = str(runtime_input)
+    if args.mode == "missing-runtime-mode": del env["VALMAX_WEBVIEW2_MODE"]
+    if args.mode == "invalid-runtime-mode": env["VALMAX_WEBVIEW2_MODE"] = "invalid"
+    if args.mode == "evergreen-fixed-path": env["WEBVIEW2_BROWSER_EXECUTABLE_FOLDER"] = str(profile / "unexpected-fixed-browser")
     if args.mode == "unset-data": del env["WEBVIEW2_USER_DATA_FOLDER"]
     if args.mode in ("failed-controller", "failed-controller-delete"):
         env["VALMAX_WEBVIEW_FAULT"] = "failed-controller"
@@ -157,29 +170,34 @@ def main():
             if handle: close(handle)
     try: result = json.loads((profile / "stdout.log").read_text())
     except (OSError, ValueError): result = {}
-    expected = {os.path.normcase(str(exe)), os.path.normcase(str(browser_root / "msedgewebview2.exe"))}
-    allowed = expected | {os.path.normcase(os.path.join(os.environ["SystemRoot"], "System32", "conhost.exe"))}
+    expected = {os.path.normcase(str(exe))}
+    if browser_root is not None: expected.add(os.path.normcase(str(browser_root / "msedgewebview2.exe")))
     actual = {os.path.normcase(path) for path in paths}
+    evergreen_browsers = {path for path in actual if Path(path).name.casefold() == "msedgewebview2.exe"}
+    allowed = expected | evergreen_browsers | {os.path.normcase(os.path.join(os.environ["SystemRoot"], "System32", "conhost.exe"))}
     good = code.value == 0 and result.get("ok") is True and result.get("checks") == 2 and result.get("url") == "about:blank" and expected <= actual <= allowed
+    if args.evergreen: good = good and bool(evergreen_browsers)
     negative = args.mode != "good" and code.value == 9 and result.get("failure") == "blank_load_failed" and actual <= allowed
-    no_browser = os.path.normcase(str(browser_root / "msedgewebview2.exe")) not in actual
+    no_browser = not evergreen_browsers if args.evergreen else os.path.normcase(str(browser_root / "msedgewebview2.exe")) not in actual
     fake_calls=(profile/"stderr.log").read_bytes().count(b"VALMAX_FAKE_ENV_CALLED")
     late_callbacks=(profile/"stderr.log").read_bytes().count(b"VALMAX_FAKE_ENV_CALLBACK")
     controller_closes=(profile/"stderr.log").read_bytes().count(b"VALMAX_FAKE_CONTROLLER_CLOSE")
     if args.mode == "timeout": negative = negative and result.get("checks") == 1 and no_browser and fake_calls==1 and late_callbacks==1
-    if args.mode in ("blocked-data", "blocked-child", "unset-data", "missing-runtime"): negative = negative and no_browser and fake_calls==0
+    if args.mode in ("blocked-data", "blocked-child", "unset-data", "missing-runtime", "missing-runtime-mode", "invalid-runtime-mode", "evergreen-fixed-path"): negative = negative and no_browser and fake_calls==0
     if args.mode == "delete-on-signal": negative = code.value == 0 and result.get("checks") == 1 and result.get("ok") is True and no_browser
     if args.mode == "failed-controller": negative = negative and no_browser and fake_calls == 1 and controller_closes == 1
     if args.mode == "failed-controller-delete":
         negative = code.value == 0 and result.get("checks") == 1 and result.get("ok") is True and no_browser and fake_calls == 1 and controller_closes == 1
     proof = {"schema": 1, "verified": not failures and remaining==0 and job_assigned and (good if args.mode == "good" else negative),
         "mode": args.mode, "guardedBackend": args.guarded_backend,
-        "negativeUsesSyntheticLoader":args.mode!="good","productionNoModalGuarantee":False,
+        "negativeUsesSyntheticLoader":args.mode in ("timeout", "failed-controller", "failed-controller-delete"),
+        "productionNoModalGuarantee":False,
         "ownedPids":sorted(owned_pids),"jobProcessesAfterTermination":remaining,"fakeLoaderCalls":fake_calls,
         "fakeLateCallbacks":late_callbacks,"fakeControllerCloses":controller_closes,"elapsedSeconds":round(time.monotonic()-started,3),
         "fixture": str(fixture), "profile": str(profile), "ownedExecutablePaths": sorted(paths),
         "failures": failures, "exitCode": code.value, "result": result, "jobAssignedBeforeResume": job_assigned,
-        "fixedRuntime": str(browser_root), "version": bundle["version"], "cabSha256": bundle["cabSha256"],
+        "webview2Mode": "evergreen" if args.evergreen else "fixed", "fixedRuntime": str(browser_root) if browser_root else None,
+        "version": bundle["version"] if bundle else None, "cabSha256": bundle["cabSha256"] if bundle else None,
         "runtimeCopiedForTest": False, "sandboxDisabled": False, "fridaUsed": False,
         "networkAbsenceProven": False, "backgroundWebViewRequestsPossible": True,
         "businessUrlLoaded": False, "userInstallationChanged": False, "realLoginUsed": False,
@@ -187,7 +205,9 @@ def main():
         "qtHashes": {name: hashlib.sha256((fixture / name).read_bytes()).hexdigest() for name in
             ("Qt6Core.dll", "Qt6Qml.dll", "Qt6WebView.dll", "plugins/webview/qtwebview_webview2.dll")}}
     proof_name = ("qt-webview2-guard-" + args.mode + "-proof.json") if args.guarded_backend else "qt-webview2-blank-native-proof.json"
-    (ROOT / "analysis/native-migration-v1" / proof_name).write_text(json.dumps(proof, indent=2))
+    proof_path = args.proof_output or ROOT / "analysis/native-migration-v1" / proof_name
+    proof_path.parent.mkdir(parents=True, exist_ok=True)
+    proof_path.write_text(json.dumps(proof, indent=2))
     print(json.dumps({k: proof[k] for k in ("verified", "exitCode", "failures", "result", "ownedExecutablePaths")}))
     return 0 if proof["verified"] else 1
 

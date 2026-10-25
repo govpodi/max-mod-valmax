@@ -32,6 +32,20 @@ $env:TMP = 'D:/ValMAXBuild/tmp'
 runtime обязан точно совпадать с ожидаемыми байтами. Несовпадающие файлы не
 перезаписываются и не удаляются. Готовый staging не обновляется на месте.
 
+Экспериментальный режим `--without-qt-webengine` исключает весь QtWebEngine
+completion и четыре исходных orphan-файла QML-плагина. Он принимает только
+проверенный stock baseline без QML-импортов QtWebEngine и сохраняет QtWebView
+DLL, платформенный backend и QML-модуль. Два ресурса QtWebEngine в `mod/resources`
+также исключаются. При `--webview2-mode fixed` собственные ресурсы Fixed WebView2
+в `webview2/` остаются; при `--webview2-mode evergreen` этот каталог не включается,
+а системный WebView2 проверяется перед подготовкой профиля при запуске клиента.
+Режим по умолчанию сохраняет прежний состав. Это developer staging: перед
+использованием в установщике нужны повторная упаковка и проверка установленного
+клиента. Синтетические проверки находятся в
+`native/tests/qt/test_webengine_slim_plan.py`,
+`native/tests/qt/test_webview_qml_import_slim.py` и
+`native/tests/qt/test_webview_blank_slim.py`.
+
 Проверки сборщика:
 
 ```powershell

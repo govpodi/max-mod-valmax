@@ -35,13 +35,18 @@
      hr = settings->put_IsScriptEnabled(enabled);
      Q_ASSERT_SUCCEEDED(hr);
  }
-@@ -160,6 +165,13 @@
+@@ -160,6 +165,18 @@
  
  void QWebView2WebViewPrivate::initialize(HWND hWnd)
  {
++    const QString runtimeMode = qEnvironmentVariable("VALMAX_WEBVIEW2_MODE");
 +    const QString fixedRuntime = qEnvironmentVariable("WEBVIEW2_BROWSER_EXECUTABLE_FOLDER");
-+    if (!QDir::isAbsolutePath(fixedRuntime)
-+        || !QFileInfo(fixedRuntime + QStringLiteral("/msedgewebview2.exe")).isFile()
++    const bool fixedMode = runtimeMode == QStringLiteral("fixed");
++    const bool evergreenMode = runtimeMode == QStringLiteral("evergreen");
++    if ((!fixedMode && !evergreenMode)
++        || (fixedMode && (!QDir::isAbsolutePath(fixedRuntime)
++            || !QFileInfo(fixedRuntime + QStringLiteral("/msedgewebview2.exe")).isFile()))
++        || (evergreenMode && !fixedRuntime.isEmpty())
 +        || !m_dataDirectoryPins.prepare(qEnvironmentVariable("WEBVIEW2_USER_DATA_FOLDER"))) {
 +        initializationFailed();
 +        return;
@@ -49,7 +54,7 @@
      connect(m_window, &QWindow::widthChanged, this,
              &QWebView2WebViewPrivate::updateWindowGeometry, Qt::QueuedConnection);
      connect(m_window, &QWindow::heightChanged, this,
-@@ -168,52 +180,66 @@
+@@ -168,52 +185,66 @@
              &QWebView2WebViewPrivate::updateWindowGeometry, Qt::QueuedConnection);
  
      QPointer<QWebView2WebViewPrivate> thisPtr = this;
@@ -132,7 +137,7 @@
                  }
                  if (!m_initData.m_httpUserAgent.isEmpty()) {
                      ComPtr<ICoreWebView2Settings2> settings2;
-@@ -233,61 +259,63 @@
+@@ -233,61 +264,63 @@
                  EventRegistrationToken token;
                  hr = m_webview->add_NavigationStarting(
                          Microsoft::WRL::Callback<ICoreWebView2NavigationStartingEventHandler>(
@@ -214,7 +219,7 @@
                  this->updateWindowGeometry();
                  return S_OK;
              });
-@@ -295,15 +323,49 @@
+@@ -295,15 +328,49 @@
      auto environmentCallback = Microsoft::WRL::Callback<W2EnvironmentCallback>(
              [hWnd, thisPtr, controllerCallback, this](HRESULT result,
                                                        ICoreWebView2Environment *env) -> HRESULT {
@@ -268,7 +273,7 @@
      m_webviewController = nullptr;
      m_webview = nullptr;
  }
-@@ -577,6 +639,7 @@
+@@ -577,6 +644,7 @@
  
  HRESULT QWebView2WebViewPrivate::onNavigationStarting(ICoreWebView2* webview, ICoreWebView2NavigationStartingEventArgs* args)
  {
@@ -276,7 +281,7 @@
      wchar_t *uri;
      HRESULT hr = args->get_Uri(&uri);
      Q_ASSERT_SUCCEEDED(hr);
-@@ -590,6 +653,7 @@
+@@ -590,6 +658,7 @@
  
  HRESULT QWebView2WebViewPrivate::onNavigationCompleted(ICoreWebView2* webview, ICoreWebView2NavigationCompletedEventArgs* args)
  {
@@ -284,7 +289,7 @@
      m_isLoading = false;
      m_progress = 100;
  
-@@ -618,6 +682,7 @@
+@@ -618,6 +687,7 @@
  
  HRESULT QWebView2WebViewPrivate::onWebResourceRequested(ICoreWebView2* sender, ICoreWebView2WebResourceRequestedEventArgs* args)
  {
@@ -292,7 +297,7 @@
      ComPtr<ICoreWebView2WebResourceRequest> request;
      ComPtr<ICoreWebView2WebResourceResponse> response;
      HRESULT hr = args->get_Request(&request);
-@@ -644,6 +709,7 @@
+@@ -644,6 +714,7 @@
  
  HRESULT QWebView2WebViewPrivate::onContentLoading(ICoreWebView2* webview, ICoreWebView2ContentLoadingEventArgs* args)
  {
@@ -300,7 +305,7 @@
      m_isLoading = true;
      m_progress = 0;
      emit q_ptr->loadingChanged(QWebViewFactory::LoadingInfo::create(
-@@ -654,6 +720,7 @@
+@@ -654,6 +725,7 @@
  
  HRESULT QWebView2WebViewPrivate::onNewWindowRequested(ICoreWebView2* webview, ICoreWebView2NewWindowRequestedEventArgs* args)
  {

@@ -22,8 +22,10 @@ REQUIRED = {
     "mod/qml/ValMAX/Native/MDataTransferEntry.qml", "mod/qml/ValMAX/Native/ExportMediaOwner.qml",
     "mod/qml/ValMAX/Native/ExportTransport.qml",
     "mod/plugins/platforms/qwindows.dll", "mod/plugins/webview/qtwebview_webview2.dll",
-    "webview2/msedgewebview2.exe", "transfer/valmax-transfer.exe", "transfer/valmax_core.dll",
+    "transfer/valmax-transfer.exe", "transfer/valmax_core.dll",
 }
+FIXED_REQUIRED = {"webview2/msedgewebview2.exe"}
+EVERGREEN_REQUIRED = {"mod/WebView2Loader.dll"}
 
 def require(value, reason):
     if not value:
@@ -33,7 +35,9 @@ def file_hash(path):
     with path.open("rb") as stream:
         return hashlib.file_digest(stream, "sha256").hexdigest()
 
-def inventory(root):
+def inventory(root, webview2_mode="fixed", qt_source_mode="inline"):
+    require(webview2_mode in {"fixed", "evergreen"}, "unknown WebView2 packaging mode")
+    require(qt_source_mode in {"inline", "separate-asset"}, "unknown Qt source packaging mode")
     require(root.is_absolute() and root.name == "runtime", "explicit runtime directory required")
     require(all(part not in (".", "..") for part in root.parts), "ambiguous runtime path")
     for parent in (root, *root.parents):
@@ -51,7 +55,8 @@ def inventory(root):
                     and not re.fullmatch(r"(?i)(CON|PRN|AUX|NUL|COM[1-9]|LPT[1-9])(?:\..*)?", part)
                     and part.casefold() not in {"mxmod", "oneme", ".mxmod-helper-temp"}
                     for part in path.relative_to(root).parts), "unsafe payload component")
-        require(relative.split("/", 1)[0] in {"mod", "webview2", "transfer"}, "unexpected runtime branch")
+        branches = {"mod", "transfer"} | ({"webview2"} if webview2_mode == "fixed" else set())
+        require(relative.split("/", 1)[0] in branches, "unexpected runtime branch")
         if stat.S_ISDIR(info.st_mode):
             directories.add(relative)
             continue
@@ -64,7 +69,14 @@ def inventory(root):
         require(info.st_size <= 1 << 34 and total <= 8 << 30 and len(rows) < 16384, "payload bound")
         rows.append({"path": relative, "size": info.st_size, "sha256": file_hash(path)})
     paths = {row["path"] for row in rows}
-    require(REQUIRED <= paths, "required native payload component missing")
+    if qt_source_mode == "separate-asset":
+        require(webview2_mode == "evergreen", "separate Qt source asset requires Evergreen mode")
+        require(not any(path.lower().endswith(".tar.xz") and "/sources/" in path.lower()
+                        and Path(path).name.lower().startswith("qt") for path in paths),
+                "Qt source archive remains in separate-asset runtime")
+    mode_required = FIXED_REQUIRED if webview2_mode == "fixed" else EVERGREEN_REQUIRED
+    require((REQUIRED | mode_required) <= paths,
+            "required native payload component missing")
     derived = set()
     for relative in paths:
         parent = Path(relative).parent
@@ -74,12 +86,15 @@ def inventory(root):
     require(directories == derived and len(directories) <= 8192, "empty/untracked payload directory")
     return rows
 
-def generate(root, output, receipt):
-    rows = inventory(root)
+def generate(root, output, receipt, webview2_mode="fixed", qt_source_mode="inline"):
+    rows = inventory(root, webview2_mode, qt_source_mode)
     digest = hashlib.sha256(json.dumps(rows, sort_keys=True, separators=(",", ":")).encode()).hexdigest()
     lines = ["// Build-generated complete runtime inventory; no runtime path/hash override.",
              "#pragma once", '#include "preflight.h"', "namespace valmax::launcher::pins {",
-             f'inline constexpr char kInventorySha256[]="{digest}";', "inline constexpr PayloadPin kFiles[]={"]
+             f'inline constexpr char kInventorySha256[]="{digest}";',
+             f'inline constexpr bool kUseEvergreenWebView2={str(webview2_mode == "evergreen").lower()};',
+             f'inline constexpr bool kQtSourcesSeparateAsset={str(qt_source_mode == "separate-asset").lower()};',
+             "inline constexpr PayloadPin kFiles[]={"]
     lines += [f'{{L{json.dumps(r["path"], ensure_ascii=True)},{r["size"]}ull,"{r["sha256"]}"}},' for r in rows]
     lines += ["};", "}"]
     output.parent.mkdir(parents=True, exist_ok=True)
@@ -88,6 +103,8 @@ def generate(root, output, receipt):
     # by the final packager. This is build output, never a runtime config file.
     output.write_text(text, encoding="utf8")
     receipt.write_text(json.dumps({"schema": 1, "runtimeRoot": str(root), "files": rows,
+        "webview2Mode": webview2_mode,
+        "qtSourceMode": qt_source_mode,
         "inventorySha256": digest, "mutableFile": MUTABLE,
         "generatorSha256": file_hash(Path(__file__)), "dependencyClosureVerified": False,
         "runtimeExecuted": False}, indent=2) + "\n", encoding="utf8")
@@ -97,5 +114,7 @@ if __name__ == "__main__":
     parser.add_argument("--runtime-root", required=True, type=Path)
     parser.add_argument("--output", required=True, type=Path)
     parser.add_argument("--receipt", required=True, type=Path)
+    parser.add_argument("--webview2-mode", choices=("fixed", "evergreen"), default="fixed")
+    parser.add_argument("--qt-source-mode", choices=("inline", "separate-asset"), default="inline")
     args = parser.parse_args()
-    generate(args.runtime_root, args.output, args.receipt)
+    generate(args.runtime_root, args.output, args.receipt, args.webview2_mode, args.qt_source_mode)

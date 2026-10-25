@@ -1,4 +1,4 @@
-ValMAX native business WebView component
+ValMAX native Qt WebView component
 
 Qt WebView 6.11.2
 Copyright (C) 2025 The Qt Company Ltd.
@@ -17,12 +17,13 @@ WebView2LoaderStatic.lib is linked into the plugin. The SDK's LICENSE.txt and
 NOTICE.txt are included unmodified under Microsoft-WebView2-SDK/.
 Package: https://www.nuget.org/packages/Microsoft.Web.WebView2/1.0.4258.31
 
-Microsoft Edge WebView2 Fixed Version Runtime 155.0.4283.60 (x64)
-This is the separate official Microsoft runtime, distributed unmodified.
-It is not covered by ValMAX's MIT license. Preserve its full directory and
-included third-party license resources; do not strip DLLs or license files.
-The release packager must include applicable Microsoft redistribution terms
-alongside this notice. This file does not grant additional rights.
+Microsoft Edge WebView2 Runtime
+In Evergreen mode, the client uses the system-installed runtime and does not
+bundle Microsoft Edge WebView2 browser files. In Fixed mode, the separate
+official Microsoft runtime may be distributed unmodified. It is not covered
+by ValMAX's MIT license. For a Fixed package, preserve the full runtime
+directory and included third-party license resources, and include applicable
+Microsoft redistribution terms. This file does not grant additional rights.
 Distribution documentation:
 https://learn.microsoft.com/en-us/microsoft-edge/webview2/concepts/distribution
 Official download and terms:

@@ -74,8 +74,9 @@ def pe_inventory_from_assembly(root: Path, proof: Path) -> dict[str, str]:
 
 
 def verify_runtime(root: Path, *, synthetic_fixture: bool = False,
-                   expected_pe_inventory: dict[str, str] | None = None) -> dict:
-    """Verify packed QML and the exact full p15 mod PE inventory."""
+                   expected_pe_inventory: dict[str, str] | None = None,
+                   expected_pe_count: int = 318) -> dict:
+    """Verify packed QML and an exact pinned mod PE inventory."""
     root = root.resolve(strict=True)
     binary_path = root / "max.exe"
     if not root.is_dir() or not binary_path.is_file():
@@ -87,12 +88,13 @@ def verify_runtime(root: Path, *, synthetic_fixture: bool = False,
         raise RuntimeError("Qt Lottie module binaries remain in candidate runtime")
 
     if not synthetic_fixture:
-        if (not isinstance(expected_pe_inventory, dict) or len(expected_pe_inventory) != 318
+        if (expected_pe_count not in (311, 318)
+                or not isinstance(expected_pe_inventory, dict) or len(expected_pe_inventory) != expected_pe_count
                 or any(not isinstance(name, str) or PurePosixPath(name).as_posix() != name
                        or PurePosixPath(name).is_absolute() or ".." in PurePosixPath(name).parts
                        or not isinstance(digest, str) or not re.fullmatch(r"[0-9a-f]{64}", digest)
                        for name, digest in expected_pe_inventory.items())):
-            raise RuntimeError("exact p15 mod PE inventory required")
+            raise RuntimeError("exact pinned mod PE inventory required")
     imports = []
     actual_pe_inventory: dict[str, str] = {}
     for path in root.rglob("*"):
@@ -170,7 +172,8 @@ def main() -> None:
         raise RuntimeError("full runtime requires exactly one assembly inventory")
     expected = pe_inventory_from_assembly(args.runtime.resolve(strict=True), args.inventory) if args.inventory else None
     result = verify_runtime(args.runtime, synthetic_fixture=args.synthetic_fixture,
-                            expected_pe_inventory=expected)
+                            expected_pe_inventory=expected,
+                            expected_pe_count=len(expected) if expected is not None else 318)
     if args.report:
         with args.report.open("x", encoding="utf8") as stream:
             json.dump(result, stream, ensure_ascii=False, indent=2)

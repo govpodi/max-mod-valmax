@@ -10,7 +10,7 @@ import json
 from pathlib import Path
 import pefile
 
-from assemble_native_runtime import read_json, require, relative, sha, ordinary
+from assemble_native_runtime import read_json, require, relative, sha, ordinary, is_qt_webengine_runtime_path
 
 ROOT = Path(__file__).resolve().parents[2]
 
@@ -27,7 +27,17 @@ def main():
     runtime = Path(staging["runtime"])
     inventory = {r["path"].lower(): r for r in staging["inventory"]}
     sources = [r["path"] for r in completion["binaryVersions"]]
-    sources += ["mod/qml/QtWebEngine/qtwebenginequickplugin.dll", "mod/qml/QtWebEngine/ControlsDelegates/qtwebenginequickdelegatesplugin.dll"]
+    slim = bool((staging.get("qtWebEngineOmission") or {}).get("enabled"))
+    if slim:
+        require(completion["modules"] == ["qtserialport"]
+                and not any(is_qt_webengine_runtime_path(row["path"]) for row in staging["inventory"]),
+                "slim QtWebEngine omission did not survive staging")
+        sources += ["mod/Qt6WebView.dll", "mod/Qt6WebViewQuick.dll",
+                    "mod/plugins/webview/qtwebview_webview2.dll",
+                    "mod/qml/QtWebView/qtwebviewquickplugin.dll"]
+    else:
+        sources += ["mod/qml/QtWebEngine/qtwebenginequickplugin.dll",
+                    "mod/qml/QtWebEngine/ControlsDelegates/qtwebenginequickdelegatesplugin.dll"]
     exports, inputs, edges, failures = {}, {}, [], []
     def image(path):
         ordinary(path)
@@ -74,11 +84,12 @@ def main():
                     if missing or forwarders: failures.append(edge)
         finally:
             pe.close()
-    proof = {"schema": 1, "verified": not failures, "stagingProof": str(args.staging_proof),
+    proof = {"schema": 1, "verified": not failures, "qtWebEngineOmitted": slim,
+             "stagingProof": str(args.staging_proof),
              "stagingProofSha256": sha(args.staging_proof), "runtimeInventorySha256": staging["runtimeInventorySha256"],
              "inputs": inputs, "edges": edges, "symbolsChecked": sum(e["requestedSymbols"] for e in edges),
              "failures": failures, "targetsExecuted": False, "sourceSha256": sha(Path(__file__)),
-             "scope": "Qt import symbols for added release modules/process plus the two byte-identical baseline WebEngine plugins. No OS symbols, dynamic-load or whole-client execution claim."}
+             "scope": "Qt import symbols for added release modules and either the baseline WebEngine plugins or the retained QtWebView path. No OS symbols, dynamic-load or whole-client execution claim."}
     with args.report.open("x", encoding="utf8") as output: output.write(json.dumps(proof, indent=2) + "\n")
     print(json.dumps({"verified": proof["verified"], "symbolsChecked": proof["symbolsChecked"], "edges": len(edges), "failures": len(failures)}))
     raise SystemExit(0 if proof["verified"] else 1)

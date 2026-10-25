@@ -1,4 +1,5 @@
 """Build the actual redistributed corresponding-source archive, tests disabled."""
+import argparse
 import hashlib
 import json
 from pathlib import Path
@@ -7,8 +8,19 @@ import tempfile
 import zipfile
 
 ROOT = Path(__file__).resolve().parents[3]
-archive = Path("C:/ValMAXBuild/deps/webview2-build/redistribution/qtwebview-6.11.2-valmax-source.zip")
-fixture = Path(tempfile.mkdtemp(prefix="qt-webview-source-", dir="C:/ValMAXBuild/build"))
+parser = argparse.ArgumentParser(description=__doc__)
+parser.add_argument("--archive", type=Path,
+                    default=Path("C:/ValMAXBuild/deps/webview2-build/redistribution/qtwebview-6.11.2-valmax-source.zip"))
+parser.add_argument("--fixture", type=Path, help="New isolated extraction/build directory")
+parser.add_argument("--proof", type=Path,
+                    default=ROOT / "analysis/native-migration-v1/qt-webview2-source-build-proof.json")
+args = parser.parse_args()
+archive = args.archive
+if args.fixture:
+    fixture = args.fixture
+    fixture.mkdir(parents=True, exist_ok=False)
+else:
+    fixture = Path(tempfile.mkdtemp(prefix="qt-webview-source-", dir="C:/ValMAXBuild/build"))
 with zipfile.ZipFile(archive) as source:
     for member in source.namelist():
         if member.startswith(("/", "\\")) or ".." in Path(member).parts or ":" in member:
@@ -37,5 +49,6 @@ proof = {"schema": 1, "verified": True, "sourceArchive": str(archive),
     "sourceArchiveSha256": hashlib.sha256(archive.read_bytes()).hexdigest(), "fixture": str(fixture),
     "builtDllSha256": hashlib.sha256(dll.read_bytes()).hexdigest(), "testTargetsEnabled": False,
     "browserLaunched": False, "abiClaim": "Compilation from packaged corresponding source only; runtime ABI proof uses the primary build."}
-(ROOT/"analysis/native-migration-v1/qt-webview2-source-build-proof.json").write_text(json.dumps(proof, indent=2))
+args.proof.parent.mkdir(parents=True, exist_ok=True)
+args.proof.write_text(json.dumps(proof, indent=2))
 print(json.dumps(proof))

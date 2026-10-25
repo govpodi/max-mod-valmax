@@ -1,16 +1,25 @@
 """Reproducible narrow Qt 6.11.2 backend patch, never edits installed Qt/MAX."""
 import difflib
+import argparse
 import hashlib
 import json
 from pathlib import Path
 import shutil
 
 PROJECT = Path(__file__).resolve().parents[2]
-SOURCE = Path("C:/ValMAXBuild/deps/webview2-build/qt-source/qtwebview-6.11.2")
-DEST = Path("C:/ValMAXBuild/build/qt-webview-guard-source")
+parser = argparse.ArgumentParser(description=__doc__)
+parser.add_argument("--source", type=Path, default=Path("C:/ValMAXBuild/deps/webview2-build/qt-source/qtwebview-6.11.2"))
+parser.add_argument("--dest", type=Path, default=Path("C:/ValMAXBuild/build/qt-webview-guard-source"))
+parser.add_argument("--patch-output", type=Path, default=PROJECT / "native/qt/webview/qt-6.11.2-init.patch")
+parser.add_argument("--proof", type=Path, default=PROJECT / "analysis/native-migration-v1/qt-webview2-guard-source.json")
+args = parser.parse_args()
+SOURCE = args.source
+DEST = args.dest
 DEST.mkdir(parents=True, exist_ok=True)
 PINS = {"qwebview2webview.cpp": "f33bb86c6e781f203e6f8798001b8f52811707664df32bdb5f65c07748f5c1e8",
-        "qwebview2webview_p.h": "e330675db3dc5f0d4228a52c15b21e718a781811035bc66cb6c62ccdc0a5e058"}
+        "qwebview2webview_p.h": "e330675db3dc5f0d4228a52c15b21e718a781811035bc66cb6c62ccdc0a5e058",
+        "qwebview2webviewplugin.cpp": "5d049574cf76fc372721954310e95ef58b974c1fed10864bffa7be36ca1b96ba",
+        "windows.json": "63d3b53b21ec4bd75d2195f619a3df047daf271e5170fd566cb6feee409391da"}
 texts = {}
 for name, sha in PINS.items():
     data = (SOURCE / "src/plugins/windows" / name).read_bytes()
@@ -60,9 +69,14 @@ body = source[start:end]
 body = replace(body, '    const QString userDataFolder = QStandardPaths::writableLocation(QStandardPaths::AppLocalDataLocation) % QDir::separator() % QLatin1StringView("WebView2");',
     '    const QString userDataFolder = qEnvironmentVariable("WEBVIEW2_USER_DATA_FOLDER");')
 body = replace(body, "{\n    connect(m_window,", """{
+    const QString runtimeMode = qEnvironmentVariable("VALMAX_WEBVIEW2_MODE");
     const QString fixedRuntime = qEnvironmentVariable("WEBVIEW2_BROWSER_EXECUTABLE_FOLDER");
-    if (!QDir::isAbsolutePath(fixedRuntime)
-        || !QFileInfo(fixedRuntime + QStringLiteral("/msedgewebview2.exe")).isFile()
+    const bool fixedMode = runtimeMode == QStringLiteral("fixed");
+    const bool evergreenMode = runtimeMode == QStringLiteral("evergreen");
+    if ((!fixedMode && !evergreenMode)
+        || (fixedMode && (!QDir::isAbsolutePath(fixedRuntime)
+            || !QFileInfo(fixedRuntime + QStringLiteral("/msedgewebview2.exe")).isFile()))
+        || (evergreenMode && !fixedRuntime.isEmpty())
         || !m_dataDirectoryPins.prepare(qEnvironmentVariable("WEBVIEW2_USER_DATA_FOLDER"))) {
         initializationFailed();
         return;
@@ -172,13 +186,20 @@ for name, content in changed.items():
         fromfile="a/src/plugins/windows/" + name, tofile="b/src/plugins/windows/" + name))
 for name in ("qwebview2webviewplugin.cpp", "windows.json"):
     shutil.copy2(SOURCE / "src/plugins/windows" / name, DEST / name)
-shutil.copy2(PROJECT / "native/qt/webview/user_data_preflight.h", DEST / "user_data_preflight.h")
+# Git for Windows may check this text header out with CRLF. Pin the Git-source
+# LF bytes so the generated receipt is stable across Windows worktrees.
+(DEST / "user_data_preflight.h").write_bytes(
+    (PROJECT / "native/qt/webview/user_data_preflight.h").read_bytes().replace(b"\r\n", b"\n"))
 shutil.copytree(SOURCE / "LICENSES", DEST / "LICENSES", dirs_exist_ok=True)
 (PROJECT / "native/qt/webview").mkdir(exist_ok=True)
-(PROJECT / "native/qt/webview/qt-6.11.2-init.patch").write_text(diff, encoding="utf8", newline="\n")
+args.patch_output.parent.mkdir(parents=True, exist_ok=True)
+args.patch_output.write_text(diff, encoding="utf8", newline="\n")
 proof = {"schema": 1, "upstream": "https://github.com/qt/qtwebview/tree/v6.11.2", "sourcePins": PINS,
     "output": str(DEST), "patchSha256": hashlib.sha256(diff.encode()).hexdigest(),
-    "outputs": {name: hashlib.sha256((DEST/name).read_bytes()).hexdigest() for name in [*changed,"user_data_preflight.h"]},
+    "outputs": {name: hashlib.sha256((DEST/name).read_bytes()).hexdigest()
+                for name in [*changed, "qwebview2webviewplugin.cpp", "windows.json", "user_data_preflight.h"]},
+    "supportedWebView2Modes": ["fixed", "evergreen"],
     "publicQtAbiChanged": False, "baselineModified": False, "licensesPreserved": True}
-(PROJECT / "analysis/native-migration-v1/qt-webview2-guard-source.json").write_text(json.dumps(proof, indent=2))
+args.proof.parent.mkdir(parents=True, exist_ok=True)
+args.proof.write_text(json.dumps(proof, indent=2))
 print(json.dumps(proof))

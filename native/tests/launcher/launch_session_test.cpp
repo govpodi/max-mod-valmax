@@ -18,6 +18,10 @@ struct Fake final:LaunchDriver {
     LaunchCode verify()override{return step("verify");}
     LaunchCode acquire_transfer()override{return step("lock");}
     LaunchCode check_profile()override {++guards;auto value=step("check");return guards==recovery_guard?LaunchCode::RecoveryRequired:value;}
+    LaunchCode check_webview2_runtime()override{
+        calls.emplace_back("webview2");
+        return fail=="webview2"?LaunchCode::WebView2Unavailable:LaunchCode::Launched;
+    }
     LaunchCode prepare_profile()override {++profiles;return step("profile");}
     ClientPresence scan()override{calls.emplace_back("scan");return scans++==0?first:second;}
     LaunchResult activate()override{calls.emplace_back("activate");return activated;}
@@ -31,9 +35,14 @@ bool contains(const Fake& f,const char* value){return std::find(f.calls.begin(),
 int main(){
     try {
         Fake ordinary;auto result=run_launch(ordinary);check(result.success()&&result.process_created&&!result.window_shown);
-        check(ordinary.calls==std::vector<std::string>{"verify","lock","scan","check","profile","runtime","environment","check","scan","spawn"});
+        check(ordinary.calls==std::vector<std::string>{"verify","lock","scan","check","webview2","profile","runtime","environment","check","scan","spawn"});
         check(ordinary.profiles==1&&ordinary.guards==2);
-        for(auto step:{"verify","lock","check","profile","runtime","environment"}){Fake f;f.fail=step;check(!run_launch(f).success());check(!contains(f,"spawn"));}
+        for(auto step:{"verify","lock","check","webview2","profile","runtime","environment"}){Fake f;f.fail=step;check(!run_launch(f).success());check(!contains(f,"spawn"));}
+        Fake missing_webview2;missing_webview2.fail="webview2";
+        check(run_launch(missing_webview2).code==LaunchCode::WebView2Unavailable);
+        check(missing_webview2.profiles==0&&!contains(missing_webview2,"runtime")
+            &&!contains(missing_webview2,"environment")&&!contains(missing_webview2,"spawn"));
+        check(missing_webview2.calls==std::vector<std::string>{"verify","lock","scan","check","webview2"});
         for(auto presence:{ClientPresence::Unknown,ClientPresence::Unavailable,ClientPresence::ProfileInUse}){
             Fake initial;initial.first=presence;check(!run_launch(initial).success());check(!contains(initial,"runtime")&&!contains(initial,"spawn"));
             check(initial.calls==std::vector<std::string>{"verify","lock","scan"});

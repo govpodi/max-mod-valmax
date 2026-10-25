@@ -17,6 +17,7 @@ import shutil
 import stat
 import subprocess
 import tarfile
+import zipfile
 from datetime import datetime, timedelta, timezone
 
 from package_transfer_helper import pe_imports, system_dependency
@@ -44,6 +45,7 @@ LOCAL_PREVIEW_BLOCKERS = frozenset(key for key, _ in CURRENT_RELEASE_BLOCKERS) |
 LOCAL_PREVIEW_INFO = "native-preview.txt"
 PUBLIC_BETA_INFO = "native-beta.txt"
 PUBLIC_BETA_MATERIAL_INFO = "native-beta-materials.json"
+QT_SOURCE_INFO = "QT-SOURCE-AVAILABILITY.txt"
 PUBLIC_BETA_SCENARIOS = (
     "installed_launch",
     "existing_profile_and_accounts",
@@ -89,6 +91,36 @@ PUBLIC_BETA_MATERIAL_LIMITATIONS = (
      "noticeRu": "Исходники Rust crate и уведомления сверены с Cargo.lock; лицензии связанных объектов и вложенного C/ASM ещё проверяются.",
      "noticeEn": "Rust crate sources and notices match Cargo.lock; linked-object and bundled C/ASM license review remains open."},
 )
+
+
+def beta_material_limitations(webview2_mode="fixed", qt_source_mode="inline"):
+    """Exact, ordered limitations for the byte-verified runtime modes."""
+    require(webview2_mode in ("fixed", "evergreen")
+            and qt_source_mode in ("inline", "separate-asset"),
+            "unknown public BETA material mode")
+    require(qt_source_mode != "separate-asset" or webview2_mode == "evergreen",
+            "separate Qt source asset requires Evergreen mode")
+    items = [dict(item) for item in PUBLIC_BETA_MATERIAL_LIMITATIONS]
+    if qt_source_mode == "separate-asset":
+        items[1] = {"id": "qt_imageformats_codec_scope_unverified",
+            "statusText": "Five QtImageFormats plugins match official 6.11.2 binaries; corresponding source archives are pinned to a separate Qt asset and original libtiff/libwebp notices remain installed; actual codec linkage and whole-client license scope remain unverified.",
+            "noticeRu": "Пять плагинов QtImageFormats сверены; исходники вынесены в отдельный проверяемый архив, а уведомления libtiff/libwebp остаются в установке. Состав кодеков и применимость лицензий ко всему клиенту ещё не подтверждены.",
+            "noticeEn": "Five QtImageFormats plugins match; sources are in a separate pinned asset and libtiff/libwebp notices remain installed. Codec linkage and whole-client license scope remain unverified."}
+        items[2] = {"id": "qt_remaining_plugin_scope_unverified",
+            "statusText": "Six additional root Qt DLLs and two service copies remain after Qt Lottie was omitted. Their official 6.11.2 source archives are pinned to a separate Qt asset and license texts remain installed; other bundled Qt plugins and third-party materials still require whole-client review.",
+            "noticeRu": "Исходники для восьми оставшихся копий Qt вынесены в отдельный проверяемый архив; тексты лицензий остаются в установке. Другие плагины Qt и сторонние материалы ещё требуют проверки.",
+            "noticeEn": "Sources for eight remaining Qt copies are in a separate pinned asset, while license texts remain installed. Other Qt plugins and third-party materials need review."}
+        items.insert(3, {"id": "qt_source_asset_delivery_unverified",
+            "statusText": "Qt 6.11.2 source archives are outside the installer in a separate SHA-256-pinned asset; its publication and complete legal coverage remain unverified.",
+            "noticeRu": "Исходники Qt 6.11.2 находятся в отдельном архиве с указанным SHA-256. Публикация архива вместе с установщиком и полнота правовых материалов пока не подтверждены.",
+            "noticeEn": "Qt 6.11.2 sources are in a separate SHA-256-pinned asset. Publication alongside the installer and complete legal coverage remain unverified."})
+    if webview2_mode == "evergreen":
+        index = next(index for index, item in enumerate(items) if item["id"] == "webview2_terms_unverified")
+        items[index] = {"id": "webview2_evergreen_prerequisite_unverified",
+            "statusText": "Evergreen WebView2 is a system prerequisite; clean-PC, absent-runtime and offline installation behavior remain unverified.",
+            "noticeRu": "Для мини-приложений нужен системный Microsoft Edge WebView2 Evergreen Runtime. Проверка установки на чистом ПК, без Runtime и без сети ещё не завершена.",
+            "noticeEn": "Mini apps require the system Microsoft Edge WebView2 Evergreen Runtime. Clean-PC, missing-runtime and offline installation behavior remain unverified."}
+    return tuple(items)
 PUBLIC_BETA_REQUIRED_NOTICE_PATHS = frozenset({
     "mod/licenses/BaselineUpstream/FFmpeg/COPYING.LGPLv2.1",
     "mod/licenses/BaselineUpstream/FFmpeg/COPYING.GPLv2",
@@ -229,15 +261,18 @@ def validate_subject(subject):
 
 def public_beta_preflight(subject, evidence, now, artifact_identity, materials,
                           artifact_verified, qml_compatibility_verified, max_rights_attested,
-                          beta_materials=None, beta_materials_error=None):
+                          beta_materials=None, beta_materials_error=None,
+                          webview2_mode="fixed", qt_source_mode="inline"):
     """A public BETA requires installed core use on the exact packaged bytes.
 
     Accepted BETA limitations are disclosed, while byte integrity, exact
     documented materials and a passing installed-client smoke stay gates.
     """
+    material_limitations = beta_material_limitations(webview2_mode, qt_source_mode)
     blockers = []
     result = {"schema": 1, "checkedAt": now.strftime("%Y-%m-%dT%H:%M:%SZ"),
               "distributionMode": "public-beta", "releaseEligible": False,
+              "webview2Mode": webview2_mode, "qtSourceMode": qt_source_mode,
               "featureRuntimeTested": False, "betaCoreTested": False,
               "subject": subject, "evidenceVerified": False,
               "wholeClientMaterialsVerified": False, "materialsDocumentedForBeta": False,
@@ -247,7 +282,7 @@ def public_beta_preflight(subject, evidence, now, artifact_identity, materials,
               "requiredEvidenceIds": list(PUBLIC_BETA_SCENARIOS),
               "knownLimitations": ([dict(item) for item in PUBLIC_BETA_LIMITATIONS]
                                    + [{"id": item["id"], "reason": item["statusText"]}
-                                      for item in PUBLIC_BETA_MATERIAL_LIMITATIONS]),
+                                      for item in material_limitations]),
               "scope": "Public BETA eligibility for exact bytes and installed core use; the stable 16-group feature regression is separate."}
 
     def block(key, reason):
@@ -258,10 +293,12 @@ def public_beta_preflight(subject, evidence, now, artifact_identity, materials,
             and beta_materials.get("exactCorrespondingSourceProven") is False
             and beta_materials.get("knownLimitations") ==
                 [{"id": item["id"], "reason": item["statusText"]}
-                 for item in PUBLIC_BETA_MATERIAL_LIMITATIONS]
+                 for item in material_limitations]
             and isinstance(materials, dict) and materials.get("completeForWholeClient") is False
             and materials.get("limitations") ==
-                [item["statusText"] for item in PUBLIC_BETA_MATERIAL_LIMITATIONS]):
+                [item["statusText"] for item in material_limitations]
+            and (qt_source_mode == "inline" or
+                 beta_materials.get("qtSourceDistribution") == materials.get("qtSourceDistribution"))):
         result["materialsDocumentedForBeta"] = True
         result["betaMaterials"] = beta_materials
     else:
@@ -329,7 +366,8 @@ def public_beta_preflight(subject, evidence, now, artifact_identity, materials,
 def release_preflight(subject=None, evidence=None, mode="user-release", now=None,
                       artifact_identity=None, materials=None, artifact_verified=False,
                       qml_compatibility_verified=False, max_rights_attested=False,
-                      beta_materials=None, beta_materials_error=None):
+                      beta_materials=None, beta_materials_error=None,
+                      webview2_mode="fixed", qt_source_mode="inline"):
     """Receipts attest installed behavior for exact bytes, never DLL presence.
 
     Stable release retains every unresolved product blocker. Public BETA has
@@ -340,7 +378,8 @@ def release_preflight(subject=None, evidence=None, mode="user-release", now=None
     if mode == "public-beta":
         return public_beta_preflight(subject, evidence, now, artifact_identity, materials,
                                      artifact_verified, qml_compatibility_verified, max_rights_attested,
-                                     beta_materials, beta_materials_error)
+                                     beta_materials, beta_materials_error,
+                                     webview2_mode, qt_source_mode)
     blockers = [{"id": key, "reason": reason} for key, reason in CURRENT_RELEASE_BLOCKERS]
     result = {"schema": 1, "checkedAt": now.strftime("%Y-%m-%dT%H:%M:%SZ"),
               "distributionMode": mode, "releaseEligible": False,
@@ -655,23 +694,156 @@ def bound_materials(runtime, rows, assembly_receipt_sha):
     return {"status": status, "sha256": matches[0]["sha256"]}
 
 
-def beta_materials_documentation(binding, rows, assembly_receipt_sha, subject, evidence):
+def bound_qt_source_asset(runtime, rows, assembly, material_binding, qt_source_mode):
+    """Verify the separate asset and the rewritten transfer inventory by bytes."""
+    require(qt_source_mode in ("inline", "separate-asset"), "unknown Qt source mode")
+    receipt = assembly.get("qtSourceDistribution")
+    if qt_source_mode == "inline":
+        require(receipt is None and (material_binding is None or
+                material_binding["status"].get("qtSourceDistribution") is None),
+                "inline runtime unexpectedly claims an external Qt source asset")
+        return None
+    require(isinstance(receipt, dict) and receipt.get("mode") == "separate-asset"
+            and receipt.get("requiredTogetherWithInstaller") is True
+            and receipt.get("legalCompleteness") == "not-assessed"
+            and isinstance(material_binding, dict)
+            and material_binding["status"].get("qtSourceDistribution") == receipt
+            and material_binding["status"].get("copiedQtCorrespondingSourceModules") == []
+            and material_binding["status"].get("externalQtCorrespondingSourceModules") ==
+                ["qtbase", "qtdeclarative"],
+            "separate Qt source asset is not bound to assembled materials")
+    expected_rows = receipt.get("omittedRuntimeCopies")
+    require(isinstance(expected_rows, list) and expected_rows
+            and all(isinstance(row, dict) and set(row) == {"path", "bytes", "sha256"}
+                    and isinstance(row["path"], str) and row["path"].startswith(("mod/", "transfer/"))
+                    and type(row["bytes"]) is int and row["bytes"] > 0
+                    and isinstance(row["sha256"], str)
+                    and re.fullmatch(r"[0-9a-f]{64}", row["sha256"])
+                    for row in expected_rows), "invalid omitted Qt source inventory")
+    names = {row["path"] for row in rows}
+    omitted_names = {row["path"] for row in expected_rows}
+    require(len(omitted_names) == len(expected_rows) and not omitted_names & names
+            and receipt.get("omittedRuntimeBytes") == sum(row["bytes"] for row in expected_rows)
+            and receipt.get("sourceArchiveCount") == len({Path(row["path"]).name for row in expected_rows})
+            and not any(name.lower().endswith(".tar.xz") and "/sources/" in name.lower()
+                        and Path(name).name.lower().startswith("qt") for name in names),
+            "Qt source copies remain in the installed inventory or omission count differs")
+    imageformat_proof = material_binding["status"].get("additionalQtImageFormatsMaterialProof") or {}
+    imageformat_installed = {name for name in names if name.startswith("mod/licenses/QtImageFormats/")}
+    imageformat_omitted = {name for name in omitted_names
+                           if name.startswith("mod/licenses/QtImageFormats/sources/")}
+    require(len(imageformat_omitted) == 1
+            and imageformat_proof.get("externalSourceArchiveCount") == 1
+            and imageformat_proof.get("externalSourceAssetSha256") == receipt["assetSha256"]
+            and imageformat_proof.get("copiedMaterialFiles") == len(imageformat_installed)
+            and imageformat_proof.get("plannedMaterialFiles") == len(imageformat_installed) + 1,
+            "QtImageFormats material count still claims an installed source archive")
+    refs = assembly.get("inputReceipts") or {}
+    zip_ref, manifest_ref = refs.get("qtSourceBundle"), refs.get("qtSourceBundleManifest")
+    require(isinstance(zip_ref, dict) and isinstance(manifest_ref, dict),
+            "Qt source bundle input references missing from assembly")
+    archive = evidence_path(zip_ref.get("path"))
+    manifest_file = evidence_path(manifest_ref.get("path"))
+    require(archive.name == receipt.get("assetName")
+            and ordinary(archive).st_size == receipt.get("assetBytes")
+            and sha(archive) == zip_ref.get("sha256") == receipt.get("assetSha256")
+            and sha(manifest_file) == manifest_ref.get("sha256") == receipt.get("manifestSha256"),
+            "separate Qt source asset or manifest changed")
+    with zipfile.ZipFile(archive) as bundle:
+        require(bundle.read("manifest.json") == manifest_file.read_bytes(),
+                "Qt source ZIP embedded manifest changed")
+        source_rows = read_json(manifest_file).get("retainedSourceArchives")
+        require(isinstance(source_rows, list) and len(source_rows) == receipt["sourceArchiveCount"],
+                "Qt source ZIP manifest archive count differs")
+        pinned = {row["path"]: row for row in expected_rows}
+        declared = {}
+        for source in source_rows:
+            require(isinstance(source, dict) and isinstance(source.get("sourcePathsInP16"), list)
+                    and isinstance(source.get("name"), str), "invalid external Qt source record")
+            member = "sources/" + source["name"]
+            with bundle.open(member) as stream:
+                digest, count = hashlib.sha256(), 0
+                while chunk := stream.read(1 << 20):
+                    digest.update(chunk)
+                    count += len(chunk)
+            require(count == source.get("bytes") and digest.hexdigest() == source.get("sha256"),
+                    "Qt source asset archive member changed")
+            for path in source["sourcePathsInP16"]:
+                require(path not in declared and path in pinned
+                        and pinned[path]["bytes"] == count
+                        and pinned[path]["sha256"] == digest.hexdigest(),
+                        "Qt source asset no longer covers omitted runtime copy")
+                declared[path] = source
+        require(set(declared) == omitted_names, "external Qt asset does not cover all omitted sources")
+    transfer_manifest = read_json(runtime / "transfer/package-manifest.json")
+    require(transfer_manifest.get("qtSourceDistribution") == receipt
+            and transfer_manifest.get("sourcePackageManifestSha256") ==
+                assembly.get("transferSourcePackageManifestSha256")
+            and transfer_manifest.get("redistributionMaterialsComplete") is False
+            and isinstance(transfer_manifest.get("distributionBlockers"), list)
+            and any("separate local prototype asset" in item
+                    for item in transfer_manifest["distributionBlockers"])
+            and sha(runtime / "transfer/package-manifest.json") ==
+                assembly.get("transferPackageManifestSha256"),
+            "transfer helper still has stale Qt source manifest")
+    transfer_rows = {row["path"][len("transfer/"):]: row for row in rows
+                     if row["path"].startswith("transfer/")
+                     and row["path"] != "transfer/package-manifest.json"}
+    frozen_transfer = transfer_manifest.get("files")
+    require(isinstance(frozen_transfer, list)
+            and len(frozen_transfer) == len(transfer_rows)
+            and all(isinstance(row, dict) and row.get("path") in transfer_rows
+                    and row.get("sha256") == transfer_rows[row["path"]]["sha256"]
+                    and row.get("bytes") == transfer_rows[row["path"]]["size"]
+                    for row in frozen_transfer), "transfer helper inventory differs from slim runtime")
+    return {"receipt": receipt, "archive": archive, "manifest": manifest_file}
+
+
+def beta_materials_documentation(binding, rows, assembly_receipt_sha, subject, evidence,
+                                 webview2_mode="fixed", qt_source_mode="inline"):
     """Document a bounded BETA materials gap without asserting legal completeness.
 
     `binding` is already byte-bound to the assembled runtime by bound_materials.
-    Source archives are supplied with the BETA package, but are explicitly not
-    claimed to correspond exactly to the original MAX/ONEME FFmpeg DLL builds.
+    FFmpeg archives are supplied in the package. Qt archives may instead be
+    byte-bound to a separate asset. Exact FFmpeg DLL correspondence is not claimed.
     """
     require(isinstance(binding, dict) and isinstance(binding.get("status"), dict)
             and isinstance(binding.get("sha256"), str)
             and re.fullmatch(r"[0-9a-f]{64}", binding["sha256"]),
             "bound materials receipt required for public BETA")
     status = binding["status"]
+    material_limitations = beta_material_limitations(webview2_mode, qt_source_mode)
     require(status.get("completeForWholeClient") is False
-            and status.get("limitations") == [item["statusText"] for item in PUBLIC_BETA_MATERIAL_LIMITATIONS],
+            and status.get("limitations") == [item["statusText"] for item in material_limitations],
             "unknown, missing or reordered public BETA materials limitation")
+    qt_source_delivery = status.get("qtSourceDistribution")
+    if qt_source_mode == "separate-asset":
+        require(isinstance(qt_source_delivery, dict)
+                and qt_source_delivery.get("mode") == "separate-asset"
+                and qt_source_delivery.get("requiredTogetherWithInstaller") is True
+                and qt_source_delivery.get("legalCompleteness") == "not-assessed"
+                and qt_source_delivery.get("manifestDistribution") == "public-beta-asset"
+                and qt_source_delivery.get("availabilityDraftIncluded") is False
+                and isinstance(qt_source_delivery.get("assetSha256"), str)
+                and re.fullmatch(r"[0-9a-f]{64}", qt_source_delivery["assetSha256"])
+                and status.get("copiedQtCorrespondingSourceModules") == []
+                and status.get("externalQtCorrespondingSourceModules") == ["qtbase", "qtdeclarative"]
+                and not any(row["path"].lower().endswith(".tar.xz")
+                            and "/sources/" in row["path"].lower()
+                            and Path(row["path"]).name.lower().startswith("qt") for row in rows),
+                "separate Qt source asset is prototype-only, unbound or its archives remain installed")
+    else:
+        require(qt_source_delivery is None, "inline Qt runtime unexpectedly claims a separate source asset")
     qt = status.get("additionalQtMaterialProof") or {}
     imageformats = status.get("additionalQtImageFormatsMaterialProof") or {}
+    if qt_source_mode == "separate-asset":
+        installed_imageformat_count = sum(
+            row["path"].startswith("mod/licenses/QtImageFormats/") for row in rows)
+        require(imageformats.get("copiedMaterialFiles") == installed_imageformat_count
+                and imageformats.get("plannedMaterialFiles") == installed_imageformat_count + 1
+                and imageformats.get("externalSourceArchiveCount") == 1
+                and imageformats.get("externalSourceAssetSha256") == qt_source_delivery["assetSha256"],
+                "QtImageFormats BETA summary counts a source archive outside the installer")
     baseline = status.get("baselineUpstreamNoticeProof") or {}
     gum = status.get("gumTaggedNoticeProof") or {}
     rust = status.get("nativeRustSourceGraphProof") or {}
@@ -690,7 +862,7 @@ def beta_materials_documentation(binding, rows, assembly_receipt_sha, subject, e
             and rust.get("resolvedDependencyGraphBoundToCoreProof") is True
             and rust.get("wholeClientMaterialsComplete") is False
             and len(lottie.get("omittedRuntimeFiles", [])) == 7
-            and status.get("fixedBrowserFilesUnmodified") is True,
+            and status.get("fixedBrowserFilesUnmodified") is (webview2_mode == "fixed"),
             "required staged source or notice proof is missing for public BETA")
     inventory = {row["path"]: row for row in rows}
     require(len(inventory) == len(rows) and PUBLIC_BETA_REQUIRED_NOTICE_PATHS <= set(inventory),
@@ -707,7 +879,7 @@ def beta_materials_documentation(binding, rows, assembly_receipt_sha, subject, e
             and material_manifest["subject"] == subject
             and material_manifest["materialsReceiptSha256"] == binding["sha256"]
             and material_manifest["assemblyReceiptSha256"] == assembly_receipt_sha
-            and material_manifest["knownLimitationIds"] == [item["id"] for item in PUBLIC_BETA_MATERIAL_LIMITATIONS]
+            and material_manifest["knownLimitationIds"] == [item["id"] for item in material_limitations]
             and material_manifest["exactCorrespondingSourceProven"] is False
             and material_manifest["completeForWholeClient"] is False,
             "public BETA materials manifest does not describe this exact incomplete assembly")
@@ -873,8 +1045,10 @@ def beta_materials_documentation(binding, rows, assembly_receipt_sha, subject, e
                "ffmpegSignatureVerificationSha256": signature_ref["sha256"],
                "sourceBundles": source_rows, "buildConfigurations": config_row,
                "knownLimitations": [{"id": item["id"], "reason": item["statusText"]}
-                                    for item in PUBLIC_BETA_MATERIAL_LIMITATIONS],
+                                    for item in material_limitations],
                "exactCorrespondingSourceProven": False, "completeForWholeClient": False}
+    if qt_source_delivery:
+        summary["qtSourceDistribution"] = qt_source_delivery
     return {"summary": summary, "sourcePaths": source_paths, "configBytes": config_bytes,
             "auditPath": audit_path, "evidencePath": evidence_file,
             "bundlePath": bundle_path, "runtimeManifestPath": runtime_manifest_path,
@@ -913,7 +1087,14 @@ def copy_beta_materials(payload, plan):
 
 def packaging_inputs(runtime_path, qml_path, launcher_proof, *, preflight_only=False):
     runtime, qml = owned(runtime_path), owned(qml_path)
-    rows = pins.inventory(runtime)
+    proof_path = launcher_proof if launcher_proof.is_absolute() else Path.cwd() / launcher_proof
+    build = read_json(evidence_path(str(proof_path)))
+    require(build.get("compiled") is True, "compiled launcher receipt required")
+    webview2_mode = build.get("webview2Mode", "fixed")
+    require(webview2_mode in ("fixed", "evergreen"), "unknown launcher WebView2 packaging mode")
+    qt_source_mode = build.get("qtSourceMode", "inline")
+    require(qt_source_mode in ("inline", "separate-asset"), "unknown launcher Qt source packaging mode")
+    rows = pins.inventory(runtime, webview2_mode, qt_source_mode)
     for row in rows:
         name = Path(row["path"]).name.lower()
         require(name not in {"privacy_monitor.js", "ghost_monitor.js", "notification_monitor.js",
@@ -925,9 +1106,6 @@ def packaging_inputs(runtime_path, qml_path, launcher_proof, *, preflight_only=F
     require(isinstance(required_native, list) and required_native
             and all(isinstance(name, str) and "mod/" + name in native_paths for name in required_native),
             "generated native QML module dependency missing")
-    proof_path = launcher_proof if launcher_proof.is_absolute() else Path.cwd() / launcher_proof
-    build = read_json(evidence_path(str(proof_path)))
-    require(build.get("compiled") is True, "compiled launcher receipt required")
     artifacts = build["artifacts"]
     launchers = [owned(Path(path)) for path in artifacts if Path(path).name == "ValMAX.exe"]
     require(len(launchers) == 1, "one native launcher required")
@@ -940,11 +1118,27 @@ def packaging_inputs(runtime_path, qml_path, launcher_proof, *, preflight_only=F
     pin_reference = build["pinsReceipt"]
     pin_path = owned(Path(pin_reference["path"]))
     require(sha(pin_path) == pin_reference["sha256"], "launcher pins receipt changed")
-    require(read_json(pin_path)["files"] == rows, "launcher and runtime inventory differ")
+    pin_receipt = read_json(pin_path)
+    require(pin_receipt["files"] == rows and pin_receipt.get("webview2Mode", "fixed") == webview2_mode
+            and pin_receipt.get("qtSourceMode", "inline") == qt_source_mode,
+            "launcher and runtime inventory differ (WebView2 or Qt source mode)")
     hook_identity = hook_target_identity(runtime, rows)
     material_binding = bound_materials(runtime, rows, hook_identity["assemblyReceiptSha256"])
+    assembly = read_json(runtime.parent / "assembly-manifest.json")
+    require(assembly.get("webview2Mode", "fixed") == webview2_mode
+            and assembly.get("qtSourceMode", "inline") == qt_source_mode,
+            "assembled runtime and launcher packaging modes differ")
+    assembly_rows = [{"path": row["path"], "size": row["bytes"], "sha256": row["sha256"]}
+                     for row in assembly.get("inventory", [])]
+    require(len(assembly_rows) == len(rows)
+            and sorted(assembly_rows, key=lambda row: row["path"]) ==
+                sorted(rows, key=lambda row: row["path"]),
+            "assembled runtime inventory differs from pinned launcher bytes")
+    qt_source_asset = bound_qt_source_asset(runtime, rows, assembly, material_binding, qt_source_mode)
     closure = dependency_closure(runtime, rows, launcher)
     return {"runtime": runtime, "qml": qml, "rows": rows, "launcher": launcher,
+            "webview2Mode": webview2_mode, "qtSourceMode": qt_source_mode,
+            "qtSourceAsset": qt_source_asset,
             "launcherHash": launcher_hash, "qmlResult": qml_result, "closure": closure,
             "hookTargetIdentity": hook_identity, "materialBinding": material_binding}
 
@@ -969,6 +1163,8 @@ def require_distribution(mode, report, installer=False):
         require_preview_version(report["subject"]["version"])
         return
     if mode == "public-beta":
+        material_limitations = beta_material_limitations(report.get("webview2Mode", "fixed"),
+                                                        report.get("qtSourceMode", "inline"))
         require(report.get("distributionMode") == mode and report.get("releaseEligible") is True
                 and report.get("betaCoreTested") is True and report.get("featureRuntimeTested") is False
                 and report.get("evidenceVerified") is True, "public BETA requires passing installed core smoke without a stable feature claim")
@@ -993,7 +1189,7 @@ def require_distribution(mode, report, installer=False):
                 and beta_materials.get("exactCorrespondingSourceProven") is False
                 and beta_materials.get("knownLimitations") ==
                     [{"id": item["id"], "reason": item["statusText"]}
-                     for item in PUBLIC_BETA_MATERIAL_LIMITATIONS]
+                     for item in material_limitations]
                 and isinstance(beta_materials.get("evidenceSha256"), str)
                 and re.fullmatch(r"[0-9a-f]{64}", beta_materials["evidenceSha256"]),
                 "public BETA materials are not bound to this exact assembled runtime")
@@ -1032,7 +1228,7 @@ def require_distribution(mode, report, installer=False):
         require(report.get("knownLimitations") ==
                 ([dict(item) for item in PUBLIC_BETA_LIMITATIONS]
                  + [{"id": item["id"], "reason": item["statusText"]}
-                    for item in PUBLIC_BETA_MATERIAL_LIMITATIONS]),
+                    for item in material_limitations]),
                 "public BETA must disclose its accepted limitations")
         return
     if mode == "user-release" or installer:
@@ -1045,12 +1241,33 @@ def require_preview_version(version):
             "local preview version must visibly use -native.preview.<number>")
 
 
-def preview_information(version):
+def preview_information(version, webview2_mode="fixed", qt_source_mode="inline", qt_source_asset=None):
     require_preview_version(version)
+    require(webview2_mode in ("fixed", "evergreen") and qt_source_mode in ("inline", "separate-asset"),
+            "unknown local preview packaging mode")
+    evergreen_ru = ("Для вкладки бизнеса и мини-приложений требуется установленный в Windows Microsoft Edge WebView2 Evergreen Runtime. Установщик проверит его до обновления.\n"
+                    if webview2_mode == "evergreen" else "")
+    evergreen_en = ("The business tab and mini apps require Microsoft Edge WebView2 Evergreen Runtime installed in Windows. Setup checks this before upgrading.\n"
+                    if webview2_mode == "evergreen" else "")
+    asset_ru = asset_en = ""
+    if qt_source_mode == "separate-asset":
+        require(isinstance(qt_source_asset, dict)
+                and qt_source_asset.get("mode") == "separate-asset"
+                and qt_source_asset.get("manifestDistribution") == "local-prototype-only"
+                and isinstance(qt_source_asset.get("assetName"), str)
+                and PurePosixPath(qt_source_asset["assetName"]).name == qt_source_asset["assetName"]
+                and isinstance(qt_source_asset.get("assetSha256"), str)
+                and re.fullmatch(r"[0-9a-f]{64}", qt_source_asset["assetSha256"]),
+                "local preview requires exact prototype Qt source asset identity")
+        asset_ru = ("Исходники Qt вынесены в отдельный локальный ZIP " + qt_source_asset["assetName"] +
+                    " (SHA-256 " + qt_source_asset["assetSha256"] + "). Публичная публикация этого прототипа не подтверждена.\n")
+        asset_en = ("Qt sources are in a separate local ZIP " + qt_source_asset["assetName"] +
+                    " (SHA-256 " + qt_source_asset["assetSha256"] + "). Publication of this prototype is unverified.\n")
     return (
         "ValMAX — локальная нативная тестовая сборка\nВерсия: " + version + "\n\n"
         "Эта сборка предназначена для ручной проверки перенесённых функций. Полный перенос ещё не завершён.\n\n"
-        "Известные ограничения:\n"
+        + evergreen_ru + asset_ru + ("\n" if evergreen_ru or asset_ru else "")
+        + "Известные ограничения:\n"
         "• Сохранение удалённых сообщений: бета; пузыри в переписке показывают локально сохранённый текст. Новые записи с ключом порядка показывают исходное время, старые записи без него имеют приблизительное положение. Доступны только уже полученные сообщения после включения и успешной проверки нативного хранилища. Прежние удаления не восстановить.\n"
         "• Экспорт чата: бета; доступная история, фото, видео и голосовые скачиваются с ограничениями, полнота всей серверной истории не подтверждена.\n"
         "• Режим призрака и защита уведомлений: готовность до первых фоновых действий не подтверждена.\n"
@@ -1060,7 +1277,8 @@ def preview_information(version):
         "Это локальная preview-сборка, а не готовый публичный релиз. Весь список ограничений сохранён в native-package.json.\n\n"
         "ValMAX — local native preview\nVersion: " + version + "\n\n"
         "This build is for manual testing of migrated features. Migration is incomplete.\n"
-        "Deleted-message retention is BETA. Selected-chat bubbles show locally saved text. New records with an order key show their original time; older records without it remain approximate. Only already received messages after enable and a successful native-store check are available. Earlier deletions cannot be recovered.\n"
+        + evergreen_en + asset_en + ("\n" if evergreen_en or asset_en else "")
+        + "Deleted-message retention is BETA. Selected-chat bubbles show locally saved text. New records with an order key show their original time; older records without it remain approximate. Only already received messages after enable and a successful native-store check are available. Earlier deletions cannot be recovered.\n"
         "Chat export is BETA; available history and media are downloaded with limits. Complete server history and protection readiness before the first background activity are unverified.\n"
         "Complete installed-client testing is outstanding. The previous installation is preserved beside the new one.\n"
         "Setup does not migrate or clear MXMOD accounts or Windows credentials. Do not run the old uninstaller from the backup.\n"
@@ -1068,10 +1286,51 @@ def preview_information(version):
     ).encode("utf-8-sig")
 
 
-def beta_information(version):
+def qt_source_availability(asset):
+    require(isinstance(asset, dict) and asset.get("mode") == "separate-asset"
+            and isinstance(asset.get("assetName"), str)
+            and PurePosixPath(asset["assetName"]).name == asset["assetName"]
+            and isinstance(asset.get("assetSha256"), str)
+            and re.fullmatch(r"[0-9a-f]{64}", asset["assetSha256"]),
+            "verified separate Qt source asset required")
+    prototype = asset.get("manifestDistribution") == "local-prototype-only"
+    ru_delivery = ("Это локальная проверка упаковки. Архив лежит в source-assets рядом с payload; публичная публикация не подтверждена.\n"
+                   if prototype else "Загрузите файл вместе с установщиком и проверьте SHA-256 перед использованием.\n")
+    en_delivery = ("This is a local packaging proof. The asset is in source-assets beside payload; public publication is unverified.\n"
+                   if prototype else "Download the asset alongside the installer and verify its SHA-256 before use.\n")
+    return (
+        "Исходники Qt 6.11.2 для этой сборки находятся в отдельном ZIP-файле, а не внутри установщика.\n"
+        "Файл: " + asset["assetName"] + "\nSHA-256: " + asset["assetSha256"] + "\n"
+        + ru_delivery +
+        "Полнота применимых лицензий и публикация отдельного файла проверяются отдельно.\n\n"
+        "Qt 6.11.2 corresponding sources are in a separate ZIP asset, not inside this installer.\n"
+        "File: " + asset["assetName"] + "\nSHA-256: " + asset["assetSha256"] + "\n"
+        + en_delivery +
+        "Complete applicable license scope and publication of this separate file require independent review.\n"
+    ).encode("utf-8-sig")
+
+
+def beta_information(version, webview2_mode="fixed", qt_source_mode="inline", qt_source_asset=None):
     require_preview_version(version)
-    material_ru = "".join("• " + item["noticeRu"] + "\n" for item in PUBLIC_BETA_MATERIAL_LIMITATIONS)
-    material_en = "".join("• " + item["noticeEn"] + "\n" for item in PUBLIC_BETA_MATERIAL_LIMITATIONS)
+    material_limitations = beta_material_limitations(webview2_mode, qt_source_mode)
+    material_ru = "".join("• " + item["noticeRu"] + "\n" for item in material_limitations)
+    material_en = "".join("• " + item["noticeEn"] + "\n" for item in material_limitations)
+    evergreen_ru = ("• Для вкладки бизнеса и мини-приложений нужен установленный в Windows Microsoft Edge WebView2 Evergreen Runtime; установщик его не содержит.\n"
+                    if webview2_mode == "evergreen" else "")
+    evergreen_en = ("Mini apps and the business tab require the Microsoft Edge WebView2 Evergreen Runtime installed in Windows; this installer does not bundle it.\n"
+                    if webview2_mode == "evergreen" else "")
+    asset_ru = asset_en = ""
+    if qt_source_mode == "separate-asset":
+        require(isinstance(qt_source_asset, dict)
+                and isinstance(qt_source_asset.get("assetName"), str)
+                and PurePosixPath(qt_source_asset["assetName"]).name == qt_source_asset["assetName"]
+                and isinstance(qt_source_asset.get("assetSha256"), str)
+                and re.fullmatch(r"[0-9a-f]{64}", qt_source_asset["assetSha256"]),
+                "separate Qt source asset identity required for BETA notice")
+        asset_ru = ("Исходники Qt 6.11.2 распространяются отдельным файлом " + qt_source_asset["assetName"] +
+                    ". SHA-256: " + qt_source_asset["assetSha256"] + ". Загрузите его рядом с установщиком.\n")
+        asset_en = ("Qt 6.11.2 sources are distributed as a separate file " + qt_source_asset["assetName"] +
+                    ". SHA-256: " + qt_source_asset["assetSha256"] + ". Download it alongside the installer.\n")
     return (
         "ValMAX — публичная BETA-сборка\nВерсия: " + version + "\n\n"
         "Это рабочая тестовая версия. Проверен базовый сценарий установленного клиента; полная проверка всех функций ещё не завершена. Возможны ошибки.\n\n"
@@ -1079,9 +1338,11 @@ def beta_information(version):
         "• Сохранение удалённых сообщений: доступны только сообщения, уже полученные клиентом после включения захвата. Новые записи с ключом порядка показывают исходное время; старые записи могут стоять приблизительно. Более ранние удаления восстановить нельзя.\n"
         "• Экспорт чата: история может быть неполной, поскольку сервер не подтвердил доступность всех старых сообщений. Фото, видео и голосовые выгружаются по мере доступности; отдельные вложения могут завершиться ошибкой. Перед использованием архива проверьте отчёт экспорта.\n"
         "• Режим призрака и защита уведомлений: готовность до самого первого фонового действия установленного клиента пока не подтверждена.\n"
+        + evergreen_ru +
         "• Полная проверка всех функций, необходимая для стабильного релиза, ещё не завершена.\n\n"
         "Материалы сторонних компонентов — известные ограничения:\n" + material_ru + "\n"
         "Архивы upstream FFmpeg и конфигурации сборок находятся в materials/FFmpeg. Точное соответствие исходников DLL из MAX остаётся недоказанным.\n\n"
+        + asset_ru +
         "Папка аккаунтов MXMOD и Windows credentials не переносятся и не очищаются установщиком. Предыдущая установка сохраняется рядом как резервная копия; не запускайте её старый uninstaller.\n"
         "Ограничения и результаты проверок указаны в native-package.json.\n\n"
         "ValMAX — public BETA build\nVersion: " + version + "\n\n"
@@ -1089,8 +1350,10 @@ def beta_information(version):
         "Deleted-message retention covers only messages received after capture was enabled. New records have original-order timestamps; older records may be approximate. Earlier deletions cannot be recovered.\n"
         "Chat export may be incomplete because the server has not confirmed all older history. Photos, videos and voice messages are downloaded when available; individual attachments may fail. Check the export result before relying on an archive.\n"
         "Ghost and notification protection before the first background event remains unverified. The full stable-release regression is pending.\n"
+        + evergreen_en +
         "Third-party materials — known limitations:\n" + material_en + "\n"
         "Upstream FFmpeg source archives and build configurations are under materials/FFmpeg. Exact source correspondence for the MAX DLL builds remains unproven.\n"
+        + asset_en +
         "Setup does not migrate or clear MXMOD accounts or Windows credentials. The previous installation is preserved beside the new one; do not run its old uninstaller.\n"
         "See native-package.json for limitations and evidence.\n"
     ).encode("utf-8-sig")
@@ -1099,11 +1362,29 @@ def beta_information(version):
 def write_release_state(payload, manifest, report):
     digest = sha(payload / "native-package.json")
     require(manifest["distributionMode"] in ("user-release", "developer-staging", "local-preview", "public-beta"), "invalid native release marker mode")
+    qt_source_mode = manifest.get("qtSourceMode", "inline")
+    require(qt_source_mode in ("inline", "separate-asset"), "unknown Qt source marker mode")
+    if qt_source_mode == "separate-asset":
+        asset = manifest.get("qtSourceDistribution")
+        require(isinstance(asset, dict) and asset.get("mode") == "separate-asset"
+                and asset == report.get("artifactValidation", {}).get("qtSourceAsset")
+                and manifest.get("qtSourceAvailability") ==
+                    {"path": QT_SOURCE_INFO, "sha256": sha(payload / QT_SOURCE_INFO)},
+                "separate Qt source asset notice or byte binding changed")
+    else:
+        require(manifest.get("qtSourceDistribution") is None
+                and manifest.get("qtSourceAvailability") is None,
+                "inline Qt marker claims an external source asset")
     marker = ('; Generated by the native packager; verified installed functionality is separate from compilation.\n'
               '#define NativeDistributionMode "' + manifest["distributionMode"] + '"\n'
+              '#define NativeWebView2Mode "' + manifest.get("webview2Mode", "fixed") + '"\n'
+              '#define NativeQtSourceMode "' + qt_source_mode + '"\n'
               '#define NativeReleaseEligible ' + str(int(report["releaseEligible"] is True)) + '\n'
               '#define NativeReleaseBlockerCount ' + str(len(report["blockers"])) + '\n'
               '#define NativePackageManifestSha256 "' + digest + '"\n')
+    if qt_source_mode == "separate-asset":
+        marker += ('#define NativeQtSourceAssetSha256 "' + asset["assetSha256"] + '"\n'
+                   '#define NativeQtSourceInfoSha256 "' + manifest["qtSourceAvailability"]["sha256"] + '"\n')
     if manifest["distributionMode"] == "local-preview":
         require_distribution("local-preview", report)
         require(manifest.get("localPreview") is True and manifest.get("previewInformation") == {
@@ -1185,7 +1466,7 @@ def main():
     if all((args.runtime, args.qml_build, args.launcher_proof)):
         try:
             inputs = packaging_inputs(args.runtime, args.qml_build, args.launcher_proof, preflight_only=args.preflight_only)
-        except (ValueError, OSError, KeyError, TypeError, SyntaxError) as error:
+        except (ValueError, OSError, KeyError, TypeError, SyntaxError, zipfile.BadZipFile) as error:
             artifact_error = str(error)
     else:
         artifact_error = "Assembled runtime, generated QML and matching launcher receipt are required."
@@ -1200,8 +1481,9 @@ def main():
             beta_plan = beta_materials_documentation(
                 inputs.get("materialBinding"), inputs["rows"],
                 inputs["hookTargetIdentity"]["assemblyReceiptSha256"],
-                subject, args.beta_materials_evidence)
-        except (ValueError, OSError, KeyError, TypeError, tarfile.TarError) as error:
+                subject, args.beta_materials_evidence,
+                inputs.get("webview2Mode", "fixed"), inputs.get("qtSourceMode", "inline"))
+        except (ValueError, OSError, KeyError, TypeError, tarfile.TarError, zipfile.BadZipFile) as error:
             beta_materials_error = str(error)
     report = release_preflight(subject, args.release_evidence, args.distribution,
                                artifact_identity=artifact_identity,
@@ -1211,7 +1493,9 @@ def main():
                                qml_compatibility_verified=inputs is not None and not legacy_resources,
                                max_rights_attested=args.max_rights_attested,
                                beta_materials=None if beta_plan is None else beta_plan["summary"],
-                               beta_materials_error=beta_materials_error)
+                               beta_materials_error=beta_materials_error,
+                               webview2_mode="fixed" if inputs is None else inputs.get("webview2Mode", "fixed"),
+                               qt_source_mode="inline" if inputs is None else inputs.get("qtSourceMode", "inline"))
     report["requestedVersion"] = args.version
     if args.version is None:
         report["blockers"].append({"id": "product_version_missing", "reason": "A native user-release version has not been selected; artifact validation is still reported independently."})
@@ -1223,6 +1507,8 @@ def main():
         "hookTargetIdentity": None if inputs is None else inputs["hookTargetIdentity"]}
     report["artifactValidation"]["materialsReceiptSha256"] = (None if inputs is None or inputs.get("materialBinding") is None
                                                               else inputs["materialBinding"]["sha256"])
+    report["artifactValidation"]["qtSourceAsset"] = (None if inputs is None or inputs.get("qtSourceAsset") is None
+                                                        else inputs["qtSourceAsset"]["receipt"])
     report["nativeQmlCompatibility"] = {"legacyResources": legacy_resources,
         "verifiedNoLegacyReferences": inputs is not None and not legacy_resources,
         "scope": "Static generated/embedded resource references, not runtime network behavior."}
@@ -1251,6 +1537,8 @@ def main():
     launcher_hash, qml_result, closure = inputs["launcherHash"], inputs["qmlResult"], inputs["closure"]
     ancillary = ancillary_inventory()
     required_bytes = sum(row["size"] for row in rows) + launcher.stat().st_size + sum(row["size"] for row in ancillary)
+    if inputs.get("qtSourceAsset") is not None:
+        required_bytes += inputs["qtSourceAsset"]["receipt"]["assetBytes"]
     if beta_plan is not None:
         required_bytes += sum(row["size"] for row in beta_plan["summary"]["sourceBundles"])
         required_bytes += sum(row["signature"]["size"] for row in beta_plan["summary"]["sourceBundles"])
@@ -1268,19 +1556,47 @@ def main():
         require(sha(target) == row["sha256"], "runtime changed while copying")
     shutil.copyfile(launcher, payload / "ValMAX.exe")
     require(sha(payload / "ValMAX.exe") == launcher_hash and sha(launcher) == launcher_hash, "launcher copy mismatch")
-    require(pins.inventory(payload / "runtime") == rows and pins.inventory(runtime) == rows, "runtime changed during packaging")
+    webview2_mode, qt_source_mode = inputs.get("webview2Mode", "fixed"), inputs.get("qtSourceMode", "inline")
+    require(pins.inventory(payload / "runtime", webview2_mode, qt_source_mode) == rows
+            and pins.inventory(runtime, webview2_mode, qt_source_mode) == rows, "runtime changed during packaging")
+    qt_asset = inputs.get("qtSourceAsset")
+    qt_asset_copy = qt_info = None
+    if qt_asset is not None:
+        asset = qt_asset["receipt"]
+        asset_folder = output / "source-assets"
+        asset_folder.mkdir()
+        target = asset_folder / asset["assetName"]
+        require(not target.exists() and sha(qt_asset["archive"]) == asset["assetSha256"],
+                "Qt source asset changed before packaging")
+        shutil.copyfile(qt_asset["archive"], target)
+        require(ordinary(target).st_size == asset["assetBytes"]
+                and sha(target) == asset["assetSha256"]
+                and sha(qt_asset["archive"]) == asset["assetSha256"],
+                "separate Qt source asset copy differs")
+        qt_asset_copy = {"path": str(target), "name": asset["assetName"],
+                         "size": asset["assetBytes"], "sha256": asset["assetSha256"]}
+        info = payload / QT_SOURCE_INFO
+        info.write_bytes(qt_source_availability(asset))
+        qt_info = {"path": QT_SOURCE_INFO, "sha256": sha(info)}
     copy_ancillary(payload, ancillary)
     preview = args.distribution == "local-preview"
     public_beta = args.distribution == "public-beta"
     preview_info = beta_info = None
     beta_material_info = copy_beta_materials(payload, beta_plan) if public_beta else None
     if preview:
-        (payload / LOCAL_PREVIEW_INFO).write_bytes(preview_information(args.version))
+        (payload / LOCAL_PREVIEW_INFO).write_bytes(preview_information(
+            args.version, webview2_mode, qt_source_mode,
+            None if qt_asset is None else qt_asset["receipt"]))
         preview_info = {"path": LOCAL_PREVIEW_INFO, "sha256": sha(payload / LOCAL_PREVIEW_INFO)}
     if public_beta:
-        (payload / PUBLIC_BETA_INFO).write_bytes(beta_information(args.version))
+        (payload / PUBLIC_BETA_INFO).write_bytes(beta_information(
+            args.version, webview2_mode, qt_source_mode,
+            None if qt_asset is None else qt_asset["receipt"]))
         beta_info = {"path": PUBLIC_BETA_INFO, "sha256": sha(payload / PUBLIC_BETA_INFO)}
-    manifest = {"schema": 1, "nativeOnly": True, "version": args.version,
+    manifest = {"schema": 1, "nativeOnly": True, "version": args.version, "webview2Mode": webview2_mode,
+                "qtSourceMode": qt_source_mode,
+                "qtSourceDistribution": None if qt_asset is None else qt_asset["receipt"],
+                "qtSourceAvailability": qt_info,
                 "launcherSha256": launcher_hash, "runtimeFiles": rows, "ancillaryFiles": ancillary, "qml": qml_result,
                 "dependencyClosure": closure, "featureRuntimeTested": report["featureRuntimeTested"],
                 "wholeClientMaterialsVerified": report["wholeClientMaterialsVerified"],
@@ -1300,6 +1616,9 @@ def main():
                         knownLimitations=report["knownLimitations"], betaInformation=beta_info)
     (payload / "native-package.json").write_text(json.dumps(manifest, ensure_ascii=False, indent=2) + "\n", encoding="utf8")
     receipt = {"schema": 1, "packaged": True, "nativeOnly": True, "installerCompiled": False,
+               "webview2Mode": webview2_mode, "qtSourceMode": qt_source_mode,
+               "qtSourceAsset": qt_asset_copy,
+               "qtSourceDistribution": None if qt_asset is None else qt_asset["receipt"],
                "payload": str(payload), "manifestSha256": sha(payload / "native-package.json"),
                "installedClientChanged": False, "featureRuntimeTested": report["featureRuntimeTested"],
                "wholeClientMaterialsVerified": report["wholeClientMaterialsVerified"],
@@ -1322,6 +1641,10 @@ def main():
         require(sha(launcher) == launcher_hash and sha(payload / "ValMAX.exe") == launcher_hash, "launcher changed before Inno compilation")
         command = [str(args.iscc), "/Qp", "/DPayload=" + str(payload), "/DOutput=" + str(output / "release"),
                    "/DProductVersion=" + args.version, str(TEMPLATE)]
+        if qt_asset_copy is not None:
+            require(sha(Path(qt_asset_copy["path"])) == qt_asset_copy["sha256"],
+                    "separate Qt source ZIP changed before Inno compilation")
+            command.insert(-1, "/DQtSourceAsset=" + qt_asset_copy["path"])
         with (output / "inno.log").open("xb") as log:
             result = subprocess.run(command, stdout=log, stderr=subprocess.STDOUT, timeout=1800,
                                     creationflags=subprocess.CREATE_NO_WINDOW)
@@ -1329,6 +1652,12 @@ def main():
         setup = output / "release" / ("ValMAX-" + args.version + "-Setup.exe")
         require(setup.is_file(), "installer missing")
         receipt.update(installerCompiled=True, installer=str(setup), installerSha256=sha(setup))
+    if qt_asset_copy is not None:
+        require(ordinary(Path(qt_asset_copy["path"])).st_size == qt_asset_copy["size"]
+                and sha(Path(qt_asset_copy["path"])) == qt_asset_copy["sha256"]
+                and sha(qt_asset["archive"]) == qt_asset_copy["sha256"]
+                and sha(payload / QT_SOURCE_INFO) == qt_info["sha256"],
+                "separate Qt source asset or availability notice changed before final receipt")
     (output / "build-receipt.json").write_text(json.dumps(receipt, indent=2) + "\n", encoding="utf8")
     print(json.dumps(receipt))
 
