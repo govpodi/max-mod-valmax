@@ -210,7 +210,10 @@ begin
      (Name = '{#NativeCanonicalAppName}, версия ' + Version) or
      (Name = '{#NativePreviewAppName}') or
      (Name = '{#NativePreviewAppName} version ' + Version) or
-     (Name = '{#NativePreviewAppName}, версия ' + Version));
+     (Name = '{#NativePreviewAppName}, версия ' + Version) or
+     (Name = '{#NativeBetaAppName}') or
+     (Name = '{#NativeBetaAppName} version ' + Version) or
+     (Name = '{#NativeBetaAppName}, версия ' + Version));
 end;
 
 function RegisteredInstallation(const Path: String): Boolean;

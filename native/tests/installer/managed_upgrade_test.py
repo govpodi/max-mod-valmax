@@ -200,6 +200,7 @@ class Fixture:
         crash = self.compile('0.0.4-fixture', 'FixtureCrashAfterMove')
         fallback = self.compile('0.0.5-fixture', 'FixtureForcePathFallback')
         preview_name = self.compile('0.0.6-fixture', 'FixturePreviewName')
+        beta_name = self.compile('0.0.7-fixture', 'FixtureBetaName')
         self.compile_release_gates()
         self.run(fail, False)
         self.check('fresh-failure-registration-absent', registry_tree(KEY) is None)
@@ -412,6 +413,41 @@ class Fixture:
         self.run(v2)
         self.check('preview-family-upgrades-back-to-canonical-family',
                    registry_tree(KEY)['values']['DisplayName'][0] == 'ValMAX Installer Fixture')
+        beta_family = 'ValMAX Installer Fixture BETA'
+        beta_version = '0.0.7-fixture'
+        for label, display_name in (
+            ('plain', beta_family),
+            ('english-version', beta_family + ' version ' + beta_version),
+            ('russian-version', beta_family + ', версия ' + beta_version),
+        ):
+            self.run(beta_name)
+            self.check('beta-fixture-registered-' + label,
+                       registry_tree(KEY)['values']['DisplayName'][0] == beta_family)
+            with winreg.OpenKey(winreg.HKEY_CURRENT_USER, KEY, 0, winreg.KEY_WRITE | VIEW) as key:
+                winreg.SetValueEx(key, 'DisplayName', 0, winreg.REG_SZ, display_name)
+            beta_before = inventory(self.app)
+            self.run(v2)
+            self.check('beta-family-upgrade-accepted-' + label,
+                       (self.app / 'runtime/native-version.txt').read_text() == '0.0.2-fixture')
+            self.check('beta-family-backup-exact-' + label,
+                       any(inventory(path) == beta_before for path in self.root.glob('app.valmax-backup-*') if path.is_dir()))
+            self.check('beta-family-registry-updated-' + label,
+                       registry_tree(KEY)['values']['DisplayName'][0] == 'ValMAX Installer Fixture')
+            self.check('beta-family-external-profile-preserved-' + label,
+                       inventory(self.profile) == self.profile_before)
+        self.run(beta_name)
+        for label, display_name in (
+            ('extra-word', beta_family + ' extra'),
+            ('wrong-version', beta_family + ', версия 0.0.8-fixture'),
+        ):
+            with winreg.OpenKey(winreg.HKEY_CURRENT_USER, KEY, 0, winreg.KEY_WRITE | VIEW) as key:
+                winreg.SetValueEx(key, 'DisplayName', 0, winreg.REG_SZ, display_name)
+            beta_before, registry_before = inventory(self.app), registry_tree(KEY)
+            self.run(v2, False)
+            self.check('beta-spoof-rejected-tree-' + label, inventory(self.app) == beta_before)
+            self.check('beta-spoof-rejected-registry-' + label, registry_tree(KEY) == registry_before)
+        with winreg.OpenKey(winreg.HKEY_CURRENT_USER, KEY, 0, winreg.KEY_WRITE | VIEW) as key:
+            winreg.SetValueEx(key, 'DisplayName', 0, winreg.REG_SZ, beta_family)
         self.uninstall()
         self.check('final-profile-sentinel-byte-identical', inventory(self.profile) == self.profile_before)
 

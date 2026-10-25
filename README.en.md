@@ -5,7 +5,7 @@
 
 # ValMAX — a MAX mod for Windows
 
-An unofficial MAX modification for Windows x64, with added features for conversations and work. This checkout contains the **ValMAX 8.9.0-native.preview.15 BETA source**, based on **MAX 26.35.1.80662**.
+An unofficial MAX modification for Windows x64, with added features for conversations and work. This checkout contains the **ValMAX 8.9.0-native.preview.16 BETA source**, based on **MAX 26.35.1.80662**.
 
 **Status:** BETA. Chat export saves available history and media, but the server has not confirmed that all older messages can be retrieved. Deleted-message retention works only after you enable it. [Changes and limitations](CHANGELOG.md).
 
@@ -40,7 +40,7 @@ In Russian, **ВАЛ** stands for «Возможности · Автоматиз
 
 ## Installation
 
-1. [Download ValMAX 8.9.0-native.preview.15 for Windows x64](https://github.com/govpodi/max-mod-valmax/releases/download/v8.9.0-native.preview.15/ValMAX-8.9.0-native.preview.15-Setup.exe) and its [SHA-256 checksums](https://github.com/govpodi/max-mod-valmax/releases/download/v8.9.0-native.preview.15/SHA256SUMS.txt) from [GitHub Releases](https://github.com/govpodi/max-mod-valmax/releases).
+1. [Download ValMAX 8.9.0-native.preview.16 for Windows x64](https://github.com/govpodi/max-mod-valmax/releases/download/v8.9.0-native.preview.16/ValMAX-8.9.0-native.preview.16-Setup.exe) and its [SHA-256 checksums](https://github.com/govpodi/max-mod-valmax/releases/download/v8.9.0-native.preview.16/SHA256SUMS.txt) from [GitHub Releases](https://github.com/govpodi/max-mod-valmax/releases).
 2. Fully exit ValMAX from the tray menu and preserve a rollback path. Compare the installer SHA-256 with the checksum.
 3. Run the installer, then open ValMAX through its shortcut. No separate Python installation is needed. The first launch may take up to a minute.
 

@@ -23,10 +23,15 @@
   #define NativeAppId "{80AA932D-1E5C-4509-BE97-20D43D271ADE}"
   #define NativeCanonicalAppName "ValMAX Installer Fixture"
   #define NativePreviewAppName "ValMAX Installer Fixture native preview"
-  #ifdef FixturePreviewName
-    #define NativeAppName NativePreviewAppName
+  #define NativeBetaAppName "ValMAX Installer Fixture BETA"
+  #ifdef FixtureBetaName
+    #define NativeAppName NativeBetaAppName
   #else
-    #define NativeAppName NativeCanonicalAppName
+    #ifdef FixturePreviewName
+      #define NativeAppName NativePreviewAppName
+    #else
+      #define NativeAppName NativeCanonicalAppName
+    #endif
   #endif
 #else
   #if !FileExists(Payload + "\native-release-state.iss")

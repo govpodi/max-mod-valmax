@@ -1,5 +1,14 @@
 # Изменения / Changelog
 
+## 8.9.0-native.preview.16 Beta — 2026-10-25
+
+- Обработка уведомлений об удалении в нативном хосте разбивает большие пачки на части. Пачка сверх заданных пределов пропускается без отключения дальнейшего сохранения; некорректные данные аккаунта и маршрута по-прежнему закрывают обработку. Проверено синтетическими нативными тестами и новым удалением между двумя собственными аккаунтами в установленной preview.16.
+- Сохранённые удаления внутри чата показываются окнами по 200 записей с переходом к более ранним и поздним. Автоматические QML-проверки покрывают границу 199/200, смену аккаунта и обновление списка. Доступность старых записей зависит от того, были ли они ранее сохранены клиентом.
+- Управляемый установщик распознаёт зарегистрированное имя предыдущей версии `ValMAX BETA` при обновлении, сохраняя строгую проверку пути и метки установки. Сценарии обновления и отката прошли синтетические проверки.
+- Экспорт остаётся БЕТА: сервер не подтвердил полноту старой истории; отдельные вложения могут быть недоступны. В нативном пакете по-прежнему нет Qt Lottie. [Сторонние материалы](THIRD_PARTY_NOTICES.md) не подтверждают точное соответствие исходников распространяемым FFmpeg DLL.
+
+Preview.16 adds bounded deletion-callback batches, 200-entry navigation for retained-deletion bubbles in the chat, and managed upgrade support for the previous `ValMAX BETA` registration. Synthetic native, QML and installer checks passed. An installed preview.16 captured a new deletion between the two own test accounts and displayed the retained bubble after restart. The final public installer is verified separately. Chat export remains BETA: complete old history and individual media availability are not guaranteed.
+
 ## 8.9.0-native.preview.15 Beta — 2026-10-25
 
 - Нативный клиент Windows использует C++/Qt и Rust; установленной версии не нужны Python и локальный HTTP-помощник.

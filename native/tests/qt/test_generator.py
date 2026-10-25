@@ -128,6 +128,9 @@ def main():
     assert 'view.model.data(modelIndex, 0x100)' in range_qml
     assert 'view.model.data(modelIndex, 0x101)' not in range_qml
     assert 'day: calendarDay(key)' in range_qml
+    assert 'property var windowCursors: [null]' in range_qml
+    assert 'limit: limit' in range_qml
+    assert 'function nextWindow()' in range_qml and 'function previousWindow()' in range_qml
     assert native_sources[":/qt/qml/OneMeUi/HistoryListView.qml"].decode().count(
         'messageTimeMs: modelData.messageTimeMs') == 2
     assert 'textFormat: Text.PlainText' in bubble_qml
@@ -141,6 +144,10 @@ def main():
     assert 'property alias isHighlighted: messageDelegate.isHighlighted' in history
     assert 'ValMAX.MessageRetentionBubble {' in history
     assert 'valmaxRetentionRange.loadMore()' in history
+    assert history.count('valmaxRetentionRange.nextWindow()') == 2
+    assert history.count('valmaxRetentionRange.previousWindow()') == 2
+    for name in ('NextBefore', 'NextAfter', 'PreviousBefore', 'PreviousAfter'):
+        assert 'objectName: "valmaxRetentionRange' + name + '"' in history
     assert 'property real valmaxLargestDelegate: 500' in history
     assert 'DelegateModelGroup' not in history
     assert 'height: valmaxRetentionInlineLoader.height +' in history

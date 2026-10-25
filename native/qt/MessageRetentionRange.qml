@@ -20,7 +20,9 @@ Item {
     readonly property int maximumResponseCharacters: 8 * 1024 * 1024
     readonly property string maximumOrderKey: "9223372036854775807"
     readonly property bool hasMore: nextCursor !== null && rangeRows.length < maxRangeRows
-    readonly property bool moreInArchive: nextCursor !== null && rangeRows.length >= maxRangeRows
+    readonly property bool hasNextWindow: windowIndex + 1 < windowCursors.length
+        || nextCursor !== null && rangeRows.length >= maxRangeRows
+    readonly property bool hasPreviousWindow: windowIndex > 0
     property bool completed: false
     property int generation: 0
     property var pendingRequest: null
@@ -33,6 +35,10 @@ Item {
     property var rowsByIndex: ({})
     property var rowsBeforeIndex: ({})
     property var nextCursor: null
+    // Only opaque page cursors survive a window change; retained text remains
+    // bounded to the currently displayed 200-row window.
+    property var windowCursors: [null]
+    property int windowIndex: 0
     property string revision: ""
     property string storeRevision: ""
     property int staleRestarts: 0
@@ -128,7 +134,7 @@ Item {
                 fingerprint: fingerprint, beforeStart: beforeStart,
                 afterEnd: end === count - 1 && !hasMoreForward};
     }
-    function validReply(value, account, chat, from, to) {
+    function validReply(value, account, chat, from, to, limit) {
         if (!value || typeof value !== "object" || Array.isArray(value)
                 || Object.keys(value).sort().join("|") !== "accountId|chatId|fromOrderKey|items|nextCursor|revision|schema|toOrderKey"
                 || value.schema !== 1 || value.accountId !== account || value.chatId !== chat
@@ -136,7 +142,7 @@ Item {
                 || typeof value.revision !== "string" || !/^[0-9a-f]{64}$/.test(value.revision)
                 || !(value.nextCursor === null || typeof value.nextCursor === "string"
                     && /^[A-Za-z0-9_-]{1,256}$/.test(value.nextCursor))
-                || !Array.isArray(value.items) || value.items.length > pageSize) return false;
+                 || !Array.isArray(value.items) || value.items.length > limit) return false;
         let previous = null;
         for (const row of value.items) {
             if (!row || typeof row !== "object" || Array.isArray(row)
@@ -246,6 +252,7 @@ Item {
         invalidRetry.stop(); invalidRetries = 0;
         currentBounds = null; queryToken = ""; rangeRows = []; firstPageRows = []; firstNextCursor = null;
         cachedRows = []; rowsByIndex = ({}); rowsBeforeIndex = ({}); nextCursor = null;
+        windowCursors = [null]; windowIndex = 0;
         revision = ""; storeRevision = ""; staleRestarts = 0;
         failed = false; pagingAnchorIndex = -1; pagingBefore = false;
         if (completed && active && backendReady) scanDebounce.restart();
@@ -254,6 +261,8 @@ Item {
         if (staleRestarts >= 2) { failed = true; nextCursor = null; return; }
         staleRestarts += 1; generation += 1; abortPending();
         rangeRows = []; firstPageRows = []; firstNextCursor = null;
+        cachedRows = []; rowsByIndex = ({}); rowsBeforeIndex = ({});
+        windowCursors = [null]; windowIndex = 0;
         nextCursor = null; revision = "";
         requestPage(null, "first");
     }
@@ -268,6 +277,7 @@ Item {
         currentBounds = null; queryToken = ""; rangeRows = []; firstPageRows = [];
         firstNextCursor = null; cachedRows = [];
         rowsByIndex = ({}); rowsBeforeIndex = ({});
+        windowCursors = [null]; windowIndex = 0;
         nextCursor = null; revision = ""; storeRevision = "";
         failed = false; pagingAnchorIndex = -1; pagingBefore = false;
     }
@@ -295,13 +305,18 @@ Item {
             }
             currentBounds = bounds; queryToken = token;
             rangeRows = []; firstPageRows = []; firstNextCursor = null;
+            windowCursors = [null]; windowIndex = 0;
             nextCursor = null; revision = "";
             failed = false; pagingAnchorIndex = bounds.end; pagingBefore = false;
             requestPage(null, "first");
-        } else if (forceRefresh && !pendingRequest) requestPage(null, "refresh");
+        } else if (forceRefresh && !pendingRequest)
+            requestPage(windowCursors[windowIndex], "refresh");
     }
     function requestPage(cursor, direction) {
         if (!completed || !active || !backendReady || pendingRequest || !currentBounds) return;
+        const limit = direction === "next"
+            ? Math.min(pageSize, maxRangeRows - rangeRows.length) : pageSize;
+        if (limit < 1) return;
         const account = accountId, chat = chatId, bounds = currentBounds;
         const requestGeneration = generation, requestedToken = queryToken;
         let request;
@@ -321,16 +336,18 @@ Item {
                 if (request.status !== 200 || typeof request.responseText !== "string"
                         || request.responseText.length > maximumResponseCharacters) throw new Error("response");
                 const value = JSON.parse(request.responseText);
-                if (!validReply(value, account, chat, bounds.from, bounds.to)) throw new Error("schema");
-                if (cursor !== null && revision.length && revision !== value.revision) {
+                 if (!validReply(value, account, chat, bounds.from, bounds.to, limit)) throw new Error("schema");
+                 if ((cursor !== null || direction === "window-previous")
+                         && revision.length && revision !== value.revision) {
                     restartAfterStale(); return;
                 }
                 if (direction === "refresh" && revision === value.revision
                         && firstNextCursor === value.nextCursor && sameRows(firstPageRows, value.items)) {
                     failed = false; return;
                 }
-                if (storeRevision.length && storeRevision !== value.revision) {
+                 if (storeRevision.length && storeRevision !== value.revision) {
                     cachedRows = []; rowsByIndex = ({}); rowsBeforeIndex = ({});
+                     windowCursors = [null]; windowIndex = 0;
                 }
                 storeRevision = value.revision;
                 if (direction === "next") {
@@ -341,8 +358,26 @@ Item {
                                    && compareIds(last.messageId, first.messageId) >= 0)
                             throw new Error("page_order");
                     }
-                    rangeRows = rangeRows.concat(value.items).slice(0, maxRangeRows);
+                     rangeRows = rangeRows.concat(value.items);
                 } else {
+                     if (direction === "window-next") {
+                         if (rangeRows.length && value.items.length) {
+                             const last = rangeRows[rangeRows.length - 1], first = value.items[0];
+                             if (comparePair(last.orderKey, last.messageId,
+                                     first.orderKey, first.messageId) >= 0)
+                                 throw new Error("window_order");
+                         }
+                         if (windowIndex + 1 === windowCursors.length)
+                             windowCursors = windowCursors.concat([cursor]);
+                         windowIndex += 1;
+                     } else if (direction === "window-previous") {
+                         windowIndex -= 1;
+                     } else if (direction === "first") {
+                         windowCursors = [null]; windowIndex = 0;
+                     }
+                     if (direction === "window-next" || direction === "window-previous") {
+                         cachedRows = []; rowsByIndex = ({}); rowsBeforeIndex = ({});
+                     }
                     rangeRows = value.items.slice(); firstPageRows = value.items.slice();
                     firstNextCursor = value.nextCursor;
                 }
@@ -355,16 +390,35 @@ Item {
                 pagingAnchorIndex = pagingBefore ? bounds.start : bounds.end;
                 failed = false;
                 if (cursor === null) staleRestarts = 0;
-            } catch (_) { failed = true; nextCursor = null; }
+             } catch (_) {
+                 failed = true;
+                 // Keep the last accepted cursor available for a retry.
+                 if (direction === "first")
+                     nextCursor = null;
+             }
         };
         try {
             request.send(JSON.stringify({schema: 1, accountId: account,
                 chatId: chat, fromOrderKey: bounds.from, toOrderKey: bounds.to,
-                cursor: cursor, limit: pageSize}));
-        } catch (_) { abortPending(); failed = true; nextCursor = null; }
+                 cursor: cursor, limit: limit}));
+         } catch (_) {
+             abortPending(); failed = true;
+             if (direction === "first")
+                 nextCursor = null;
+         }
     }
     function loadMore() {
         if (hasMore && !pendingRequest) requestPage(nextCursor, "next");
+    }
+    function nextWindow() {
+        if (!hasNextWindow || pendingRequest) return;
+        const cursor = windowIndex + 1 < windowCursors.length
+            ? windowCursors[windowIndex + 1] : nextCursor;
+        if (cursor !== null) requestPage(cursor, "window-next");
+    }
+    function previousWindow() {
+        if (hasPreviousWindow && !pendingRequest)
+            requestPage(windowCursors[windowIndex - 1], "window-previous");
     }
     onAccountIdChanged: if (completed) resetScope()
     onChatIdChanged: if (completed) resetScope()

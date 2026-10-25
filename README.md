@@ -5,7 +5,7 @@
 
 # ValMAX — мод MAX для Windows
 
-Неофициальная модификация MAX (МАКС) для Windows x64 с дополнительными возможностями для общения и работы. Здесь находятся исходники **ValMAX 8.9.0-native.preview.15 (БЕТА)** для базы **MAX 26.35.1.80662**.
+Неофициальная модификация MAX (МАКС) для Windows x64 с дополнительными возможностями для общения и работы. Здесь находятся исходники **ValMAX 8.9.0-native.preview.16 (БЕТА)** для базы **MAX 26.35.1.80662**.
 
 **Статус:** БЕТА. Экспорт сохраняет доступную историю и медиа, но сервер не подтвердил полноту старой переписки. Сохранение удалённых сообщений действует только после включения функции. [Изменения и ограничения](CHANGELOG.md).
 
@@ -38,7 +38,7 @@
 
 ## Установка
 
-1. [Скачайте ValMAX 8.9.0-native.preview.15 для Windows x64](https://github.com/govpodi/max-mod-valmax/releases/download/v8.9.0-native.preview.15/ValMAX-8.9.0-native.preview.15-Setup.exe) и [контрольные суммы SHA-256](https://github.com/govpodi/max-mod-valmax/releases/download/v8.9.0-native.preview.15/SHA256SUMS.txt) из [GitHub Releases](https://github.com/govpodi/max-mod-valmax/releases).
+1. [Скачайте ValMAX 8.9.0-native.preview.16 для Windows x64](https://github.com/govpodi/max-mod-valmax/releases/download/v8.9.0-native.preview.16/ValMAX-8.9.0-native.preview.16-Setup.exe) и [контрольные суммы SHA-256](https://github.com/govpodi/max-mod-valmax/releases/download/v8.9.0-native.preview.16/SHA256SUMS.txt) из [GitHub Releases](https://github.com/govpodi/max-mod-valmax/releases).
 2. Полностью закройте работающий ValMAX через значок в трее → «Выход» и сохраните возможность отката. Сверьте SHA-256 установщика.
 3. Запустите установщик, затем откройте ValMAX через созданный ярлык. Python отдельно не нужен. Первый запуск может занять до минуты.
 

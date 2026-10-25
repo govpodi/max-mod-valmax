@@ -52,6 +52,10 @@ QtObject {
         operationFinished(requests[index].id,
             JSON.stringify({schema: 1, ok: true, result: result}));
     }
+    function failure(index, code) {
+        operationFinished(requests[index].id,
+            JSON.stringify({schema: 1, ok: false, error: code}));
+    }
 }
 """
 FAKE_QML_UTILS = """pragma Singleton
@@ -189,6 +193,9 @@ def check_generated(proof_path: Path) -> dict[str, str]:
         packed = fixture / "icons/inputs/valmax" / name
         if native_proof["extraResourceHashes"][resource] != digest(packed):
             raise AssertionError("packed retention component hash mismatch")
+        source_path = RANGE if resource == RANGE_RESOURCE else BUBBLE
+        if digest(packed) != digest(source_path):
+            raise AssertionError("generated retention component is stale")
     required = (
         "delegate: Item {", 'objectName: "valmaxRetentionHistoryRow"',
         "required property var messageContext", "required property int index",
@@ -200,6 +207,12 @@ def check_generated(proof_path: Path) -> dict[str, str]:
         "valmaxRetentionRange.rowsByIndex[String(valmaxHistoryRow.index)]",
         "ValMAX.MessageRetentionBubble {",
         "valmaxRetentionRange.loadMore()",
+        "valmaxRetentionRange.nextWindow()",
+        "valmaxRetentionRange.previousWindow()",
+        'objectName: "valmaxRetentionRangeNextBefore"',
+        'objectName: "valmaxRetentionRangeNextAfter"',
+        'objectName: "valmaxRetentionRangePreviousBefore"',
+        'objectName: "valmaxRetentionRangePreviousAfter"',
         "onClicked: valmaxRetentionRange.scanVisible(true)",
     )
     if any(part not in source for part in required):

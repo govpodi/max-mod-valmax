@@ -620,6 +620,14 @@ def native_retention_ghost_columns() -> str:
                     objectName: "valmaxRetentionGhostBefore"
                     width: valmaxHistoryRow.width
                     spacing: 4
+                    Button {
+                        objectName: "valmaxRetentionRangePreviousBefore"
+                        visible: valmaxRetentionRange.pagingBefore && valmaxRetentionRange.hasPreviousWindow &&
+                                 valmaxRetentionRange.pagingAnchorIndex === valmaxHistoryRow.index
+                        text: "Предыдущая часть сохранённых сообщений"
+                        onClicked: valmaxRetentionRange.previousWindow()
+                        onVisibleChanged: valmaxGhostBefore.forceLayout()
+                    }
                     Repeater {
                         model: valmaxRetentionRange.rowsBeforeIndex[String(valmaxHistoryRow.index)] || []
                         delegate: ValMAX.MessageRetentionBubble {
@@ -646,10 +654,18 @@ def native_retention_ghost_columns() -> str:
                         onVisibleChanged: valmaxGhostBefore.forceLayout()
                     }
                     Button {
-                        objectName: "valmaxRetentionRangeArchiveBefore"
-                        visible: valmaxRetentionRange.pagingBefore && valmaxRetentionRange.moreInArchive &&
+                        objectName: "valmaxRetentionRangeNextBefore"
+                        visible: valmaxRetentionRange.pagingBefore && valmaxRetentionRange.hasNextWindow &&
                                  valmaxRetentionRange.pagingAnchorIndex === valmaxHistoryRow.index
-                        text: "Остальные сохранённые сообщения — в архиве"
+                        text: "Следующая часть сохранённых сообщений"
+                        onClicked: valmaxRetentionRange.nextWindow()
+                        onVisibleChanged: valmaxGhostBefore.forceLayout()
+                    }
+                    Button {
+                        objectName: "valmaxRetentionRangeArchiveBefore"
+                        visible: valmaxRetentionRange.pagingBefore && valmaxRetentionRange.hasNextWindow &&
+                                 valmaxRetentionRange.pagingAnchorIndex === valmaxHistoryRow.index
+                        text: "Открыть архив сохранённых сообщений"
                         onClicked: valmaxRetentionArchiveLoader.active = true
                         onVisibleChanged: valmaxGhostBefore.forceLayout()
                     }
@@ -662,6 +678,14 @@ def native_retention_ghost_columns() -> str:
                     y: messageDelegate.y + messageDelegate.height
                     width: valmaxHistoryRow.width
                     spacing: 4
+                    Button {
+                        objectName: "valmaxRetentionRangePreviousAfter"
+                        visible: !valmaxRetentionRange.pagingBefore && valmaxRetentionRange.hasPreviousWindow &&
+                                 valmaxRetentionRange.pagingAnchorIndex === valmaxHistoryRow.index
+                        text: "Предыдущая часть сохранённых сообщений"
+                        onClicked: valmaxRetentionRange.previousWindow()
+                        onVisibleChanged: valmaxGhostAfter.forceLayout()
+                    }
                     Repeater {
                         model: valmaxRetentionRange.rowsByIndex[String(valmaxHistoryRow.index)] || []
                         delegate: ValMAX.MessageRetentionBubble {
@@ -689,10 +713,18 @@ def native_retention_ghost_columns() -> str:
                         onVisibleChanged: valmaxGhostAfter.forceLayout()
                     }
                     Button {
-                        objectName: "valmaxRetentionRangeArchiveAfter"
-                        visible: !valmaxRetentionRange.pagingBefore && valmaxRetentionRange.moreInArchive &&
+                        objectName: "valmaxRetentionRangeNextAfter"
+                        visible: !valmaxRetentionRange.pagingBefore && valmaxRetentionRange.hasNextWindow &&
                                  valmaxRetentionRange.pagingAnchorIndex === valmaxHistoryRow.index
-                        text: "Остальные сохранённые сообщения — в архиве"
+                        text: "Следующая часть сохранённых сообщений"
+                        onClicked: valmaxRetentionRange.nextWindow()
+                        onVisibleChanged: valmaxGhostAfter.forceLayout()
+                    }
+                    Button {
+                        objectName: "valmaxRetentionRangeArchiveAfter"
+                        visible: !valmaxRetentionRange.pagingBefore && valmaxRetentionRange.hasNextWindow &&
+                                 valmaxRetentionRange.pagingAnchorIndex === valmaxHistoryRow.index
+                        text: "Открыть архив сохранённых сообщений"
                         onClicked: valmaxRetentionArchiveLoader.active = true
                         onVisibleChanged: valmaxGhostAfter.forceLayout()
                     }

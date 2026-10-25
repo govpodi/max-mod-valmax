@@ -26,6 +26,7 @@ struct NativeStatus final {
     uint64_t owner_constructed = 0;
     uint64_t joined_upserts = 0;
     uint64_t route_failures = 0;
+    uint64_t bounded_skips = 0;
     std::array<char,64> revision{};
     HostError error = HostError::NotInstalled;
     pilot::AsyncCounters worker{};

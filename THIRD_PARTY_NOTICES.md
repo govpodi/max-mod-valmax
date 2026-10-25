@@ -30,8 +30,9 @@ runtime.
 
 Для Qt 6.11.2 получены официальные исходные архивы Multimedia, Positioning,
 SVG и WebChannel и исходные тексты лицензий. Из набора проверенных Qt-бинарников
-preview.15 исключает семь файлов Qt Lottie и его `qmldir`: два индикатора записи
-заменены на Qt Quick. Восемь корневых Qt DLL и четыре копии в сервисе исходного
+preview.15 исключила семь файлов Qt Lottie и его `qmldir`: два индикатора записи
+заменены на Qt Quick. Сборка preview.16 также не содержит импортов Qt Lottie.
+Восемь корневых Qt DLL и четыре копии в сервисе исходного
 аудита были побайтно сверены с официальными бинарными архивами; после исключения
 Lottie в этом наборе остаются шесть корневых DLL и две копии в сервисе.
 Проверка файлов не заменяет проверку записи аудио и видео в установленном
@@ -98,8 +99,9 @@ separate version/hash-bound materials; those for one component do not establish
 coverage for the whole MAX client. The applicability of the collected current
 WebView2 Fixed Version terms to this runtime's historical version is not proven.
 
-Preview.15 omits seven Qt Lottie binaries and their QML module directory after
-two pinned recording indicators switch to Qt Quick. Five QtImageFormats plugins
+Preview.15 removed seven Qt Lottie binaries and their QML module directory after
+two pinned recording indicators switched to Qt Quick. The preview.16 package
+also has no Qt Lottie imports. Five QtImageFormats plugins
 match the official Qt 6.11.2 binaries byte for byte, with matching source and
 libtiff/libwebp notices prepared; optional static codec content is not proven.
 Version-bound OpenSSL and WinSparkle notices, Frida Gum COPYING, and 70 Windows

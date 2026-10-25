@@ -15,12 +15,17 @@
 #include <cstring>
 #include <memory>
 #include <mutex>
+#include <set>
 #include <string>
 #include <vector>
 
 namespace valmax::retention::passive {
 namespace {
 constexpr size_t kOwners = 128;
+// MAX may submit more than one worker batch in a single write callback. Keep
+// both borrowed-row parsing time and owned text below fixed process limits.
+constexpr size_t kMaxCallbackRows = 512;
+constexpr size_t kMaxCallbackTextBytes = 2 * 1024 * 1024;
 constexpr uintptr_t kCoreOwnerVtable = 0x18de708;
 constexpr uintptr_t kStorageDataVtable = 0x983ab8;
 constexpr uintptr_t kStorageHistoryOwnerVtable = 0x985058;
@@ -37,6 +42,7 @@ struct Runtime final {
     bool applied = false, closing = false;
     uint32_t listeners_attached = 0;
     uint64_t generation = 0, owner_constructed = 0, joined_upserts = 0, route_failures = 0;
+    uint64_t bounded_skips = 0;
     std::array<char,64> revision{};
     HostError error = HostError::NotInstalled;
     std::array<uintptr_t,kOwners> owners{};
@@ -145,6 +151,10 @@ void fail_scope(Runtime &r) noexcept {
         if (r.worker) r.worker->revoke(pilot::AsyncError::InvalidRoute);
     }
 }
+void note_bounded_skip(Runtime &r) noexcept {
+    std::lock_guard lock(r.scope);
+    increment(r.bounded_skips);
+}
 void owner_enter(GumInvocationContext *context,gpointer) {
     auto *slot=static_cast<uintptr_t *>(gum_invocation_context_get_listener_invocation_data(
         context,sizeof(uintptr_t)));
@@ -194,8 +204,7 @@ bool read_rows_vector(uintptr_t pointer, uintptr_t &begin,size_t &count) noexcep
     if (value.begin==value.end) { begin=value.begin;count=0;return true; }
     if (!value.begin || (value.begin&7)) return false;
     const auto bytes=value.end-value.begin;
-    if (bytes%rows::kMessageBytes || bytes/rows::kMessageBytes>rows::kMaxBatchRows)
-        return false;
+    if (bytes%rows::kMessageBytes) return false;
     begin=value.begin;count=static_cast<size_t>(bytes/rows::kMessageBytes);
     return true;
 }
@@ -229,9 +238,15 @@ void rows_enter(GumInvocationContext *context,gpointer raw) {
         uintptr_t begin=0;size_t count=0;
         if (!read_rows_vector(vector,begin,count)) { fail_scope(r); return; }
         if (count==0) return;
+        // An oversized but well-formed borrowed vector is a capacity event,
+        // not evidence that the account route is invalid. Never poison later
+        // incoming/deletion callbacks because a history write was too large.
+        if (count>kMaxCallbackRows) { note_bounded_skip(r); return; }
         std::vector<rows::Snapshot> captured;
         std::vector<int64_t> removed;
         captured.reserve(count);removed.reserve(count);
+        std::set<int64_t> captured_ids,removed_ids;
+        size_t copied_text_bytes=0;
         for (size_t i=0;i<count;++i) {
             const auto row=begin+i*rows::kMessageBytes;
             uint32_t status_code=0;
@@ -249,14 +264,35 @@ void rows_enter(GumInvocationContext *context,gpointer raw) {
             if (!rows::decode(row,read_row,nullptr,message)) {
                 fail_scope(r);return;
             }
-            if (message.kind==rows::Kind::Text) captured.push_back(std::move(message));
-            else if (message.kind==rows::Kind::Removed) removed.push_back(message.id);
+            if (message.kind==rows::Kind::Text) {
+                const size_t bytes=message.text.bytes().size();
+                if (bytes>kMaxCallbackTextBytes-copied_text_bytes) {
+                    note_bounded_skip(r);return;
+                }
+                if (!captured_ids.insert(message.id).second) { fail_scope(r);return; }
+                copied_text_bytes+=bytes;
+                captured.push_back(std::move(message));
+            } else if (message.kind==rows::Kind::Removed) {
+                if (!removed_ids.insert(message.id).second) { fail_scope(r);return; }
+                removed.push_back(message.id);
+            }
         }
         const auto now=std::chrono::duration_cast<std::chrono::milliseconds>(
             std::chrono::system_clock::now().time_since_epoch()).count();
         if (now<0 || !r.worker) { fail_scope(r); return; }
-        if (!captured.empty() && !r.worker->submit_capture(route,std::move(captured),now)) return;
-        if (!removed.empty()) (void)r.worker->submit_removed(route,removed);
+        for (size_t offset=0;offset<captured.size();offset+=rows::kMaxBatchRows) {
+            const size_t length=std::min(rows::kMaxBatchRows,captured.size()-offset);
+            std::vector<rows::Snapshot> batch;
+            batch.reserve(length);
+            for (size_t i=0;i<length;++i)
+                batch.push_back(std::move(captured[offset+i]));
+            if (!r.worker->submit_capture(route,std::move(batch),now)) return;
+        }
+        for (size_t offset=0;offset<removed.size();offset+=rows::kMaxBatchRows) {
+            const size_t length=std::min(rows::kMaxBatchRows,removed.size()-offset);
+            if (!r.worker->submit_removed(route,
+                std::span<const int64_t>(removed.data()+offset,length))) return;
+        }
     } catch (...) { fail_scope(r); }
 }
 bool pin_callback_module() noexcept {
@@ -443,7 +479,8 @@ NativeStatus status() noexcept {
     value.preference_enabled=r.preference_enabled;value.applied=r.applied;
     value.listeners=r.listeners_attached;value.generation=r.generation;
     value.owner_constructed=r.owner_constructed;value.joined_upserts=r.joined_upserts;
-    value.route_failures=r.route_failures;value.revision=r.revision;value.error=r.error;
+    value.route_failures=r.route_failures;value.bounded_skips=r.bounded_skips;
+    value.revision=r.revision;value.error=r.error;
     if (r.worker) value.worker=r.worker->status();
     return value;
 }
