@@ -442,10 +442,10 @@ class NativePackaging(unittest.TestCase):
         return {"version": "8.9.0", "launcherSha256": "a" * 64,
                 "runtimeInventorySha256": "b" * 64, "qmlProofSha256": "c" * 64}
 
-    def evidence(self):
+    def evidence(self, subject=None):
         self.now = datetime(2026, 10, 21, 12, 0, tzinfo=timezone.utc)
         timestamp = self.now.strftime("%Y-%m-%dT%H:%M:%SZ")
-        subject = self.subject()
+        subject = subject or self.subject()
         self.feature_files = {}
         entries = []
         for feature, scenarios in package.RELEASE_SCENARIOS.items():
@@ -461,6 +461,14 @@ class NativePackaging(unittest.TestCase):
         manifest.write_text(json.dumps({"schema": 1, "status": "passed", "complete": True, "subject": subject,
             "generatedAt": timestamp, "evidence": entries, "unresolved": []}), encoding="utf8")
         return manifest
+
+    def channel_proof(self, channel):
+        path = self.root / "native-qml-proof.json"
+        path.write_text(json.dumps({"schema": 1, "nativeRuntime": True,
+                                    "uiReleaseChannel": channel}), encoding="utf8")
+        subject = self.subject()
+        subject["qmlProofSha256"] = package.sha(path)
+        return path, subject
 
     def rewrite_proof(self, manifest, feature, change):
         path = self.feature_files[feature]
@@ -491,7 +499,7 @@ class NativePackaging(unittest.TestCase):
         self.assertFalse(report["releaseEligible"])
         self.assertFalse(report["featureRuntimeTested"])
         self.assertEqual({key for key, _ in package.CURRENT_RELEASE_BLOCKERS}
-                         | {package.MAX_RIGHTS_ATTESTATION_BLOCKER[0], "whole_client_materials"},
+                         | {package.MAX_RIGHTS_ATTESTATION_BLOCKER[0], "whole_client_materials", "stable_ui_channel"},
                          {value["id"] for value in report["blockers"]})
 
     def test_publisher_attestation_clears_only_the_rights_blocker(self):
@@ -523,18 +531,71 @@ class NativePackaging(unittest.TestCase):
                          {item["id"] for item in report["blockers"]})
         self.assertIn("whole_client_materials", {item["id"] for item in report["blockers"]})
 
+    def test_user_release_cli_reads_channel_from_bound_qml_proof(self):
+        inputs = self.staging_inputs()
+        qml = inputs["qml"]
+        qml.mkdir()
+        proof = qml / "native-qml-proof.json"
+        proof.write_text(json.dumps({"schema": 1, "nativeRuntime": True,
+                                     "uiReleaseChannel": "beta"}), encoding="utf8")
+        inputs["qmlResult"]["proofSha256"] = package.sha(proof)
+        destination = self.root / "channel-preflight.json"
+        argv = ["package_native_client.py", "--version", "8.9.0", "--preflight-only",
+                "--preflight-report", str(destination), "--runtime", str(inputs["runtime"]),
+                "--qml-build", str(qml), "--launcher-proof", str(self.root / "launcher-proof.json")]
+        with patch.object(sys, "argv", argv), patch.object(package, "packaging_inputs", return_value=inputs):
+            package.main()
+        report = json.loads(destination.read_text("utf8"))
+        self.assertEqual(report["subject"]["qmlProofSha256"], package.sha(proof))
+        self.assertFalse(report["stableUiChannelVerified"])
+        self.assertEqual([item["id"] for item in report["blockers"]].count("stable_ui_channel"), 1)
+        self.assertIn("stable-candidate native QML release channel required",
+                      next(item["reason"] for item in report["blockers"] if item["id"] == "stable_ui_channel"))
+
     def test_complete_matching_evidence_contract_after_actual_blockers_resolved(self):
-        manifest = self.evidence()
+        qml_proof, subject = self.channel_proof("stable-candidate")
+        manifest = self.evidence(subject)
         # Schema behavior only. Mock receipts do not prove a released client,
         # and this test does not package anything or change product statuses.
         with patch.object(package, "CURRENT_RELEASE_BLOCKERS", ()):
-            report = package.release_preflight(self.subject(), manifest, now=self.now,
+            report = package.release_preflight(subject, manifest, now=self.now,
                                                materials={"completeForWholeClient": True, "limitations": []},
-                                               max_rights_attested=True)
+                                               max_rights_attested=True, qml_proof_path=qml_proof)
         self.assertTrue(report["releaseEligible"])
+        self.assertTrue(report["stableUiChannelVerified"])
         self.assertTrue(report["wholeClientMaterialsVerified"])
         self.assertTrue(report["featureRuntimeTested"])
         self.assertEqual(report["blockers"], [])
+
+    def test_stable_ui_channel_and_exact_qml_subject_are_required(self):
+        qml_proof, subject = self.channel_proof("beta")
+        manifest = self.evidence(subject)
+        options = {"now": self.now, "materials": {"completeForWholeClient": True, "limitations": []},
+                   "max_rights_attested": True, "qml_proof_path": qml_proof}
+        with patch.object(package, "CURRENT_RELEASE_BLOCKERS", ()):
+            beta = package.release_preflight(subject, manifest, **options)
+            self.assertTrue(beta["evidenceVerified"])
+            self.assertFalse(beta["releaseEligible"])
+            self.assertFalse(beta["stableUiChannelVerified"])
+            self.assertEqual([item["id"] for item in beta["blockers"]], ["stable_ui_channel"])
+
+            qml_proof, stable_subject = self.channel_proof("stable-candidate")
+            stale_subject = package.release_preflight(subject, manifest, **options)
+            self.assertEqual([item["id"] for item in stale_subject["blockers"]], ["stable_ui_channel"])
+            self.assertIn("differs from exact release subject", stale_subject["blockers"][0]["reason"])
+
+            stable_manifest = self.evidence(stable_subject)
+            stable = package.release_preflight(stable_subject, stable_manifest, **options)
+            self.assertTrue(stable["stableUiChannelVerified"])
+            self.assertTrue(stable["releaseEligible"])
+            self.assertEqual(stable["blockers"], [])
+
+            qml_proof.write_text("[]", encoding="utf8")
+            malformed_subject = self.subject()
+            malformed_subject["qmlProofSha256"] = package.sha(qml_proof)
+            malformed_manifest = self.evidence(malformed_subject)
+            malformed = package.release_preflight(malformed_subject, malformed_manifest, **options)
+            self.assertEqual([item["id"] for item in malformed["blockers"]], ["stable_ui_channel"])
 
     def test_complete_installed_evidence_cannot_override_missing_materials(self):
         manifest = self.evidence()

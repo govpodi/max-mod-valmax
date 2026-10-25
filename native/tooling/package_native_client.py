@@ -370,7 +370,8 @@ def release_preflight(subject=None, evidence=None, mode="user-release", now=None
                       artifact_identity=None, materials=None, artifact_verified=False,
                       qml_compatibility_verified=False, max_rights_attested=False,
                       beta_materials=None, beta_materials_error=None,
-                      webview2_mode="fixed", qt_source_mode="inline"):
+                      webview2_mode="fixed", qt_source_mode="inline",
+                      qml_proof_path=None):
     """Receipts attest installed behavior for exact bytes, never DLL presence.
 
     Stable release retains every unresolved product blocker. Public BETA has
@@ -392,6 +393,7 @@ def release_preflight(subject=None, evidence=None, mode="user-release", now=None
               "distributionMode": mode, "releaseEligible": False,
               "featureRuntimeTested": False, "subject": subject, "evidenceVerified": False,
               "wholeClientMaterialsVerified": False, "maxRightsAttested": rights_attested,
+              "stableUiChannelVerified": False,
               "evidenceManifestSha256": None, "features": {}, "blockers": blockers,
               "requiredEvidenceIds": list(RELEASE_SCENARIOS),
               "scope": "Eligibility for a complete installed native client, not a component build or dependency check."}
@@ -417,6 +419,23 @@ def release_preflight(subject=None, evidence=None, mode="user-release", now=None
             require(subject is None or artifact_identity == {key: subject[key] for key in ARTIFACT_IDENTITY_KEYS}, "artifact identity and release subject differ")
         except (ValueError, TypeError, KeyError) as error:
             block("invalid_artifact_identity", str(error))
+    if mode == "user-release":
+        try:
+            require(qml_proof_path is not None, "stable-candidate native QML proof required")
+            proof_path = evidence_path(str(qml_proof_path))
+            require(proof_path.name == "native-qml-proof.json", "native QML proof path required")
+            require(isinstance(subject, dict) and isinstance(subject.get("qmlProofSha256"), str),
+                    "exact release subject QML digest required")
+            require(sha(proof_path) == subject["qmlProofSha256"],
+                    "native QML proof differs from exact release subject")
+            qml_proof = read_json(proof_path)
+            require(isinstance(qml_proof, dict) and type(qml_proof.get("schema")) is int
+                    and qml_proof["schema"] == 1 and qml_proof.get("nativeRuntime") is True
+                    and qml_proof.get("uiReleaseChannel") == "stable-candidate",
+                    "stable-candidate native QML release channel required")
+            result["stableUiChannelVerified"] = True
+        except (ValueError, OSError, TypeError, KeyError) as error:
+            block("stable_ui_channel", str(error))
     for feature in RELEASE_SCENARIOS:
         result["features"][feature] = {"verified": False, "status": "missing"}
     if evidence is None:
@@ -1509,7 +1528,8 @@ def main():
                                beta_materials=None if beta_plan is None else beta_plan["summary"],
                                beta_materials_error=beta_materials_error,
                                webview2_mode="fixed" if inputs is None else inputs.get("webview2Mode", "fixed"),
-                               qt_source_mode="inline" if inputs is None else inputs.get("qtSourceMode", "inline"))
+                               qt_source_mode="inline" if inputs is None else inputs.get("qtSourceMode", "inline"),
+                               qml_proof_path=None if inputs is None else inputs["qml"] / "native-qml-proof.json")
     report["requestedVersion"] = args.version
     if args.version is None:
         report["blockers"].append({"id": "product_version_missing", "reason": "A native user-release version has not been selected; artifact validation is still reported independently."})
