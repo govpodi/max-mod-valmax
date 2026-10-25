@@ -15,8 +15,10 @@ It derives its package directory from its own executable and LocalAppData from
 are not accepted. The only commands are the ordinary empty/`launcher` command,
 `mdata`/`import`, and `recover`.
 
-The package layout is `ValMAX.exe` beside `runtime/mod`, `runtime/webview2`, and
-`runtime/transfer`. `launcher_generate_pins.py` generates a compiled inventory
+The package layout is `ValMAX.exe` beside `runtime/mod` and `runtime/transfer`.
+The Fixed WebView2 packaging mode also includes `runtime/webview2`; the compact
+Evergreen mode uses the system WebView2 Runtime and has no bundled WebView2 tree.
+`launcher_generate_pins.py` generates a compiled inventory
 of every regular payload file. `REQUIRED` lists minimum components; empty,
 untracked, hardlinked, reparse, development and private entries are rejected.
 The only mutable runtime entry is optional `mod/optimization-active.json`
@@ -59,7 +61,7 @@ Build in a process with `native/tooling/msvc_env.ps1` loaded, using build-only
 Python:
 
 ```powershell
-python native/tooling/build_launcher.py --build D:/ValMAXBuild/build/launcher-release --runtime-root D:/ValMAXBuild/build/package-input/runtime --report D:/ValMAX/analysis/native-migration-v1/launcher-release-build.json
+python native/tooling/build_launcher.py --build E:/ValMAXBuild/build/launcher-release --runtime-root E:/ValMAXBuild/build/package-input/runtime --report E:/ValMAXBuild/analysis/native-migration-v1/launcher-release-build.json
 ```
 
 At build time `launcher_icon.py` reads the selected stock icon group from the
