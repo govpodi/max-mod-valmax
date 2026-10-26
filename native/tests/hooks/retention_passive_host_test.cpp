@@ -170,6 +170,31 @@ void send_text_budget_overflow(OwnerFixture &owner) {
     Vector vector{begin,end,end};
     fake_rows(owner.history.data(),nullptr,&vector,nullptr,0);
 }
+void send_mixed_empty_sender(OwnerFixture &owner,int64_t own_sender,
+                             int64_t incoming_sender) {
+    std::array<TestRow,4> batch{};
+    for (size_t i=0;i<2;++i) {
+        auto &row=batch[i].bytes;
+        write(row,0,int64_t{6100+static_cast<int64_t>(i)*3});
+        write(row,0x80,int64_t{0});
+        write(row,0x128,static_cast<uint32_t>(i));
+        write(row,0x40,uint64_t{0});write(row,0x48,uint64_t{15});
+    }
+    const auto set_text=[&](size_t index,int64_t id,int64_t sender,const char *content) {
+        auto &row=batch[index].bytes;
+        write(row,0,id);write(row,0x80,sender);write(row,0x128,uint32_t{0});
+        const size_t length=std::strlen(content);
+        CHECK(length>0 && length<=15);
+        write(row,0x40,static_cast<uint64_t>(length));write(row,0x48,uint64_t{15});
+        std::memcpy(row.data()+0x30,content,length);
+    };
+    set_text(2,6101,own_sender,"own");
+    set_text(3,6102,incoming_sender,"incoming");
+    const auto begin=reinterpret_cast<uintptr_t>(batch.data());
+    const auto end=begin+batch.size()*rows::kMessageBytes;
+    Vector vector{begin,end,end};
+    fake_rows(owner.history.data(),nullptr,&vector,nullptr,0);
+}
 bool wait_for(std::function<bool()> predicate) {
     const auto end=std::chrono::steady_clock::now()+std::chrono::seconds(2);
     while (std::chrono::steady_clock::now()<end) {
@@ -246,6 +271,7 @@ int main(int argc,char **argv) {
         CHECK(failed.last_scope_failure_reason==(invalid_sender
             ? ScopeFailureReason::InvalidSender : ScopeFailureReason::DuplicateTextId));
         CHECK(failed.worker.error==pilot::AsyncError::InvalidRoute);
+        CHECK(failed.bounded_skips==0);
         CHECK(!failed.capture_enabled() && failed.worker.captured==0);
         send(owner,33,12,0,"after failure");
         CHECK(status().last_scope_failure_reason==failed.last_scope_failure_reason);
@@ -371,6 +397,23 @@ int main(int argc,char **argv) {
         CHECK(backend.deleted.at({12,-22,6001}));
     }
     fake_owner_create(first.owner.data());
+    const auto before_empty_sender=status();
+    send_mixed_empty_sender(first,11,12);
+    CHECK(status().bounded_skips==before_empty_sender.bounded_skips+1);
+    CHECK(status().route_failures==before_empty_sender.route_failures);
+    CHECK(status().last_scope_failure_reason==ScopeFailureReason::None);
+    CHECK(status().capture_enabled() && status().worker.ready);
+    CHECK(wait_for([&]{return status().worker.captured==205;}));
+    send(second,6102,11,0,"second account");
+    CHECK(wait_for([&]{return status().worker.captured==206;}));
+    {
+        std::lock_guard lock(backend.mutex);
+        CHECK(!backend.content.contains({11,-22,6100}));
+        CHECK(!backend.content.contains({11,-22,6101}));
+        CHECK(!backend.content.contains({11,-22,6103}));
+        CHECK(backend.content.at({11,-22,6102})=="incoming");
+        CHECK(backend.content.at({12,-22,6102})=="second account");
+    }
     const auto before_bad_scope=status();
     write(first.history,0x30,uintptr_t{0});
     send(first,6000,12,0,"bad route");

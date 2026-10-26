@@ -109,7 +109,35 @@ void heap_edit_and_fail_closed() {
     put<uint64_t>(memory,0x48,31); put<int64_t>(memory,0x00,0);
     CHECK(!decode(address,&read,&memory,snapshot));
 }
+void empty_zero_sender_ignore_checks() {
+    Memory memory;
+    put<int64_t>(memory,0x00,41); put<int64_t>(memory,0x80,0);
+    put<uint32_t>(memory,0x128,0);
+    put<uint64_t>(memory,0x40,0); put<uint64_t>(memory,0x48,15);
+    const auto address = reinterpret_cast<uintptr_t>(memory.row.data());
+    Snapshot snapshot;
+    CHECK(decode(address,&read,&memory,snapshot));
+    CHECK(snapshot.kind == Kind::Ignore && snapshot.text.bytes().empty());
+    CHECK(empty_zero_sender_ignore(address,0,&read,&memory));
+    CHECK(!empty_zero_sender_ignore(address,1,&read,&memory));
+
+    put<uint32_t>(memory,0x128,1);
+    CHECK(empty_zero_sender_ignore(address,1,&read,&memory));
+    put<uint64_t>(memory,0x40,1);
+    CHECK(!empty_zero_sender_ignore(address,1,&read,&memory));
+    put<uint64_t>(memory,0x40,0); put<uint64_t>(memory,0x48,0);
+    CHECK(!empty_zero_sender_ignore(address,1,&read,&memory));
+    put<uint64_t>(memory,0x48,15); put<int64_t>(memory,0x80,-1);
+    CHECK(!empty_zero_sender_ignore(address,1,&read,&memory));
+    put<int64_t>(memory,0x80,11);
+    CHECK(!empty_zero_sender_ignore(address,1,&read,&memory));
+    put<int64_t>(memory,0x80,0); put<int64_t>(memory,0x00,0);
+    CHECK(!empty_zero_sender_ignore(address,1,&read,&memory));
+    put<int64_t>(memory,0x00,41); put<uint32_t>(memory,0x128,2);
+    CHECK(!empty_zero_sender_ignore(address,2,&read,&memory));
+}
 }
 int main() {
     route_checks(); inline_text_and_removed(); heap_edit_and_fail_closed();
+    empty_zero_sender_ignore_checks();
 }

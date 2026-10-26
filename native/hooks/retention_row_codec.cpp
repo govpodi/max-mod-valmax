@@ -31,6 +31,10 @@ T field(const RawRow &row, size_t offset) noexcept {
     std::memcpy(&value,row.bytes.data()+offset,sizeof(value));
     return value;
 }
+bool valid_text_shape(uint64_t size, uint64_t capacity) noexcept {
+    return size <= kMaxTextBytes && capacity >= size && capacity <= kMaximumCapacity
+        && (capacity >= 16 || capacity == kInlineCapacity);
+}
 }
 
 SecureText::SecureText(SecureText &&other) noexcept : value_(std::move(other.value_)) {}
@@ -66,6 +70,21 @@ bool unique_route(std::span<const OwnerScope> owners, uintptr_t database,
     return true;
 }
 
+bool empty_zero_sender_ignore(uintptr_t address, uint32_t expected_status,
+                              ReadMemory read, void *context) noexcept {
+    if (expected_status > 1 || address == 0 || !read
+        || address > UINTPTR_MAX-kMessageBytes) return false;
+    RawRow row;
+    if (!read(address,row.bytes.data(),row.bytes.size(),context)) return false;
+    const auto id = field<int64_t>(row,kIdOffset);
+    const auto sender = field<int64_t>(row,kSenderOffset);
+    const auto status = field<uint32_t>(row,kStatusOffset);
+    const auto size = field<uint64_t>(row,kTextLengthOffset);
+    const auto capacity = field<uint64_t>(row,kTextCapacityOffset);
+    return id > 0 && sender == 0 && status == expected_status && size == 0
+        && valid_text_shape(size,capacity);
+}
+
 bool decode(uintptr_t address, ReadMemory read, void *context, Snapshot &output) noexcept {
     output.text.clear();
     output.kind = Kind::Ignore; output.id = 0; output.order_key = 0;
@@ -85,8 +104,7 @@ bool decode(uintptr_t address, ReadMemory read, void *context, Snapshot &output)
     }
     const uint64_t size = field<uint64_t>(row,kTextLengthOffset);
     const uint64_t capacity = field<uint64_t>(row,kTextCapacityOffset);
-    if (size > kMaxTextBytes || capacity < size || capacity > kMaximumCapacity) return false;
-    if (capacity < 16 && capacity != kInlineCapacity) return false;
+    if (!valid_text_shape(size,capacity)) return false;
     if (size == 0) return true;
     const int64_t order_key = field<int64_t>(row,kOrderKeyOffset);
     if (capacity == kInlineCapacity) {

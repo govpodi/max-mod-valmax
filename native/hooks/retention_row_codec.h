@@ -56,4 +56,9 @@ bool unique_route(std::span<const OwnerScope> owners, uintptr_t database,
 // row carries no text; the caller determines whether it was deleted for all.
 bool decode(uintptr_t row, ReadMemory read, void *context, Snapshot &output) noexcept;
 
+// Verify a zero-sender normal/edited row is the codec's empty Ignore case.
+// Reads one zeroized row snapshot; no heap text or SecureText is copied.
+bool empty_zero_sender_ignore(uintptr_t row, uint32_t expected_status,
+                              ReadMemory read, void *context) noexcept;
+
 } // namespace valmax::retention::rows
