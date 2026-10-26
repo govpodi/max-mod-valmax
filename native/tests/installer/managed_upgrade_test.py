@@ -171,7 +171,8 @@ class Fixture:
                                  '#define NativeReleaseBlockerCount ' + str(blockers) + '\n'
                                  '#define NativePackageManifestSha256 "' + digest + '"\n'
                                  '#define NativeWebView2Mode "fixed"\n'
-                                 '#define NativeQtSourceMode "inline"\n')
+                                 '#define NativeQtSourceMode "inline"\n'
+                                 '#define NativeFFmpegSourceMode "inline"\n')
             elif stamp.exists():
                 stamp.unlink()
             command = [str(ISCC), '/Qp', '/O-', '/DPayload=' + str(payload),
