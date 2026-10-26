@@ -52,6 +52,7 @@ struct NativeStatus final {
     uint64_t invalid_owner_callbacks = 0;
     uint64_t unmatched_owner_callbacks = 0;
     ScopeFailureReason last_scope_failure_reason = ScopeFailureReason::None;
+    rows::InvalidSenderReason last_invalid_sender_reason = rows::InvalidSenderReason::None;
     std::array<char,64> revision{};
     HostError error = HostError::NotInstalled;
     pilot::AsyncCounters worker{};

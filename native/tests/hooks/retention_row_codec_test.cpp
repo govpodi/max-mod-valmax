@@ -109,35 +109,45 @@ void heap_edit_and_fail_closed() {
     put<uint64_t>(memory,0x48,31); put<int64_t>(memory,0x00,0);
     CHECK(!decode(address,&read,&memory,snapshot));
 }
-void empty_zero_sender_ignore_checks() {
+void invalid_sender_reason_checks() {
     Memory memory;
     put<int64_t>(memory,0x00,41); put<int64_t>(memory,0x80,0);
     put<uint32_t>(memory,0x128,0);
     put<uint64_t>(memory,0x40,0); put<uint64_t>(memory,0x48,15);
     const auto address = reinterpret_cast<uintptr_t>(memory.row.data());
+    const auto inspect=[&](uint32_t status,int64_t sender) {
+        return inspect_invalid_sender(address,status,sender,&read,&memory);
+    };
     Snapshot snapshot;
     CHECK(decode(address,&read,&memory,snapshot));
     CHECK(snapshot.kind == Kind::Ignore && snapshot.text.bytes().empty());
-    CHECK(empty_zero_sender_ignore(address,0,&read,&memory));
-    CHECK(!empty_zero_sender_ignore(address,1,&read,&memory));
+    CHECK(inspect(0,0) == InvalidSenderReason::EmptyIgnore);
+    CHECK(inspect(1,0) == InvalidSenderReason::HeaderMismatch);
 
     put<uint32_t>(memory,0x128,1);
-    CHECK(empty_zero_sender_ignore(address,1,&read,&memory));
+    CHECK(inspect(1,0) == InvalidSenderReason::EmptyIgnore);
     put<uint64_t>(memory,0x40,1);
-    CHECK(!empty_zero_sender_ignore(address,1,&read,&memory));
+    CHECK(inspect(1,0) == InvalidSenderReason::ZeroSenderNonempty);
     put<uint64_t>(memory,0x40,0); put<uint64_t>(memory,0x48,0);
-    CHECK(!empty_zero_sender_ignore(address,1,&read,&memory));
+    CHECK(inspect(1,0) == InvalidSenderReason::InvalidTextShape);
     put<uint64_t>(memory,0x48,15); put<int64_t>(memory,0x80,-1);
-    CHECK(!empty_zero_sender_ignore(address,1,&read,&memory));
+    CHECK(inspect(1,-1) == InvalidSenderReason::NegativeSender);
+    CHECK(inspect(1,0) == InvalidSenderReason::HeaderMismatch);
     put<int64_t>(memory,0x80,11);
-    CHECK(!empty_zero_sender_ignore(address,1,&read,&memory));
+    CHECK(inspect(1,0) == InvalidSenderReason::HeaderMismatch);
     put<int64_t>(memory,0x80,0); put<int64_t>(memory,0x00,0);
-    CHECK(!empty_zero_sender_ignore(address,1,&read,&memory));
+    CHECK(inspect(1,0) == InvalidSenderReason::InvalidId);
     put<int64_t>(memory,0x00,41); put<uint32_t>(memory,0x128,2);
-    CHECK(!empty_zero_sender_ignore(address,2,&read,&memory));
+    CHECK(inspect(1,0) == InvalidSenderReason::HeaderMismatch);
+    CHECK(inspect(2,0) == InvalidSenderReason::HeaderMismatch);
+    CHECK(inspect(0,11) == InvalidSenderReason::HeaderMismatch);
+    CHECK(inspect_invalid_sender(0,0,0,&read,&memory)
+        == InvalidSenderReason::UnreadableRow);
+    CHECK(inspect_invalid_sender(address,0,0,nullptr,&memory)
+        == InvalidSenderReason::UnreadableRow);
 }
 }
 int main() {
     route_checks(); inline_text_and_removed(); heap_edit_and_fail_closed();
-    empty_zero_sender_ignore_checks();
+    invalid_sender_reason_checks();
 }

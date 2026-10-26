@@ -213,6 +213,8 @@ QVariantMap RetentionHostBridge::diagnostics() const
         {QStringLiteral("routeFailures"), qulonglong(host.route_failures)},
         {QStringLiteral("lastScopeFailureReason"),
             static_cast<quint32>(host.last_scope_failure_reason)},
+        {QStringLiteral("lastInvalidSenderReason"),
+            static_cast<quint32>(host.last_invalid_sender_reason)},
         {QStringLiteral("boundedSkips"), qulonglong(host.bounded_skips)},
     };
 }

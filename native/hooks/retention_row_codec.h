@@ -56,9 +56,23 @@ bool unique_route(std::span<const OwnerScope> owners, uintptr_t database,
 // row carries no text; the caller determines whether it was deleted for all.
 bool decode(uintptr_t row, ReadMemory read, void *context, Snapshot &output) noexcept;
 
-// Verify a zero-sender normal/edited row is the codec's empty Ignore case.
-// Reads one zeroized row snapshot; no heap text or SecureText is copied.
-bool empty_zero_sender_ignore(uintptr_t row, uint32_t expected_status,
-                              ReadMemory read, void *context) noexcept;
+// Finite result for a pre-read nonpositive sender. Only EmptyIgnore permits a
+// skip; all other nonzero values are terminal, count-only diagnostics.
+enum class InvalidSenderReason : uint32_t {
+    None = 0,
+    NegativeSender = 1,
+    ZeroSenderNonempty = 2,
+    InvalidTextShape = 3,
+    InvalidId = 4,
+    HeaderMismatch = 5,
+    UnreadableRow = 6,
+    EmptyIgnore = 7,
+};
+
+// Reads one zeroized row snapshot, comparing sender/status with the pre-read
+// fields. No heap text or SecureText is copied; no row data is exposed.
+InvalidSenderReason inspect_invalid_sender(uintptr_t row, uint32_t expected_status,
+                                           int64_t expected_sender, ReadMemory read,
+                                           void *context) noexcept;
 
 } // namespace valmax::retention::rows

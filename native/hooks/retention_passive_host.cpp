@@ -46,6 +46,7 @@ struct Runtime final {
     uint64_t invalid_history_callbacks = 0, no_owner_callbacks = 0;
     uint64_t invalid_owner_callbacks = 0, unmatched_owner_callbacks = 0;
     ScopeFailureReason last_scope_failure_reason = ScopeFailureReason::None;
+    rows::InvalidSenderReason last_invalid_sender_reason = rows::InvalidSenderReason::None;
     std::array<char,64> revision{};
     HostError error = HostError::NotInstalled;
     std::array<uintptr_t,kOwners> owners{};
@@ -164,11 +165,14 @@ bool activate_locked(Runtime &r) noexcept {
     r.error=HostError::Worker;
     return false;
 }
-void fail_scope(Runtime &r, ScopeFailureReason reason) noexcept {
+void fail_scope(Runtime &r, ScopeFailureReason reason,
+                rows::InvalidSenderReason sender_reason = rows::InvalidSenderReason::None) noexcept {
     std::lock_guard lock(r.scope);
     increment(r.route_failures);
     if (r.owner_count != 0 && r.error == HostError::None) {
         r.last_scope_failure_reason=reason;
+        if (reason==ScopeFailureReason::InvalidSender)
+            r.last_invalid_sender_reason=sender_reason;
         r.error=HostError::OwnerScope;
         if (r.worker) r.worker->revoke(pilot::AsyncError::InvalidRoute);
     }
@@ -311,18 +315,19 @@ void rows_enter(GumInvocationContext *context,gpointer raw) {
             }
             if (status_code<=1) {
                 if (sender<=0) {
-                    // A zero-sender service row may be an empty Ignore. Prove
-                    // that from one zeroized row snapshot before skipping it.
-                    // Nonempty or inconsistent rows still revoke capture.
-                    if (sender==0 && rows::empty_zero_sender_ignore(
-                            row,status_code,read_row,nullptr)) {
+                    // Only the proven empty Ignore case may be skipped. The
+                    // finite reason for every other case is latched without
+                    // retaining row contents or identifiers.
+                    const auto sender_reason=rows::inspect_invalid_sender(
+                        row,status_code,sender,read_row,nullptr);
+                    if (sender_reason==rows::InvalidSenderReason::EmptyIgnore) {
                         if (!empty_zero_sender_skipped) {
                             note_bounded_skip(r);
                             empty_zero_sender_skipped=true;
                         }
                         continue;
                     }
-                    fail_scope(r,ScopeFailureReason::InvalidSender);return;
+                    fail_scope(r,ScopeFailureReason::InvalidSender,sender_reason);return;
                 }
                 // The selected account's own text is never copied into an
                 // owned SecureText buffer or submitted to the store.
@@ -560,6 +565,7 @@ NativeStatus status() noexcept {
     value.invalid_owner_callbacks=r.invalid_owner_callbacks;
     value.unmatched_owner_callbacks=r.unmatched_owner_callbacks;
     value.last_scope_failure_reason=r.last_scope_failure_reason;
+    value.last_invalid_sender_reason=r.last_invalid_sender_reason;
     value.revision=r.revision;value.error=r.error;
     if (r.worker) value.worker=r.worker->status();
     return value;

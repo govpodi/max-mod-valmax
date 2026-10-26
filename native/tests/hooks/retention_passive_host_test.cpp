@@ -251,13 +251,18 @@ int main(int argc,char **argv) {
             CHECK(status().route_failures==2);
             CHECK(status().active_owners==128);
             CHECK(status().last_scope_failure_reason==ScopeFailureReason::OwnerCapacity);
+            CHECK(status().last_invalid_sender_reason==rows::InvalidSenderReason::None);
             CHECK(status().worker.error==pilot::AsyncError::InvalidRoute);
             shutdown();
             return 0;
         }
-        OwnerFixture owner;
+        OwnerFixture owner,second;
         owner.setup(targets,11,-22);
         fake_owner_create(owner.owner.data());
+        if (invalid_sender) {
+            second.setup(targets,12,-22);
+            fake_owner_create(second.owner.data());
+        }
         send(owner,31,12,0,"fixture start");
         CHECK(synthetic_store_ready());
         CHECK(set_enabled(true,std::string(64,'a'),1));
@@ -270,12 +275,21 @@ int main(int argc,char **argv) {
         CHECK(failed.route_failures==1);
         CHECK(failed.last_scope_failure_reason==(invalid_sender
             ? ScopeFailureReason::InvalidSender : ScopeFailureReason::DuplicateTextId));
+        CHECK(failed.last_invalid_sender_reason==(invalid_sender
+            ? rows::InvalidSenderReason::ZeroSenderNonempty : rows::InvalidSenderReason::None));
+        CHECK(failed.active_owners==(invalid_sender ? 2u : 1u));
         CHECK(failed.worker.error==pilot::AsyncError::InvalidRoute);
         CHECK(failed.bounded_skips==0);
         CHECK(!failed.capture_enabled() && failed.worker.captured==0);
-        send(owner,33,12,0,"after failure");
+        if (invalid_sender) send(second,33,11,0,"other account");
+        else send(owner,33,12,0,"after failure");
         CHECK(status().last_scope_failure_reason==failed.last_scope_failure_reason);
+        CHECK(status().last_invalid_sender_reason==failed.last_invalid_sender_reason);
         CHECK(status().route_failures==failed.route_failures);
+        {
+            std::lock_guard lock(backend.mutex);
+            CHECK(backend.content.empty());
+        }
         shutdown();
         return 0;
     }
@@ -430,6 +444,7 @@ int main(int argc,char **argv) {
     CHECK(status().error==HostError::OwnerScope);
     CHECK(status().route_failures==before_bad_scope.route_failures+1);
     CHECK(status().last_scope_failure_reason==ScopeFailureReason::AmbiguousRoute);
+    CHECK(status().last_invalid_sender_reason==rows::InvalidSenderReason::None);
     CHECK(status().worker.error==pilot::AsyncError::InvalidRoute);
     fake_owner_destroy(first.owner.data());fake_owner_destroy(second.owner.data());
     CHECK(!status().owner_join && !status().infrastructure_ready());

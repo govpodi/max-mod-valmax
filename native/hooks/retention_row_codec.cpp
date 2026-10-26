@@ -70,19 +70,27 @@ bool unique_route(std::span<const OwnerScope> owners, uintptr_t database,
     return true;
 }
 
-bool empty_zero_sender_ignore(uintptr_t address, uint32_t expected_status,
-                              ReadMemory read, void *context) noexcept {
-    if (expected_status > 1 || address == 0 || !read
-        || address > UINTPTR_MAX-kMessageBytes) return false;
+InvalidSenderReason inspect_invalid_sender(uintptr_t address, uint32_t expected_status,
+                                           int64_t expected_sender, ReadMemory read,
+                                           void *context) noexcept {
+    if (expected_status > 1 || expected_sender > 0)
+        return InvalidSenderReason::HeaderMismatch;
+    if (address == 0 || !read || address > UINTPTR_MAX-kMessageBytes)
+        return InvalidSenderReason::UnreadableRow;
     RawRow row;
-    if (!read(address,row.bytes.data(),row.bytes.size(),context)) return false;
-    const auto id = field<int64_t>(row,kIdOffset);
+    if (!read(address,row.bytes.data(),row.bytes.size(),context))
+        return InvalidSenderReason::UnreadableRow;
     const auto sender = field<int64_t>(row,kSenderOffset);
     const auto status = field<uint32_t>(row,kStatusOffset);
+    if (sender != expected_sender || status != expected_status)
+        return InvalidSenderReason::HeaderMismatch;
+    if (sender < 0) return InvalidSenderReason::NegativeSender;
     const auto size = field<uint64_t>(row,kTextLengthOffset);
     const auto capacity = field<uint64_t>(row,kTextCapacityOffset);
-    return id > 0 && sender == 0 && status == expected_status && size == 0
-        && valid_text_shape(size,capacity);
+    if (!valid_text_shape(size,capacity)) return InvalidSenderReason::InvalidTextShape;
+    if (size != 0) return InvalidSenderReason::ZeroSenderNonempty;
+    if (field<int64_t>(row,kIdOffset) <= 0) return InvalidSenderReason::InvalidId;
+    return InvalidSenderReason::EmptyIgnore;
 }
 
 bool decode(uintptr_t address, ReadMemory read, void *context, Snapshot &output) noexcept {
