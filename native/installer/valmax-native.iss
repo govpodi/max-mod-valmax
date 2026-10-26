@@ -38,6 +38,12 @@
     #error Native release eligibility include is required
   #endif
   #include Payload + "\native-release-state.iss"
+  #ifndef NativeFFmpegSourceMode
+    #error FFmpeg source packaging mode must be pinned
+  #endif
+  #if (NativeFFmpegSourceMode != "inline") && (NativeFFmpegSourceMode != "separate-asset")
+    #error Unknown FFmpeg source packaging mode
+  #endif
   #if NativeDistributionMode == "local-preview"
     #ifndef NativePreviewVersion
       #error A local preview version is required
@@ -104,6 +110,7 @@
       #if GetSHA256OfFile(Payload + "\native-beta-materials.json") != NativeBetaMaterialsInfoSha256
         #error Public BETA materials summary belongs to another package
       #endif
+      #if NativeFFmpegSourceMode == "inline"
       #if !FileExists(Payload + "\materials\FFmpeg\ffmpeg-7.1.3.tar.xz") || !FileExists(Payload + "\materials\FFmpeg\ffmpeg-7.1.5.tar.xz")
         #error Both versioned FFmpeg source archives are required
       #endif
@@ -127,6 +134,7 @@
       #endif
       #if GetSHA256OfFile(Payload + "\materials\FFmpeg\build-configurations.json") != NativeBetaBuildConfigSha256
         #error FFmpeg build configurations belong to another package
+      #endif
       #endif
     #else
       #if (NativeDistributionMode != "user-release") || (NativeReleaseEligible != 1) || (NativeReleaseBlockerCount != 0)
@@ -173,6 +181,38 @@
     #endif
     #if GetSHA256OfFile(Payload + "\QT-SOURCE-AVAILABILITY.txt") != NativeQtSourceInfoSha256
       #error Separate Qt source availability notice differs from the package receipt
+    #endif
+  #endif
+  #if NativeFFmpegSourceMode == "separate-asset"
+    #if NativeDistributionMode != "public-beta"
+      #error Separate FFmpeg source asset is only supported for public BETA
+    #endif
+    #ifndef NativeFFmpegSourceAssetSha256
+      #error Separate FFmpeg source asset digest is missing
+    #endif
+    #ifndef NativeFFmpegSourceInfoSha256
+      #error Separate FFmpeg source notice digest is missing
+    #endif
+    #ifndef FFmpegSourceAsset
+      #error Separate FFmpeg source ZIP path must be supplied to the compiler
+    #endif
+    #if !FileExists(FFmpegSourceAsset)
+      #error Separate FFmpeg source ZIP is missing
+    #endif
+    #if GetSHA256OfFile(FFmpegSourceAsset) != NativeFFmpegSourceAssetSha256
+      #error Separate FFmpeg source ZIP differs from the package receipt
+    #endif
+    #if !FileExists(Payload + "\FFMPEG-SOURCE-AVAILABILITY.txt")
+      #error Separate FFmpeg source availability notice is missing
+    #endif
+    #if GetSHA256OfFile(Payload + "\FFMPEG-SOURCE-AVAILABILITY.txt") != NativeFFmpegSourceInfoSha256
+      #error Separate FFmpeg source availability notice differs from the package receipt
+    #endif
+    #if DirExists(Payload + "\materials\FFmpeg")
+      #error External FFmpeg materials directory must not remain in Setup
+    #endif
+    #if DirExists(Payload + "\source-assets")
+      #error External source assets directory must not be inside Setup
     #endif
   #endif
   #define NativeAppId "{419706B9-6FC7-46F8-B9FB-D7212FC91BAC}"

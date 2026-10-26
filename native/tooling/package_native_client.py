@@ -8,6 +8,7 @@ from __future__ import annotations
 import argparse
 import ast
 import hashlib
+import io
 import importlib.util
 import json
 import os
@@ -50,6 +51,7 @@ LOCAL_PREVIEW_BLOCKERS = frozenset(key for key, _ in CURRENT_RELEASE_BLOCKERS) |
 LOCAL_PREVIEW_INFO = "native-preview.txt"
 PUBLIC_BETA_INFO = "native-beta.txt"
 PUBLIC_BETA_MATERIAL_INFO = "native-beta-materials.json"
+FFMPEG_SOURCE_INFO = "FFMPEG-SOURCE-AVAILABILITY.txt"
 QT_SOURCE_INFO = "QT-SOURCE-AVAILABILITY.txt"
 PUBLIC_BETA_SCENARIOS = (
     "installed_launch",
@@ -267,17 +269,21 @@ def validate_subject(subject):
 def public_beta_preflight(subject, evidence, now, artifact_identity, materials,
                           artifact_verified, qml_compatibility_verified, max_rights_attested,
                           beta_materials=None, beta_materials_error=None,
-                          webview2_mode="fixed", qt_source_mode="inline"):
+                          webview2_mode="fixed", qt_source_mode="inline",
+                          ffmpeg_source_mode="inline"):
     """A public BETA requires installed core use on the exact packaged bytes.
 
     Accepted BETA limitations are disclosed, while byte integrity, exact
     documented materials and a passing installed-client smoke stay gates.
     """
+    require(ffmpeg_source_mode in ("inline", "separate-asset"),
+            "unknown FFmpeg source packaging mode")
     material_limitations = beta_material_limitations(webview2_mode, qt_source_mode)
     blockers = []
     result = {"schema": 1, "checkedAt": now.strftime("%Y-%m-%dT%H:%M:%SZ"),
               "distributionMode": "public-beta", "releaseEligible": False,
               "webview2Mode": webview2_mode, "qtSourceMode": qt_source_mode,
+              "ffmpegSourceMode": ffmpeg_source_mode,
               "featureRuntimeTested": False, "betaCoreTested": False,
               "subject": subject, "evidenceVerified": False,
               "wholeClientMaterialsVerified": False, "materialsDocumentedForBeta": False,
@@ -293,7 +299,15 @@ def public_beta_preflight(subject, evidence, now, artifact_identity, materials,
     def block(key, reason):
         blockers.append({"id": key, "reason": reason})
 
-    if (isinstance(beta_materials, dict) and beta_materials.get("verified") is True
+    ffmpeg_asset_valid = ffmpeg_source_mode == "inline" and (
+        not isinstance(beta_materials, dict) or beta_materials.get("ffmpegSourceDistribution") is None)
+    if ffmpeg_source_mode == "separate-asset" and isinstance(beta_materials, dict):
+        try:
+            validate_ffmpeg_source_distribution(beta_materials.get("ffmpegSourceDistribution"), subject)
+            ffmpeg_asset_valid = True
+        except (ValueError, TypeError, KeyError):
+            pass
+    if (ffmpeg_asset_valid and isinstance(beta_materials, dict) and beta_materials.get("verified") is True
             and beta_materials.get("completeForWholeClient") is False
             and beta_materials.get("exactCorrespondingSourceProven") is False
             and beta_materials.get("knownLimitations") ==
@@ -373,6 +387,7 @@ def release_preflight(subject=None, evidence=None, mode="user-release", now=None
                       qml_compatibility_verified=False, max_rights_attested=False,
                       beta_materials=None, beta_materials_error=None,
                       webview2_mode="fixed", qt_source_mode="inline",
+                      ffmpeg_source_mode="inline",
                       qml_proof_path=None):
     """Receipts attest installed behavior for exact bytes, never DLL presence.
 
@@ -385,7 +400,7 @@ def release_preflight(subject=None, evidence=None, mode="user-release", now=None
         return public_beta_preflight(subject, evidence, now, artifact_identity, materials,
                                      artifact_verified, qml_compatibility_verified, max_rights_attested,
                                      beta_materials, beta_materials_error,
-                                     webview2_mode, qt_source_mode)
+                                     webview2_mode, qt_source_mode, ffmpeg_source_mode)
     rights_attested = mode == "user-release" and max_rights_attested is True
     blockers = [{"id": key, "reason": reason} for key, reason in CURRENT_RELEASE_BLOCKERS]
     if not rights_attested:
@@ -829,14 +844,135 @@ def bound_qt_source_asset(runtime, rows, assembly, material_binding, qt_source_m
     return {"receipt": receipt, "archive": archive, "manifest": manifest_file}
 
 
+def validate_ffmpeg_source_distribution(receipt, subject):
+    """The separate FFmpeg ZIP is a required release asset, not legal clearance."""
+    validate_subject(subject)
+    require(isinstance(receipt, dict) and set(receipt) == {
+                "mode", "assetName", "assetBytes", "assetSha256", "manifestSha256",
+                "subject", "sourceBundleCount", "requiredTogetherWithInstaller",
+                "manifestDistribution", "availabilityDraftIncluded", "legalCompleteness",
+                "exactCorrespondingSourceProven"}
+            and receipt["mode"] == "separate-asset"
+            and receipt["assetName"] == "ValMAX-FFmpeg-sources-" + subject["version"] + ".zip"
+            and PurePosixPath(receipt["assetName"]).name == receipt["assetName"]
+            and type(receipt["assetBytes"]) is int and receipt["assetBytes"] > 0
+            and isinstance(receipt["assetSha256"], str)
+            and re.fullmatch(r"[0-9a-f]{64}", receipt["assetSha256"])
+            and isinstance(receipt["manifestSha256"], str)
+            and re.fullmatch(r"[0-9a-f]{64}", receipt["manifestSha256"])
+            and receipt["subject"] == subject and receipt["sourceBundleCount"] == 2
+            and receipt["requiredTogetherWithInstaller"] is True
+            and receipt["manifestDistribution"] == "public-beta-asset"
+            and receipt["availabilityDraftIncluded"] is False
+            and receipt["legalCompleteness"] == "not-assessed"
+            and receipt["exactCorrespondingSourceProven"] is False,
+            "separate FFmpeg asset is unbound, optional or claims unproved source correspondence")
+
+
+def ffmpeg_source_asset_plan(subject, source_paths, source_rows, config_row, config_bytes,
+                             reference_hashes):
+    """Build a deterministic source ZIP in memory, including its byte manifest."""
+    require_preview_version(subject["version"])
+    validate_subject(subject)
+    require([row["version"] for row in source_rows] == ["7.1.3", "7.1.5"]
+            and config_row["assetMember"] == "build-configurations.json",
+            "exact external FFmpeg source inventory required")
+    manifest = {"schema": "valmax.ffmpeg-source-asset.v1",
+                "releaseSubject": subject, "sourceBundles": source_rows,
+                "buildConfigurations": config_row,
+                "referenceHashes": reference_hashes,
+                "exactCorrespondingSourceProven": False,
+                "completeForWholeClient": False}
+    manifest_bytes = (json.dumps(manifest, sort_keys=True, ensure_ascii=False, indent=2) + "\n").encode("utf8")
+    members = [("manifest.json", manifest_bytes)]
+    for row in source_rows:
+        for kind, item in (("source", row), ("signature", row["signature"])):
+            source = source_paths[row["version"]][kind]
+            data = source.read_bytes()
+            require(ordinary(source).st_size == item["size"]
+                    and hashlib.sha256(data).hexdigest() == item["sha256"],
+                    "FFmpeg source or signature changed before external asset creation")
+            members.append((item["assetMember"], data))
+    require(len(config_bytes) == config_row["size"]
+            and hashlib.sha256(config_bytes).hexdigest() == config_row["sha256"],
+            "FFmpeg build configurations changed before external asset creation")
+    members.append((config_row["assetMember"], config_bytes))
+    require(len({name for name, _ in members}) == len(members)
+            and all(PurePosixPath(name).as_posix() == name and ".." not in PurePosixPath(name).parts
+                    and "\\" not in name
+                    for name, _ in members), "unsafe or duplicate FFmpeg source asset member")
+    buffer = io.BytesIO()
+    with zipfile.ZipFile(buffer, "w", compression=zipfile.ZIP_STORED) as archive:
+        for name, data in members:
+            entry = zipfile.ZipInfo(name, date_time=(1980, 1, 1, 0, 0, 0))
+            entry.compress_type = zipfile.ZIP_STORED
+            entry.create_system = 3
+            entry.external_attr = 0o100644 << 16
+            archive.writestr(entry, data)
+    data = buffer.getvalue()
+    receipt = {"mode": "separate-asset",
+               "assetName": "ValMAX-FFmpeg-sources-" + subject["version"] + ".zip",
+               "assetBytes": len(data), "assetSha256": hashlib.sha256(data).hexdigest(),
+               "manifestSha256": hashlib.sha256(manifest_bytes).hexdigest(),
+               "subject": subject, "sourceBundleCount": 2,
+               "requiredTogetherWithInstaller": True,
+               "manifestDistribution": "public-beta-asset",
+               "availabilityDraftIncluded": False,
+               "legalCompleteness": "not-assessed",
+               "exactCorrespondingSourceProven": False}
+    validate_ffmpeg_source_distribution(receipt, subject)
+    return {"receipt": receipt, "bytes": data, "manifest": manifest}
+
+
+def verify_ffmpeg_source_asset(path, receipt, summary):
+    """Reject a missing, changed or incomplete external ZIP before compilation."""
+    validate_ffmpeg_source_distribution(receipt, summary["ffmpegSourceDistribution"]["subject"])
+    require(ordinary(path).st_size == receipt["assetBytes"]
+            and sha(path) == receipt["assetSha256"],
+            "separate FFmpeg source asset is missing or changed")
+    with zipfile.ZipFile(path) as archive:
+        expected = {"manifest.json", "build-configurations.json"}
+        for row in summary["sourceBundles"]:
+            expected.update((row["assetMember"], row["signature"]["assetMember"]))
+        require(set(archive.namelist()) == expected and len(archive.namelist()) == len(expected),
+                "separate FFmpeg source asset has missing or extra members")
+        manifest_bytes = archive.read("manifest.json")
+        require(hashlib.sha256(manifest_bytes).hexdigest() == receipt["manifestSha256"],
+                "separate FFmpeg source asset manifest changed")
+        manifest = json.loads(manifest_bytes)
+        reference_keys = ("ffmpegReferenceBundleManifestSha256", "ffmpegAuditSha256",
+                          "ffmpegRuntimeManifestSha256", "ffmpegSignatureVerificationSha256")
+        require(set(manifest) == {"schema", "releaseSubject", "sourceBundles",
+                                  "buildConfigurations", "referenceHashes",
+                                  "exactCorrespondingSourceProven", "completeForWholeClient"}
+                and manifest.get("schema") == "valmax.ffmpeg-source-asset.v1"
+                and manifest.get("releaseSubject") == receipt["subject"]
+                and manifest.get("sourceBundles") == summary["sourceBundles"]
+                and manifest.get("buildConfigurations") == summary["buildConfigurations"]
+                and manifest.get("referenceHashes") == {key: summary[key] for key in reference_keys}
+                and manifest.get("exactCorrespondingSourceProven") is False
+                and manifest.get("completeForWholeClient") is False,
+                "separate FFmpeg source asset manifest differs from the package")
+        for row in (*summary["sourceBundles"],
+                    *(item["signature"] for item in summary["sourceBundles"]),
+                    summary["buildConfigurations"]):
+            data = archive.read(row["assetMember"])
+            require(len(data) == row["size"] and hashlib.sha256(data).hexdigest() == row["sha256"],
+                    "separate FFmpeg source asset member differs from the package")
+    return True
+
+
 def beta_materials_documentation(binding, rows, assembly_receipt_sha, subject, evidence,
-                                 webview2_mode="fixed", qt_source_mode="inline"):
+                                 webview2_mode="fixed", qt_source_mode="inline",
+                                 ffmpeg_source_mode="inline"):
     """Document a bounded BETA materials gap without asserting legal completeness.
 
     `binding` is already byte-bound to the assembled runtime by bound_materials.
-    FFmpeg archives are supplied in the package. Qt archives may instead be
-    byte-bound to a separate asset. Exact FFmpeg DLL correspondence is not claimed.
+    FFmpeg archives are supplied either in the package or in a byte-bound
+    mandatory release asset. Exact FFmpeg DLL correspondence is not claimed.
     """
+    require(ffmpeg_source_mode in ("inline", "separate-asset"),
+            "unknown FFmpeg source packaging mode")
     require(isinstance(binding, dict) and isinstance(binding.get("status"), dict)
             and isinstance(binding.get("sha256"), str)
             and re.fullmatch(r"[0-9a-f]{64}", binding["sha256"]),
@@ -1054,9 +1190,11 @@ def beta_materials_documentation(binding, rows, assembly_receipt_sha, subject, e
             member = archive.getmember("ffmpeg-" + entry["version"] + "/libavcodec/version.h")
             require(member.isfile() and member.size > 0, "FFmpeg source bundle has no versioned source tree")
         source_paths[entry["version"]] = {"source": source, "signature": signature}
-        source_rows.append({"version": entry["version"], "path": "materials/FFmpeg/" + name,
+        location_key = "path" if ffmpeg_source_mode == "inline" else "assetMember"
+        prefix = "materials/FFmpeg/" if ffmpeg_source_mode == "inline" else "sources/"
+        source_rows.append({"version": entry["version"], location_key: prefix + name,
                             "size": entry["bytes"], "sha256": entry["sha256"],
-                            "signature": {"path": "materials/FFmpeg/" + name + ".asc",
+                            "signature": {location_key: prefix + name + ".asc",
                                           "size": ordinary(signature).st_size,
                                           "sha256": entry["signatureSha256"]}})
     require(set(source_paths) == {"7.1.3", "7.1.5"}, "both FFmpeg source versions required")
@@ -1064,8 +1202,17 @@ def beta_materials_documentation(binding, rows, assembly_receipt_sha, subject, e
     config_bytes = (json.dumps({"schema": 1, "exactCorrespondingSourceProven": False,
                                 "ffmpegAuditSha256": audit_ref["sha256"],
                                 "libraries": configurations}, sort_keys=True, ensure_ascii=False, indent=2) + "\n").encode("utf8")
-    config_row = {"path": "materials/FFmpeg/build-configurations.json", "size": len(config_bytes),
+    config_row = {"path" if ffmpeg_source_mode == "inline" else "assetMember":
+                  "materials/FFmpeg/build-configurations.json" if ffmpeg_source_mode == "inline"
+                  else "build-configurations.json", "size": len(config_bytes),
                   "sha256": hashlib.sha256(config_bytes).hexdigest()}
+    asset_plan = None
+    if ffmpeg_source_mode == "separate-asset":
+        asset_plan = ffmpeg_source_asset_plan(subject, source_paths, source_rows, config_row,
+            config_bytes, {"ffmpegReferenceBundleManifestSha256": bundle_ref["sha256"],
+                           "ffmpegAuditSha256": audit_ref["sha256"],
+                           "ffmpegRuntimeManifestSha256": runtime_ref["sha256"],
+                           "ffmpegSignatureVerificationSha256": signature_ref["sha256"]})
     summary = {"verified": True, "materialsReceiptSha256": binding["sha256"],
                "assemblyReceiptSha256": assembly_receipt_sha,
                "evidenceSha256": sha(evidence_file),
@@ -1077,16 +1224,33 @@ def beta_materials_documentation(binding, rows, assembly_receipt_sha, subject, e
                "knownLimitations": [{"id": item["id"], "reason": item["statusText"]}
                                     for item in material_limitations],
                "exactCorrespondingSourceProven": False, "completeForWholeClient": False}
+    if asset_plan is not None:
+        summary["ffmpegSourceDistribution"] = asset_plan["receipt"]
     if qt_source_delivery:
         summary["qtSourceDistribution"] = qt_source_delivery
     return {"summary": summary, "sourcePaths": source_paths, "configBytes": config_bytes,
+            "ffmpegSourceMode": ffmpeg_source_mode, "ffmpegSourceAsset": asset_plan,
             "auditPath": audit_path, "evidencePath": evidence_file,
             "bundlePath": bundle_path, "runtimeManifestPath": runtime_manifest_path,
             "signatureVerificationPath": signature_path}
 
 
-def copy_beta_materials(payload, plan):
+def ffmpeg_source_availability(asset):
+    validate_ffmpeg_source_distribution(asset, asset["subject"])
+    return (
+        "Материалы FFmpeg находятся в обязательном отдельном архиве " + asset["assetName"] +
+        ". SHA-256: " + asset["assetSha256"] + ". Скачайте его вместе с установщиком из одного выпуска. "
+        "Соответствие исходников конкретным DLL пока не доказано.\n"
+        "FFmpeg materials are in the required separate archive " + asset["assetName"] +
+        ". SHA-256: " + asset["assetSha256"] + ". Download it alongside Setup from the same release. "
+        "Exact source correspondence for the bundled DLLs remains unproven.\n"
+    ).encode("utf-8-sig")
+
+
+def copy_beta_materials(payload, plan, output=None):
     summary = plan["summary"]
+    source_mode = plan.get("ffmpegSourceMode", "inline")
+    require(source_mode in ("inline", "separate-asset"), "unknown FFmpeg source copying mode")
     require(sha(plan["auditPath"]) == summary["ffmpegAuditSha256"]
             and sha(plan["evidencePath"]) == summary["evidenceSha256"]
             and sha(plan["bundlePath"]) == summary["ffmpegReferenceBundleManifestSha256"]
@@ -1096,19 +1260,51 @@ def copy_beta_materials(payload, plan):
     for row in summary["sourceBundles"]:
         for kind, item in (("source", row), ("signature", row["signature"])):
             source = plan["sourcePaths"][row["version"]][kind]
-            target = payload / item["path"]
-            target.parent.mkdir(parents=True, exist_ok=True)
-            require(not target.exists() and ordinary(source).st_size == item["size"]
-                    and sha(source) == item["sha256"], "FFmpeg source or signature changed before copying")
-            shutil.copyfile(source, target)
-            require(ordinary(target).st_size == item["size"] and sha(target) == item["sha256"]
-                    and sha(source) == item["sha256"], "FFmpeg source or signature copy mismatch")
+            require(ordinary(source).st_size == item["size"] and sha(source) == item["sha256"],
+                    "FFmpeg source or signature changed before copying")
+            if source_mode == "inline":
+                target = payload / item["path"]
+                target.parent.mkdir(parents=True, exist_ok=True)
+                require(not target.exists(), "new FFmpeg source or signature target required")
+                shutil.copyfile(source, target)
+                require(ordinary(target).st_size == item["size"] and sha(target) == item["sha256"]
+                        and sha(source) == item["sha256"], "FFmpeg source or signature copy mismatch")
     config = summary["buildConfigurations"]
-    target = payload / config["path"]
-    require(not target.exists(), "new FFmpeg configuration target required")
-    target.write_bytes(plan["configBytes"])
-    require(ordinary(target).st_size == config["size"] and sha(target) == config["sha256"],
-            "FFmpeg configuration copy mismatch")
+    require(len(plan["configBytes"]) == config["size"]
+            and hashlib.sha256(plan["configBytes"]).hexdigest() == config["sha256"],
+            "FFmpeg configuration changed before copying")
+    if source_mode == "inline":
+        require(summary.get("ffmpegSourceDistribution") is None,
+                "inline FFmpeg package claims an external source asset")
+        target = payload / config["path"]
+        require(not target.exists(), "new FFmpeg configuration target required")
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_bytes(plan["configBytes"])
+        require(ordinary(target).st_size == config["size"] and sha(target) == config["sha256"],
+                "FFmpeg configuration copy mismatch")
+    else:
+        asset_plan = plan.get("ffmpegSourceAsset")
+        asset = summary.get("ffmpegSourceDistribution")
+        require(output is not None and isinstance(asset_plan, dict)
+                and asset_plan.get("receipt") == asset and isinstance(asset_plan.get("bytes"), bytes),
+                "required separate FFmpeg source asset plan is missing")
+        validate_ffmpeg_source_distribution(asset, asset["subject"])
+        require(not (payload / "materials/FFmpeg").exists()
+                and not (payload / "source-assets").exists(),
+                "FFmpeg source materials and source-assets must be outside the slim installer")
+        folder = output / "source-assets"
+        folder.mkdir(exist_ok=True)
+        ordinary(folder, directory=True)
+        target = folder / asset["assetName"]
+        require(not target.exists(), "new separate FFmpeg source asset required")
+        target.write_bytes(asset_plan["bytes"])
+        verify_ffmpeg_source_asset(target, asset, summary)
+        notice = payload / FFMPEG_SOURCE_INFO
+        require(not notice.exists(), "new FFmpeg source availability notice required")
+        notice.write_bytes(ffmpeg_source_availability(asset))
+        plan["ffmpegSourceAssetCopy"] = {"path": str(target), "name": asset["assetName"],
+                                         "size": asset["assetBytes"], "sha256": asset["assetSha256"]}
+        plan["ffmpegSourceAvailability"] = {"path": FFMPEG_SOURCE_INFO, "sha256": sha(notice)}
     info = payload / PUBLIC_BETA_MATERIAL_INFO
     require(not info.exists(), "new public BETA materials summary required")
     info.write_text(json.dumps(summary, ensure_ascii=False, sort_keys=True, indent=2) + "\n", encoding="utf8")
@@ -1196,6 +1392,9 @@ def require_distribution(mode, report, installer=False):
     if mode == "public-beta":
         material_limitations = beta_material_limitations(report.get("webview2Mode", "fixed"),
                                                         report.get("qtSourceMode", "inline"))
+        ffmpeg_source_mode = report.get("ffmpegSourceMode", "inline")
+        require(ffmpeg_source_mode in ("inline", "separate-asset"),
+                "unknown FFmpeg source packaging mode")
         require(report.get("distributionMode") == mode and report.get("releaseEligible") is True
                 and report.get("betaCoreTested") is True and report.get("featureRuntimeTested") is False
                 and report.get("evidenceVerified") is True, "public BETA requires passing installed core smoke without a stable feature claim")
@@ -1224,16 +1423,23 @@ def require_distribution(mode, report, installer=False):
                 and isinstance(beta_materials.get("evidenceSha256"), str)
                 and re.fullmatch(r"[0-9a-f]{64}", beta_materials["evidenceSha256"]),
                 "public BETA materials are not bound to this exact assembled runtime")
+        if ffmpeg_source_mode == "separate-asset":
+            validate_ffmpeg_source_distribution(beta_materials.get("ffmpegSourceDistribution"), subject)
+        else:
+            require(beta_materials.get("ffmpegSourceDistribution") is None,
+                    "inline public BETA claims a separate FFmpeg source asset")
         sources = beta_materials.get("sourceBundles")
+        location_key = "path" if ffmpeg_source_mode == "inline" else "assetMember"
+        prefix = "materials/FFmpeg/" if ffmpeg_source_mode == "inline" else "sources/"
         require(isinstance(sources, list) and len(sources) == 2
                 and all(isinstance(row, dict) for row in sources)
                 and [row.get("version") for row in sources] == ["7.1.3", "7.1.5"]
-                and all(row.get("path") == "materials/FFmpeg/ffmpeg-" + row["version"] + ".tar.xz"
+                and all(row.get(location_key) == prefix + "ffmpeg-" + row["version"] + ".tar.xz"
                         and type(row.get("size")) is int and row["size"] > 0
                         and isinstance(row.get("sha256"), str)
                         and re.fullmatch(r"[0-9a-f]{64}", row["sha256"])
                         and isinstance(row.get("signature"), dict)
-                        and row["signature"].get("path") == row["path"] + ".asc"
+                        and row["signature"].get(location_key) == row[location_key] + ".asc"
                         and type(row["signature"].get("size")) is int
                         and row["signature"]["size"] > 0
                         and isinstance(row["signature"].get("sha256"), str)
@@ -1245,7 +1451,9 @@ def require_distribution(mode, report, installer=False):
                                 "ffmpegRuntimeManifestSha256", "ffmpegSignatureVerificationSha256")),
                 "pinned FFmpeg reference and verification records required for public BETA")
         config = beta_materials.get("buildConfigurations")
-        require(isinstance(config, dict) and config.get("path") == "materials/FFmpeg/build-configurations.json"
+        require(isinstance(config, dict) and config.get(location_key) == (
+                    "materials/FFmpeg/build-configurations.json" if ffmpeg_source_mode == "inline"
+                    else "build-configurations.json")
                 and type(config.get("size")) is int and config["size"] > 0
                 and isinstance(config.get("sha256"), str)
                 and re.fullmatch(r"[0-9a-f]{64}", config["sha256"]),
@@ -1349,8 +1557,11 @@ def qt_source_availability(asset):
     ).encode("utf-8-sig")
 
 
-def beta_information(version, webview2_mode="fixed", qt_source_mode="inline", qt_source_asset=None):
+def beta_information(version, webview2_mode="fixed", qt_source_mode="inline", qt_source_asset=None,
+                     ffmpeg_source_mode="inline", ffmpeg_source_asset=None):
     require_preview_version(version)
+    require(ffmpeg_source_mode in ("inline", "separate-asset"),
+            "unknown FFmpeg source BETA notice mode")
     material_limitations = beta_material_limitations(webview2_mode, qt_source_mode)
     material_ru = "".join("• " + item["noticeRu"] + "\n" for item in material_limitations)
     material_en = "".join("• " + item["noticeEn"] + "\n" for item in material_limitations)
@@ -1372,6 +1583,24 @@ def beta_information(version, webview2_mode="fixed", qt_source_mode="inline", qt
                     " рядом с установщиком. SHA-256: " + qt_source_asset["assetSha256"] + ". Проверьте его наличие на странице релиза.\n")
         asset_en = ("Qt 6.11.2 sources must be published as a separate file " + qt_source_asset["assetName"] +
                     " beside the installer. SHA-256: " + qt_source_asset["assetSha256"] + ". Verify its presence on the release page.\n")
+    if ffmpeg_source_mode == "separate-asset":
+        require(isinstance(ffmpeg_source_asset, dict),
+                "separate FFmpeg source asset identity required for BETA notice")
+        validate_ffmpeg_source_distribution(ffmpeg_source_asset, ffmpeg_source_asset["subject"])
+        require(ffmpeg_source_asset["subject"]["version"] == version,
+                "FFmpeg source asset belongs to another BETA version")
+        ffmpeg_ru = ("Архивы upstream FFmpeg, подписи и конфигурации сборок находятся в обязательном отдельном файле "
+                     + ffmpeg_source_asset["assetName"] + " (SHA-256 " + ffmpeg_source_asset["assetSha256"] +
+                     "). Проверьте его публикацию рядом с установщиком. Точное соответствие исходников DLL из MAX остаётся недоказанным.\n\n")
+        ffmpeg_en = ("Upstream FFmpeg archives, signatures and build configurations are in the required separate file "
+                     + ffmpeg_source_asset["assetName"] + " (SHA-256 " + ffmpeg_source_asset["assetSha256"] +
+                     "). Check that it is published beside Setup. Exact source correspondence for the MAX DLL builds remains unproven.\n")
+    else:
+        require(ffmpeg_source_asset is None, "inline FFmpeg BETA notice claims an external asset")
+        ffmpeg_ru = ("Архивы upstream FFmpeg и конфигурации сборок находятся в materials/FFmpeg. "
+                     "Точное соответствие исходников DLL из MAX остаётся недоказанным.\n\n")
+        ffmpeg_en = ("Upstream FFmpeg source archives and build configurations are under materials/FFmpeg. "
+                     "Exact source correspondence for the MAX DLL builds remains unproven.\n")
     return (
         "ValMAX — публичная BETA-сборка\nВерсия: " + version + "\n\n"
         "Это рабочая тестовая версия. Проверен базовый сценарий установленного клиента; полная проверка всех функций ещё не завершена. Возможны ошибки.\n\n"
@@ -1382,7 +1611,7 @@ def beta_information(version, webview2_mode="fixed", qt_source_mode="inline", qt
         + evergreen_ru +
         "• Полная проверка всех функций, необходимая для стабильного релиза, ещё не завершена.\n\n"
         "Материалы сторонних компонентов — известные ограничения:\n" + material_ru + "\n"
-        "Архивы upstream FFmpeg и конфигурации сборок находятся в materials/FFmpeg. Точное соответствие исходников DLL из MAX остаётся недоказанным.\n\n"
+        + ffmpeg_ru
         + asset_ru +
         "Папка аккаунтов MXMOD и Windows credentials не переносятся и не очищаются установщиком. Предыдущая установка сохраняется рядом как резервная копия; не запускайте её старый uninstaller.\n"
         "Ограничения и результаты проверок указаны в native-package.json.\n\n"
@@ -1393,7 +1622,7 @@ def beta_information(version, webview2_mode="fixed", qt_source_mode="inline", qt
         "Ghost and notification protection before the first background event remains unverified. The full stable-release regression is pending.\n"
         + evergreen_en +
         "Third-party materials — known limitations:\n" + material_en + "\n"
-        "Upstream FFmpeg source archives and build configurations are under materials/FFmpeg. Exact source correspondence for the MAX DLL builds remains unproven.\n"
+        + ffmpeg_en
         + asset_en +
         "Setup does not migrate or clear MXMOD accounts or Windows credentials. The previous installation is preserved beside the new one; do not run its old uninstaller.\n"
         "See native-package.json for limitations and evidence.\n"
@@ -1404,7 +1633,11 @@ def write_release_state(payload, manifest, report):
     digest = sha(payload / "native-package.json")
     require(manifest["distributionMode"] in ("user-release", "developer-staging", "local-preview", "public-beta"), "invalid native release marker mode")
     qt_source_mode = manifest.get("qtSourceMode", "inline")
+    ffmpeg_source_mode = manifest.get("ffmpegSourceMode", "inline")
     require(qt_source_mode in ("inline", "separate-asset"), "unknown Qt source marker mode")
+    require(ffmpeg_source_mode in ("inline", "separate-asset")
+            and (ffmpeg_source_mode == "inline" or manifest["distributionMode"] == "public-beta"),
+            "unknown or inapplicable FFmpeg source marker mode")
     if qt_source_mode == "separate-asset":
         asset = manifest.get("qtSourceDistribution")
         require(isinstance(asset, dict) and asset.get("mode") == "separate-asset"
@@ -1416,10 +1649,26 @@ def write_release_state(payload, manifest, report):
         require(manifest.get("qtSourceDistribution") is None
                 and manifest.get("qtSourceAvailability") is None,
                 "inline Qt marker claims an external source asset")
+    if ffmpeg_source_mode == "separate-asset":
+        ffmpeg_asset = manifest.get("ffmpegSourceDistribution")
+        validate_ffmpeg_source_distribution(ffmpeg_asset, report["subject"])
+        require(ffmpeg_asset == report.get("betaMaterials", {}).get("ffmpegSourceDistribution")
+                and manifest.get("ffmpegSourceAvailability") ==
+                    {"path": FFMPEG_SOURCE_INFO, "sha256": sha(payload / FFMPEG_SOURCE_INFO)}
+                and not (payload / "materials/FFmpeg").exists()
+                and not (payload / "source-assets").exists(),
+                "separate FFmpeg source notice or byte binding changed")
+        ffmpeg_asset_path = payload.parent / "source-assets" / ffmpeg_asset["assetName"]
+        verify_ffmpeg_source_asset(ffmpeg_asset_path, ffmpeg_asset, manifest["betaMaterials"])
+    else:
+        require(manifest.get("ffmpegSourceDistribution") is None
+                and manifest.get("ffmpegSourceAvailability") is None,
+                "inline FFmpeg package claims an external source asset")
     marker = ('; Generated by the native packager; verified installed functionality is separate from compilation.\n'
               '#define NativeDistributionMode "' + manifest["distributionMode"] + '"\n'
               '#define NativeWebView2Mode "' + manifest.get("webview2Mode", "fixed") + '"\n'
               '#define NativeQtSourceMode "' + qt_source_mode + '"\n'
+              '#define NativeFFmpegSourceMode "' + ffmpeg_source_mode + '"\n'
               '#define NativeReleaseEligible ' + str(int(report["releaseEligible"] is True)) + '\n'
               '#define NativeReleaseBlockerCount ' + str(len(report["blockers"])) + '\n'
               '#define NativePackageManifestSha256 "' + digest + '"\n')
@@ -1434,6 +1683,10 @@ def write_release_state(payload, manifest, report):
     if qt_source_mode == "separate-asset":
         marker += ('#define NativeQtSourceAssetSha256 "' + asset["assetSha256"] + '"\n'
                    '#define NativeQtSourceInfoSha256 "' + manifest["qtSourceAvailability"]["sha256"] + '"\n')
+    if ffmpeg_source_mode == "separate-asset":
+        marker += ('#define NativeFFmpegSourceAssetSha256 "' + ffmpeg_asset["assetSha256"] + '"\n'
+                   '#define NativeFFmpegSourceInfoSha256 "' +
+                   manifest["ffmpegSourceAvailability"]["sha256"] + '"\n')
     if manifest["distributionMode"] == "local-preview":
         require_distribution("local-preview", report)
         require(manifest.get("localPreview") is True and manifest.get("previewInformation") == {
@@ -1458,12 +1711,13 @@ def write_release_state(payload, manifest, report):
                 "public BETA evidence or information changed")
         require(read_json(payload / PUBLIC_BETA_MATERIAL_INFO) == manifest["betaMaterials"],
                 "public BETA materials summary differs from manifest")
-        for row in (*manifest["betaMaterials"]["sourceBundles"],
-                    *(item["signature"] for item in manifest["betaMaterials"]["sourceBundles"]),
-                    manifest["betaMaterials"]["buildConfigurations"]):
-            target = payload / row["path"]
-            require(ordinary(target).st_size == row["size"] and sha(target) == row["sha256"],
-                    "public BETA source or configuration changed before installer compilation")
+        if ffmpeg_source_mode == "inline":
+            for row in (*manifest["betaMaterials"]["sourceBundles"],
+                        *(item["signature"] for item in manifest["betaMaterials"]["sourceBundles"]),
+                        manifest["betaMaterials"]["buildConfigurations"]):
+                target = payload / row["path"]
+                require(ordinary(target).st_size == row["size"] and sha(target) == row["sha256"],
+                        "public BETA source or configuration changed before installer compilation")
         require_preview_version(manifest["version"])
         marker += ('#define NativeBetaVersion "' + manifest["version"] + '"\n'
                    '#define NativeBetaCoreTested 1\n'
@@ -1497,6 +1751,8 @@ def main():
     parser.add_argument("--release-evidence", type=Path, help="Full feature manifest for user-release, installed core smoke receipt for public-beta.")
     parser.add_argument("--beta-materials-evidence", type=Path,
                         help="Exact assembled-materials and FFmpeg source/config bundle receipt for public-beta.")
+    parser.add_argument("--ffmpeg-source-mode", choices=("inline", "separate-asset"), default="inline",
+                        help="Keep FFmpeg source materials in Setup, or emit a required separate public-BETA ZIP asset.")
     parser.add_argument("--max-rights-attested", action="store_true",
                         help="Publisher attests MAX rights holder permission for this public distribution; no confidential document is stored.")
     parser.add_argument("--preflight-only", action="store_true")
@@ -1513,6 +1769,8 @@ def main():
             "MAX rights attestation is only accepted for public distribution")
     require(args.beta_materials_evidence is None or args.distribution == "public-beta",
             "BETA materials evidence is only accepted for public-beta")
+    require(args.ffmpeg_source_mode == "inline" or args.distribution == "public-beta",
+            "separate FFmpeg source asset is only accepted for public-beta")
     require(not args.preflight_only or args.iscc is None, "preflight never compiles an installer")
     require(args.preflight_report is not None or args.output is not None, "preflight report or output directory required")
     require(args.preflight_only or args.output is not None, "packaging output required")
@@ -1536,7 +1794,8 @@ def main():
                 inputs.get("materialBinding"), inputs["rows"],
                 inputs["hookTargetIdentity"]["assemblyReceiptSha256"],
                 subject, args.beta_materials_evidence,
-                inputs.get("webview2Mode", "fixed"), inputs.get("qtSourceMode", "inline"))
+                inputs.get("webview2Mode", "fixed"), inputs.get("qtSourceMode", "inline"),
+                args.ffmpeg_source_mode)
         except (ValueError, OSError, KeyError, TypeError, tarfile.TarError, zipfile.BadZipFile) as error:
             beta_materials_error = str(error)
     report = release_preflight(subject, args.release_evidence, args.distribution,
@@ -1550,6 +1809,7 @@ def main():
                                beta_materials_error=beta_materials_error,
                                webview2_mode="fixed" if inputs is None else inputs.get("webview2Mode", "fixed"),
                                qt_source_mode="inline" if inputs is None else inputs.get("qtSourceMode", "inline"),
+                               ffmpeg_source_mode=args.ffmpeg_source_mode,
                                qml_proof_path=None if inputs is None else inputs["qml"] / "native-qml-proof.json")
     report["requestedVersion"] = args.version
     if args.version is None:
@@ -1564,6 +1824,9 @@ def main():
                                                               else inputs["materialBinding"]["sha256"])
     report["artifactValidation"]["qtSourceAsset"] = (None if inputs is None or inputs.get("qtSourceAsset") is None
                                                         else inputs["qtSourceAsset"]["receipt"])
+    report["artifactValidation"]["ffmpegSourceAsset"] = (None if beta_plan is None or
+                                                            beta_plan.get("ffmpegSourceAsset") is None
+                                                            else beta_plan["ffmpegSourceAsset"]["receipt"])
     report["nativeQmlCompatibility"] = {"legacyResources": legacy_resources,
         "verifiedNoLegacyReferences": inputs is not None and not legacy_resources,
         "scope": "Static generated/embedded resource references, not runtime network behavior."}
@@ -1607,9 +1870,12 @@ def main():
     if bootstrapper_pin is not None:
         required_bytes += bootstrapper_pin["size"]
     if beta_plan is not None:
-        required_bytes += sum(row["size"] for row in beta_plan["summary"]["sourceBundles"])
-        required_bytes += sum(row["signature"]["size"] for row in beta_plan["summary"]["sourceBundles"])
-        required_bytes += beta_plan["summary"]["buildConfigurations"]["size"]
+        if args.ffmpeg_source_mode == "separate-asset":
+            required_bytes += beta_plan["ffmpegSourceAsset"]["receipt"]["assetBytes"]
+        else:
+            required_bytes += sum(row["size"] for row in beta_plan["summary"]["sourceBundles"])
+            required_bytes += sum(row["signature"]["size"] for row in beta_plan["summary"]["sourceBundles"])
+            required_bytes += beta_plan["summary"]["buildConfigurations"]["size"]
     free_bytes = shutil.disk_usage(output.anchor).free
     require(free_bytes >= required_bytes * (2 if args.iscc else 1) + (512 << 20),
             "insufficient space for native payload and installer")
@@ -1663,7 +1929,9 @@ def main():
     preview = args.distribution == "local-preview"
     public_beta = args.distribution == "public-beta"
     preview_info = beta_info = None
-    beta_material_info = copy_beta_materials(payload, beta_plan) if public_beta else None
+    beta_material_info = copy_beta_materials(payload, beta_plan, output) if public_beta else None
+    ffmpeg_asset_copy = None if beta_plan is None else beta_plan.get("ffmpegSourceAssetCopy")
+    ffmpeg_info = None if beta_plan is None else beta_plan.get("ffmpegSourceAvailability")
     if preview:
         (payload / LOCAL_PREVIEW_INFO).write_bytes(preview_information(
             args.version, webview2_mode, qt_source_mode,
@@ -1672,13 +1940,20 @@ def main():
     if public_beta:
         (payload / PUBLIC_BETA_INFO).write_bytes(beta_information(
             args.version, webview2_mode, qt_source_mode,
-            None if qt_asset is None else qt_asset["receipt"]))
+            None if qt_asset is None else qt_asset["receipt"],
+            args.ffmpeg_source_mode,
+            None if beta_plan is None or beta_plan.get("ffmpegSourceAsset") is None
+            else beta_plan["ffmpegSourceAsset"]["receipt"]))
         beta_info = {"path": PUBLIC_BETA_INFO, "sha256": sha(payload / PUBLIC_BETA_INFO)}
     manifest = {"schema": 1, "nativeOnly": True, "version": args.version, "webview2Mode": webview2_mode,
                 "webview2Bootstrapper": bootstrapper_pin,
                 "qtSourceMode": qt_source_mode,
                 "qtSourceDistribution": None if qt_asset is None else qt_asset["receipt"],
                 "qtSourceAvailability": qt_info,
+                "ffmpegSourceMode": args.ffmpeg_source_mode,
+                "ffmpegSourceDistribution": None if beta_plan is None or
+                    beta_plan.get("ffmpegSourceAsset") is None else beta_plan["ffmpegSourceAsset"]["receipt"],
+                "ffmpegSourceAvailability": ffmpeg_info,
                 "launcherSha256": launcher_hash, "runtimeFiles": rows, "ancillaryFiles": ancillary, "qml": qml_result,
                 "dependencyClosure": closure, "featureRuntimeTested": report["featureRuntimeTested"],
                 "wholeClientMaterialsVerified": report["wholeClientMaterialsVerified"],
@@ -1701,9 +1976,13 @@ def main():
     (payload / "native-package.json").write_text(json.dumps(manifest, ensure_ascii=False, indent=2) + "\n", encoding="utf8")
     receipt = {"schema": 1, "packaged": True, "nativeOnly": True, "installerCompiled": False,
                "webview2Mode": webview2_mode, "qtSourceMode": qt_source_mode,
+               "ffmpegSourceMode": args.ffmpeg_source_mode,
                "webview2Bootstrapper": bootstrapper_copy,
                "qtSourceAsset": qt_asset_copy,
                "qtSourceDistribution": None if qt_asset is None else qt_asset["receipt"],
+               "ffmpegSourceAsset": ffmpeg_asset_copy,
+               "ffmpegSourceDistribution": manifest["ffmpegSourceDistribution"],
+               "ffmpegSourceAvailability": ffmpeg_info,
                "payload": str(payload), "manifestSha256": sha(payload / "native-package.json"),
                "installedClientChanged": False, "featureRuntimeTested": report["featureRuntimeTested"],
                "wholeClientMaterialsVerified": report["wholeClientMaterialsVerified"],
@@ -1732,6 +2011,10 @@ def main():
             require(sha(Path(qt_asset_copy["path"])) == qt_asset_copy["sha256"],
                     "separate Qt source ZIP changed before Inno compilation")
             command.insert(-1, "/DQtSourceAsset=" + qt_asset_copy["path"])
+        if ffmpeg_asset_copy is not None:
+            verify_ffmpeg_source_asset(Path(ffmpeg_asset_copy["path"]),
+                                       manifest["ffmpegSourceDistribution"], manifest["betaMaterials"])
+            command.insert(-1, "/DFFmpegSourceAsset=" + ffmpeg_asset_copy["path"])
         if bootstrapper_copy is not None:
             require(sha(Path(bootstrapper_copy["path"])) == bootstrapper_pin["sha256"],
                     "Evergreen bootstrapper changed before Inno compilation")
@@ -1749,6 +2032,11 @@ def main():
                 and sha(qt_asset["archive"]) == qt_asset_copy["sha256"]
                 and sha(payload / QT_SOURCE_INFO) == qt_info["sha256"],
                 "separate Qt source asset or availability notice changed before final receipt")
+    if ffmpeg_asset_copy is not None:
+        verify_ffmpeg_source_asset(Path(ffmpeg_asset_copy["path"]),
+                                   manifest["ffmpegSourceDistribution"], manifest["betaMaterials"])
+        require(sha(payload / FFMPEG_SOURCE_INFO) == ffmpeg_info["sha256"],
+                "separate FFmpeg source availability notice changed before final receipt")
     if bootstrapper_copy is not None:
         require(ordinary(Path(bootstrapper_copy["path"])).st_size == bootstrapper_pin["size"]
                 and sha(Path(bootstrapper_copy["path"])) == bootstrapper_pin["sha256"]

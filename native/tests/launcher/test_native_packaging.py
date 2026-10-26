@@ -3,11 +3,13 @@ import hashlib
 import io
 import json
 import copy
+from contextlib import redirect_stdout
 from pathlib import Path
 import sys
 import tempfile
 import tarfile
 import unittest
+import zipfile
 from unittest.mock import patch
 from datetime import datetime, timedelta, timezone
 import os
@@ -1184,6 +1186,70 @@ class NativePackaging(unittest.TestCase):
                       package.sha(payload / "native-beta-materials.json") + '"', marker)
         self.assertIn('#define NativeBetaSource713SignatureSha256 "' +
                       manifest["betaMaterials"]["sourceBundles"][0]["signature"]["sha256"] + '"', marker)
+
+    def test_public_beta_separate_ffmpeg_asset_is_bound_and_required(self):
+        inputs = self.staging_inputs()
+        subject, material_evidence = self.beta_material_fixture(inputs)
+        smoke = self.beta_smoke(subject)
+        plan = package.beta_materials_documentation(
+            inputs["materialBinding"], inputs["rows"],
+            inputs["hookTargetIdentity"]["assemblyReceiptSha256"],
+            subject, material_evidence, ffmpeg_source_mode="separate-asset")
+        repeated = package.beta_materials_documentation(
+            inputs["materialBinding"], inputs["rows"],
+            inputs["hookTargetIdentity"]["assemblyReceiptSha256"],
+            subject, material_evidence, ffmpeg_source_mode="separate-asset")
+        self.assertEqual(plan["ffmpegSourceAsset"]["bytes"], repeated["ffmpegSourceAsset"]["bytes"])
+        output = self.root / "public-beta-external-ffmpeg"
+        argv = ["package_native_client.py", "--version", subject["version"],
+                "--runtime", str(inputs["runtime"]), "--qml-build", str(inputs["qml"]),
+                "--launcher-proof", str(self.root / "launcher-proof.json"),
+                "--output", str(output), "--distribution", "public-beta",
+                "--release-evidence", str(smoke), "--beta-materials-evidence", str(material_evidence),
+                "--max-rights-attested", "--ffmpeg-source-mode", "separate-asset"]
+        with patch.object(sys, "argv", argv), patch.object(package, "packaging_inputs", return_value=inputs), \
+             patch.object(package.pins, "inventory", return_value=inputs["rows"]), \
+             patch.object(package.subprocess, "run") as compiler, redirect_stdout(io.StringIO()):
+            package.main()
+            compiler.assert_not_called()
+        payload = output / "payload"
+        manifest = json.loads((payload / "native-package.json").read_text("utf8"))
+        report = json.loads((output / "packaging-preflight.json").read_text("utf8"))
+        receipt = json.loads((output / "build-receipt.json").read_text("utf8"))
+        asset = manifest["ffmpegSourceDistribution"]
+        asset_path = output / "source-assets" / asset["assetName"]
+        self.assertTrue(manifest["releaseEligible"])
+        self.assertEqual(manifest["ffmpegSourceMode"], "separate-asset")
+        self.assertEqual(receipt["ffmpegSourceAsset"]["sha256"], asset["assetSha256"])
+        self.assertFalse((payload / "materials/FFmpeg").exists())
+        self.assertTrue(package.verify_ffmpeg_source_asset(asset_path, asset, manifest["betaMaterials"]))
+        with zipfile.ZipFile(asset_path) as archive:
+            self.assertEqual(archive.read("build-configurations.json"), plan["configBytes"])
+            self.assertEqual(len(archive.namelist()), 6)
+        notice = (payload / package.FFMPEG_SOURCE_INFO).read_text("utf-8-sig")
+        self.assertIn(asset["assetSha256"], notice)
+        self.assertIn(asset["assetName"], (payload / "native-beta.txt").read_text("utf-8-sig"))
+        marker = (payload / "native-release-state.iss").read_text("utf8")
+        self.assertIn('#define NativeFFmpegSourceMode "separate-asset"', marker)
+        self.assertIn('#define NativeFFmpegSourceAssetSha256 "' + asset["assetSha256"] + '"', marker)
+        original = asset_path.read_bytes()
+        asset_path.write_bytes(b"changed synthetic source asset")
+        with self.assertRaisesRegex(ValueError, "separate FFmpeg source asset is missing or changed"):
+            package.write_release_state(payload, manifest, report)
+        asset_path.unlink()
+        with self.assertRaises((ValueError, OSError)):
+            package.write_release_state(payload, manifest, report)
+        asset_path.write_bytes(original)
+        self.assertTrue(package.verify_ffmpeg_source_asset(asset_path, asset, manifest["betaMaterials"]))
+        for unexpected in (payload / "materials/FFmpeg", payload / "source-assets"):
+            with self.subTest(unexpected=unexpected.name):
+                unexpected.mkdir(parents=True)
+                try:
+                    with self.assertRaisesRegex(ValueError, "separate FFmpeg source notice or byte binding changed"):
+                        package.write_release_state(payload, manifest, report)
+                finally:
+                    unexpected.rmdir()
+        (payload / "materials").rmdir()
 
     def test_public_beta_marker_rejects_changed_notice_and_forged_claim(self):
         inputs = self.staging_inputs()

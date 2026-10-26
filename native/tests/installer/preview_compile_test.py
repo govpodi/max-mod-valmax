@@ -6,6 +6,7 @@ import hashlib
 import json
 import os
 from pathlib import Path
+import shutil
 import subprocess
 import uuid
 
@@ -58,6 +59,19 @@ def main():
     beta_material_sha, source713_sha, source715_sha, signature713_sha, signature715_sha, config_sha = (
         sha(beta_material_info), sha(source713), sha(source715),
         sha(signature713), sha(signature715), sha(configuration))
+    external_payload = build / "payload-external-ffmpeg"
+    (external_payload / "runtime/transfer").mkdir(parents=True)
+    for name in ("ValMAX.exe", "native-package.json", "native-beta.txt", "native-beta-materials.json"):
+        shutil.copyfile(payload / name, external_payload / name)
+    shutil.copyfile(payload / "runtime/transfer/valmax-transfer.exe",
+                    external_payload / "runtime/transfer/valmax-transfer.exe")
+    external_notice = external_payload / "FFMPEG-SOURCE-AVAILABILITY.txt"
+    external_notice_bytes = b"Owned synthetic external FFmpeg source availability fixture\n"
+    external_notice.write_bytes(external_notice_bytes)
+    external_asset = build / "source-assets" / "synthetic-ffmpeg-sources.zip"
+    external_asset.parent.mkdir()
+    external_asset.write_bytes(b"owned inert FFmpeg source ZIP compile fixture")
+    external_asset_sha, external_notice_sha = sha(external_asset), sha(external_notice)
     source_paths = (TEMPLATE, ROOT / "native/installer/managed-upgrade.iss",
                     ROOT / "native/tooling/package_native_client.py", Path(__file__))
     sources = {p.relative_to(ROOT).as_posix(): sha(p) for p in source_paths}
@@ -102,6 +116,13 @@ def main():
         ("beta-unmarked-version", ("public-beta", 1, 0, manifest_sha, beta_warning_sha, "8.9.0", "8.9.0", 1), False),
         ("beta-mismatched-version", ("public-beta", 1, 0, manifest_sha, beta_warning_sha, VERSION, "8.9.0-native.preview.2", 1), False),
         ("public-beta-compile-only", ("public-beta", 1, 0, manifest_sha, beta_warning_sha, VERSION, VERSION, 1), True),
+        ("beta-external-missing-asset-arg", ("public-beta", 1, 0, manifest_sha, beta_warning_sha, VERSION, VERSION, 1), False),
+        ("beta-external-missing-asset", ("public-beta", 1, 0, manifest_sha, beta_warning_sha, VERSION, VERSION, 1), False),
+        ("beta-external-wrong-asset", ("public-beta", 1, 0, manifest_sha, beta_warning_sha, VERSION, VERSION, 1), False),
+        ("beta-external-missing-notice", ("public-beta", 1, 0, manifest_sha, beta_warning_sha, VERSION, VERSION, 1), False),
+        ("beta-external-reintroduced-materials", ("public-beta", 1, 0, manifest_sha, beta_warning_sha, VERSION, VERSION, 1), False),
+        ("beta-external-embedded-asset", ("public-beta", 1, 0, manifest_sha, beta_warning_sha, VERSION, VERSION, 1), False),
+        ("public-beta-external-compile-only", ("public-beta", 1, 0, manifest_sha, beta_warning_sha, VERSION, VERSION, 1), True),
     ]
     beta_errors = {
         "beta-missing-info-pin": "Public BETA information must be pinned",
@@ -125,12 +146,20 @@ def main():
         "beta-wrong-manifest": "Native eligibility include belongs to another package manifest",
         "beta-unmarked-version": "The public BETA product version must be visibly marked",
         "beta-mismatched-version": "The public BETA product version must be visibly marked",
+        "beta-external-missing-asset-arg": "Separate FFmpeg source ZIP path must be supplied",
+        "beta-external-missing-asset": "Separate FFmpeg source ZIP is missing",
+        "beta-external-wrong-asset": "Separate FFmpeg source ZIP differs from the package receipt",
+        "beta-external-missing-notice": "Separate FFmpeg source availability notice is missing",
+        "beta-external-reintroduced-materials": "External FFmpeg materials directory must not remain in Setup",
+        "beta-external-embedded-asset": "External source assets directory must not be inside Setup",
     }
     results = []
     environment = os.environ.copy()
     environment.update(TEMP="E:/ValMAXBuild/tmp", TMP="E:/ValMAXBuild/tmp")
-    stamp = payload / "native-release-state.iss"
     for label, values, accepted in cases:
+        external = label.startswith("beta-external-") or label == "public-beta-external-compile-only"
+        selected_payload = external_payload if external else payload
+        stamp = selected_payload / "native-release-state.iss"
         if values is None:
             if stamp.exists():
                 stamp.unlink()  # Only this harness's generated file in its fresh build.
@@ -141,6 +170,7 @@ def main():
             text = ('#define NativeDistributionMode "' + mode + '"\n'
                     '#define NativeWebView2Mode "fixed"\n'
                     '#define NativeQtSourceMode "inline"\n'
+                    '#define NativeFFmpegSourceMode "' + ("separate-asset" if external else "inline") + '"\n'
                     '#define NativeReleaseEligible ' + str(eligible) + '\n'
                     '#define NativeReleaseBlockerCount ' + str(blockers) + '\n'
                     '#define NativePackageManifestSha256 "' + digest + '"\n')
@@ -165,20 +195,38 @@ def main():
                     "0" * 64 if label == "beta-wrong-signature715" else signature715_sha) + '"\n'
                 text += '#define NativeBetaBuildConfigSha256 "' + (
                     "0" * 64 if label == "beta-wrong-config" else config_sha) + '"\n'
+                if external:
+                    text += '#define NativeFFmpegSourceAssetSha256 "' + (
+                        "0" * 64 if label == "beta-external-wrong-asset" else external_asset_sha) + '"\n'
+                    text += '#define NativeFFmpegSourceInfoSha256 "' + external_notice_sha + '"\n'
             else:
                 if info is not None:
                     text += '#define NativePreviewInfoSha256 "' + info + '"\n'
                 if marked is not None:
                     text += '#define NativePreviewVersion "' + marked + '"\n'
             stamp.write_text(text, encoding="utf8")
-        command = [str(ISCC), "/Qp", "/O-", "/DPayload=" + str(payload), "/DOutput=" + str(output),
+        command = [str(ISCC), "/Qp", "/O-", "/DPayload=" + str(selected_payload), "/DOutput=" + str(output),
                    "/DProductVersion=" + version, str(TEMPLATE)]
+        if external and label != "beta-external-missing-asset-arg":
+            asset_path = (build / "source-assets" / "missing-ffmpeg.zip"
+                          if label == "beta-external-missing-asset" else external_asset)
+            command.insert(-1, "/DFFmpegSourceAsset=" + str(asset_path))
         if label == "beta-missing-notice":
             beta_warning.unlink()
         if label == "beta-missing-source715":
             source715.unlink()
         if label == "beta-missing-signature715":
             signature715.unlink()
+        if label == "beta-external-missing-notice":
+            external_notice.unlink()
+        injected = external_payload / "materials/FFmpeg/stray.asc"
+        if label == "beta-external-reintroduced-materials":
+            injected.parent.mkdir(parents=True)
+            injected.write_bytes(b"owned synthetic late FFmpeg source file")
+        injected_asset = external_payload / "source-assets/stray.zip"
+        if label == "beta-external-embedded-asset":
+            injected_asset.parent.mkdir()
+            injected_asset.write_bytes(b"owned synthetic late source asset")
         result = subprocess.run(command, env=environment, capture_output=True, timeout=60,
                                 creationflags=subprocess.CREATE_NO_WINDOW)
         if label == "beta-missing-notice":
@@ -187,6 +235,14 @@ def main():
             source715.write_bytes(source715_bytes)
         if label == "beta-missing-signature715":
             signature715.write_bytes(signature715_bytes)
+        if label == "beta-external-missing-notice":
+            external_notice.write_bytes(external_notice_bytes)
+        if label == "beta-external-reintroduced-materials":
+            injected.unlink()
+            injected.parent.rmdir()
+        if label == "beta-external-embedded-asset":
+            injected_asset.unlink()
+            injected_asset.parent.rmdir()
         log = output / (label + ".log")
         messages = result.stdout + result.stderr
         log.write_bytes(messages)
