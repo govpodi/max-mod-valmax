@@ -1,4 +1,4 @@
-"""Python/native store interop in a new owned C:/ValMAXBuild/tmp directory."""
+"""Python/native store interop in a new owned E:/ValMAXBuild/tmp directory."""
 from __future__ import annotations
 import argparse
 import hashlib
@@ -11,15 +11,16 @@ import time
 
 ROOT = pathlib.Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT / "modkit"))
-from optimization_store import OptimizationSettingsStore, defaults, canonical, parse
+from optimization_store import OptimizationSettingsError, OptimizationSettingsStore, defaults, canonical, parse
 from quick_reply_store import _writer_lock
 
 
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument("--driver", type=pathlib.Path, default=pathlib.Path("C:/ValMAXBuild/target/debug/examples/optimization_probe.exe"))
+    parser.add_argument("--driver", type=pathlib.Path, default=pathlib.Path("E:/ValMAXBuild/target/debug/examples/optimization_probe.exe"))
+    parser.add_argument("--scratch-root", type=pathlib.Path, default=pathlib.Path("E:/ValMAXBuild/tmp"))
     args = parser.parse_args()
-    base = pathlib.Path("C:/ValMAXBuild/tmp")
+    base = args.scratch_root
     base.mkdir(parents=True, exist_ok=True)
     scratch = pathlib.Path(tempfile.mkdtemp(prefix="optimization-interop-Ёж-İ-", dir=base))
     checks = []
@@ -56,6 +57,32 @@ def main():
     next_launch = call([{"operation": "activate", "existingClient": False}, {"operation": "snapshot"}])
     assert next_launch[0]["value"] == modified and next_launch[1]["value"]["restartRequired"] is False
     checks.append("existing_client_adopts_active_new_launch_applies_desired")
+
+    upgrade_root = pathlib.Path(tempfile.mkdtemp(prefix="optimization-interop-upgrade-", dir=base))
+    upgrade_store = OptimizationSettingsStore(upgrade_root / "prefs.json")
+    upgrade_store.replace(upgrade_store.snapshot()["revision"], modified)
+    upgrade_active = upgrade_root / "runtime" / "optimization-active.json"
+    assert not upgrade_active.exists()
+    resumed = call([{"operation": "activate", "existingClient": True}, {"operation": "snapshot"}], root=upgrade_root)
+    assert resumed[0]["value"] == modified and resumed[1]["value"]["restartRequired"] is False
+    assert upgrade_active.read_bytes() == canonical(modified)
+    checks.append("rust_existing_client_recovers_missing_active_from_python_saved_disabled_flags")
+    upgrade_active.unlink()
+    python_resumed = OptimizationSettingsStore(upgrade_root / "prefs.json")
+    assert python_resumed.activate(upgrade_root / "runtime", existing_client=True) == modified
+    assert upgrade_active.read_bytes() == canonical(modified)
+    checks.append("python_existing_client_recovers_missing_active_from_same_saved_flags")
+    malformed_active = b'{"schema":1,"settings":{}}'
+    upgrade_active.write_bytes(malformed_active)
+    assert call([{"operation": "activate", "existingClient": True}], root=upgrade_root) == [{"ok": False, "error": "invalid_store"}]
+    try:
+        OptimizationSettingsStore(upgrade_root / "prefs.json").activate(upgrade_root / "runtime", existing_client=True)
+    except OptimizationSettingsError as error:
+        assert error.code == "invalid_store"
+    else:
+        raise AssertionError("Python accepted a malformed active file")
+    assert upgrade_active.read_bytes() == malformed_active
+    checks.append("missing_active_recovery_preserves_malformed_present_file")
     original = python.snapshot()
     with _writer_lock(path):
         started = time.monotonic()
@@ -89,7 +116,8 @@ def main():
              "pythonOracleSha256": hashlib.sha256((ROOT / "modkit/optimization_store.py").read_bytes()).hexdigest(),
              "nativeSources": {str(p.relative_to(ROOT)): hashlib.sha256(p.read_bytes()).hexdigest() for p in [ROOT / "native/core/src/settings_io.rs", ROOT / "native/core/src/optimization_store.rs"]},
              "realProfilesAccessed": False, "networkUsedByTests": False,
-             "scratch": str(scratch), "scope": "Native Windows filesystem, mutex, desired/active/revision interoperability; no client UI or installed runtime integration"}
+             "scratch": str(scratch), "upgradeScratch": str(upgrade_root),
+             "scope": "Native Windows filesystem, mutex, desired/active/revision interoperability; no client UI or installed runtime integration"}
     (ROOT / "analysis/native-migration-v1/optimization-interop.json").write_text(json.dumps(proof, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
     print(json.dumps({"passed": len(checks), "proof": "analysis/native-migration-v1/optimization-interop.json"}))
 

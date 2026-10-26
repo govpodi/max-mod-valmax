@@ -43,6 +43,25 @@ pub struct OptimizationSettingsStore { path:SafeStorePath, activation:Mutex<Acti
 impl OptimizationSettingsStore {
     pub fn new(path:impl AsRef<Path>)->Result<Self> { Ok(Self { path:SafeStorePath::new(path)?,activation:Mutex::new(Activation { active:Settings::default(),activated:false }) }) }
     fn desired(&self)->Result<Settings> { match self.path.begin(false)? {Some(guard)=>read(&guard),None=>Ok(Settings::default())} }
+    fn existing_active(&self,path:&SafeStorePath)->Result<Settings> {
+        if let Some(guard)=path.begin(false)? {
+            if let Some(data)=guard.read_bounded(MAX_STORE_BYTES)? { return parse(&data); }
+        }
+        // An upgrade can remove the optional runtime snapshot while preserving
+        // the profile. Recover only a missing file; a present one still wins.
+        let guard=path.begin(true)?.ok_or(StoreError::IoError)?;
+        let _lock=guard.writer_lock()?;
+        if let Some(data)=guard.read_bounded(MAX_STORE_BYTES)? { return parse(&data); }
+        let clean=self.desired()?;
+        match guard.atomic_create(&clean.canonical()) {
+            Ok(())=>Ok(clean),
+            Err(StoreError::FileExists)=> {
+                let data=guard.read_bounded(MAX_STORE_BYTES)?.ok_or(StoreError::IoError)?;
+                parse(&data)
+            },
+            Err(error)=>Err(error),
+        }
+    }
     fn snapshot_value(&self,settings:Settings)->Result<Snapshot> {
         let active=self.activation.lock().map_err(|_|StoreError::IoError)?.active;
         Ok(Snapshot { revision:settings.revision(),settings,applied_settings:active,restart_required:settings!=active })
@@ -63,7 +82,7 @@ impl OptimizationSettingsStore {
         if state.activated { return Ok(state.active); }
         let path=SafeStorePath::new(runtime_directory.as_ref().join(ACTIVE_FILENAME))?;
         let active=if existing_client {
-            match path.begin(false)? {Some(guard)=>read(&guard)?,None=>Settings::default()}
+            self.existing_active(&path)?
         } else {
             let clean=self.desired()?;
             let guard=path.begin(true)?.ok_or(StoreError::IoError)?;

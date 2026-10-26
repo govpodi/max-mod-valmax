@@ -7,7 +7,7 @@ fn main() {
     let request:Value=serde_json::from_slice(&input).unwrap();
     let root=PathBuf::from(request["root"].as_str().unwrap());
     // The probe is intentionally restricted to an already-created test fixture.
-    let actual=root.canonicalize().unwrap();let base=PathBuf::from("C:/ValMAXBuild/tmp").canonicalize().unwrap();
+    let actual=root.canonicalize().unwrap();let base=PathBuf::from("E:/ValMAXBuild/tmp").canonicalize().unwrap();
     assert!(actual.starts_with(&base)&&actual!=base);
     assert!(root.file_name().unwrap().to_str().unwrap().starts_with("optimization-interop-"));
     let s=OptimizationSettingsStore::new(actual.join("prefs.json").to_string_lossy().trim_start_matches("\\\\?\\")).unwrap();

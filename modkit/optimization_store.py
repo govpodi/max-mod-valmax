@@ -75,16 +75,16 @@ def parse(data):
     return validate_settings(value["settings"], "invalid_store")
 
 
-def _read(path):
+def _read(path, *, missing_defaults=True):
     try:
         _check_path(path, directory=False)
         with _config_stream(path, create=False) as stream:
             return parse(stream.read(MAX_STORE_BYTES + 1))
     except FileNotFoundError:
-        return defaults()
+        return defaults() if missing_defaults else None
 
 
-def _atomic_write(path, payload):
+def _atomic_write(path, payload, *, create_only=False):
     temporary = path.with_name("." + path.name + "." + uuid.uuid4().hex + ".tmp")
     identity = None
     try:
@@ -104,14 +104,26 @@ def _atomic_write(path, payload):
             raise OptimizationSettingsError("unsafe_path")
         # Preserve the same no-links/path validation as the existing stores.
         _read(path)
-        os.replace(temporary, path)
+        if create_only:
+            if os.name == "nt":
+                # Unlike os.replace, Windows os.rename refuses an existing file.
+                os.rename(temporary, path)
+            else:
+                # A hard link publishes exclusively on POSIX; drop the staging name.
+                os.link(temporary, path, follow_symlinks=False)
+                temporary.unlink()
+        else:
+            os.replace(temporary, path)
         identity = None
     finally:
         if identity is not None:
             try:
-                _check_path(temporary, directory=False)
+                if not (create_only and os.name != "nt"):
+                    _check_path(temporary, directory=False)
                 info = temporary.lstat()
-                if (info.st_dev, info.st_ino) == identity:
+                if (info.st_dev, info.st_ino) == identity and stat.S_ISREG(info.st_mode):
+                    # A POSIX create-only publication briefly gives this inode
+                    # two links. Removing our known staging name is still safe.
                     temporary.unlink()
             except FileNotFoundError:
                 pass
@@ -172,10 +184,24 @@ class OptimizationSettingsStore:
                 return dict(self._active)
             try:
                 active_guard = QuickReplyStore(Path(runtime_directory) / ACTIVE_FILENAME)
-                with active_guard._operation(create=not existing_client) as active_path:
-                    if existing_client:
-                        clean = defaults() if active_path is None else _read(active_path)
-                    else:
+                if existing_client:
+                    with active_guard._operation(create=False) as active_path:
+                        clean = None if active_path is None else _read(active_path, missing_defaults=False)
+                    if clean is None:
+                        with active_guard._operation(create=True) as active_path:
+                            with _writer_lock(active_path):
+                                # Recheck after locking: another helper may have published it.
+                                clean = _read(active_path, missing_defaults=False)
+                                if clean is None:
+                                    clean = self.snapshot()["settings"]
+                                    try:
+                                        _atomic_write(active_path, canonical(clean), create_only=True)
+                                    except FileExistsError:
+                                        clean = _read(active_path, missing_defaults=False)
+                                        if clean is None:
+                                            raise OptimizationSettingsError("io_error") from None
+                else:
+                    with active_guard._operation(create=True) as active_path:
                         clean = self.snapshot()["settings"]
                         with _writer_lock(active_path):
                             _atomic_write(active_path, canonical(clean))

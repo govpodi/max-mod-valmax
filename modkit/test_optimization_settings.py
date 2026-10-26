@@ -7,17 +7,17 @@ from pathlib import Path
 import tempfile
 import threading
 import unittest
+from unittest.mock import patch
 
 from optimization_store import (ACTIVE_FILENAME, KEYS, OptimizationSettingsError,
                                 OptimizationSettingsStore, canonical,
                                 child_environment, defaults, parse)
 from package_mod import verify_program_tree
-from privacy_server import PORT, handler_factory
 
 
 class SettingsTests(unittest.TestCase):
     def setUp(self):
-        scratch = Path("D:/ValMAX/analysis/optimization-settings-v1/tests")
+        scratch = Path("E:/ValMAXBuild/tmp/optimization-settings-tests")
         scratch.mkdir(parents=True, exist_ok=True)
         self.temp = tempfile.TemporaryDirectory(dir=scratch, prefix="prefs-")
         self.addCleanup(self.temp.cleanup)
@@ -59,6 +59,53 @@ class SettingsTests(unittest.TestCase):
         self.assertEqual(recovered.snapshot()["appliedSettings"], defaults())
         self.assertTrue(recovered.snapshot()["restartRequired"])
 
+    def test_existing_client_recovers_saved_disabled_flags_when_active_is_missing(self):
+        active_path = self.runtime / ACTIVE_FILENAME
+        changed = {**defaults(), "enabled": False, "photoDecodeResize": False}
+        self.store.replace(self.store.snapshot()["revision"], changed)
+        self.assertFalse(active_path.exists())
+        recovered = OptimizationSettingsStore(self.path)
+        self.assertEqual(recovered.activate(self.runtime, existing_client=True), changed)
+        self.assertEqual(active_path.read_bytes(), canonical(changed))
+        self.assertFalse(recovered.snapshot()["restartRequired"])
+        self.assertEqual(recovered.snapshot()["appliedSettings"], changed)
+
+    def test_existing_client_missing_profile_and_active_writes_defaults(self):
+        active_path = self.runtime / ACTIVE_FILENAME
+        self.assertEqual(self.store.activate(self.runtime, existing_client=True), defaults())
+        self.assertEqual(active_path.read_bytes(), canonical(defaults()))
+        self.assertFalse(self.path.exists())
+
+    def test_existing_client_preserves_malformed_active(self):
+        active_path = self.runtime / ACTIVE_FILENAME
+        malformed = b'{"schema":1,"settings":{}}'
+        active_path.write_bytes(malformed)
+        with self.assertRaises(OptimizationSettingsError) as raised:
+            self.store.activate(self.runtime, existing_client=True)
+        self.assertEqual(raised.exception.code, "invalid_store")
+        self.assertEqual(active_path.read_bytes(), malformed)
+        self.assertFalse(self.path.exists())
+
+    def test_existing_client_does_not_overwrite_active_created_during_recovery(self):
+        if os.name != "nt":
+            self.skipTest("Windows exclusive rename behavior")
+        desired = {**defaults(), "enabled": False}
+        competing = {**defaults(), "historyCache": False}
+        self.store.replace(self.store.snapshot()["revision"], desired)
+        active_path = self.runtime / ACTIVE_FILENAME
+        original_rename = os.rename
+
+        def create_competing_active(source, destination):
+            self.assertEqual(Path(destination), active_path)
+            active_path.write_bytes(canonical(competing))
+            original_rename(source, destination)
+
+        recovered = OptimizationSettingsStore(self.path)
+        with patch("optimization_store.os.rename", side_effect=create_competing_active):
+            self.assertEqual(recovered.activate(self.runtime, existing_client=True), competing)
+        self.assertEqual(active_path.read_bytes(), canonical(competing))
+        self.assertTrue(recovered.snapshot()["restartRequired"])
+
     def test_revisions_prevent_stale_overwrite(self):
         initial = self.store.snapshot()
         self.store.replace(initial["revision"], {**defaults(), "profileRows": False})
@@ -89,8 +136,10 @@ class SettingsTests(unittest.TestCase):
         source = self.root / "source.json"
         source.write_bytes(canonical(defaults()))
         os.link(source, self.runtime / ACTIVE_FILENAME)
-        with self.assertRaises(OptimizationSettingsError):
-            self.store.activate(self.runtime)
+        for existing_client in (False, True):
+            with self.subTest(existing_client=existing_client), self.assertRaises(OptimizationSettingsError) as raised:
+                self.store.activate(self.runtime, existing_client=existing_client)
+            self.assertEqual(raised.exception.code, "unsafe_path")
         self.assertEqual(source.read_bytes(), canonical(defaults()))
 
     def test_active_state_is_excluded_from_package_inventory(self):
@@ -113,7 +162,9 @@ class SettingsTests(unittest.TestCase):
 
 class HTTPTests(unittest.TestCase):
     def setUp(self):
+        from privacy_server import PORT, handler_factory
         SettingsTests.setUp(self)
+        self.host_port = PORT
         self.server = ThreadingHTTPServer(("127.0.0.1", 0), handler_factory(
             lambda: {"schema": 1}, optimization_settings=self.store))
         self.server.daemon_threads = True
@@ -127,7 +178,7 @@ class HTTPTests(unittest.TestCase):
         self.thread.join(timeout=2)
 
     def request(self, value=None, *, method="GET", extra=None, raw=None):
-        headers = {"Host": f"127.0.0.1:{PORT}"}
+        headers = {"Host": f"127.0.0.1:{self.host_port}"}
         if method == "POST":
             headers.update({"Content-Type": "application/json;charset=UTF-8",
                             "X-Max-Mod-Local-Write": "optimization-settings-v1"})

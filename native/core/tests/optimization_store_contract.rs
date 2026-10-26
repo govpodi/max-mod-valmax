@@ -33,6 +33,57 @@ fn changed()->Value {let mut value=Settings::default().value();value["enabled"]=
     let next=OptimizationSettingsStore::new(&path).unwrap();next.activate(&runtime,false).unwrap();assert!(!next.snapshot().unwrap().restart_required);
     assert_eq!(store::parse(&fs::read(runtime.join(ACTIVE_FILENAME)).unwrap()).unwrap(),Settings::from_value(&changed()).unwrap());
 }
+#[test] fn existing_client_recovers_disabled_profile_after_active_file_is_removed() {
+    let root=fixture();
+    let path=root.join("profile").join("prefs.json");
+    let runtime=root.join("runtime");
+    let active_path=runtime.join(ACTIVE_FILENAME);
+    let saved=OptimizationSettingsStore::new(&path).unwrap();
+    let initial=saved.snapshot().unwrap();
+    saved.replace(&initial.revision,&changed()).unwrap();
+    fs::create_dir(&runtime).unwrap();
+    assert!(!active_path.exists());
+
+    let expected=Settings::from_value(&changed()).unwrap();
+    let attached=OptimizationSettingsStore::new(&path).unwrap();
+    assert_eq!(attached.activate(&runtime,true),Ok(expected));
+    assert_eq!(fs::read(&active_path).unwrap(),expected.canonical());
+    let current=attached.snapshot().unwrap();
+    assert_eq!(current.settings,expected);
+    assert_eq!(current.applied_settings,expected);
+    assert!(!current.restart_required);
+
+    let pending=attached.replace(&current.revision,&Settings::default().value()).unwrap();
+    assert!(pending.restart_required);
+    assert_eq!(fs::read(&active_path).unwrap(),expected.canonical());
+    let reattached=OptimizationSettingsStore::new(&path).unwrap();
+    assert_eq!(reattached.activate(&runtime,true),Ok(expected));
+    assert!(reattached.snapshot().unwrap().restart_required);
+}
+#[test] fn missing_profile_and_active_restore_defaults_without_creating_profile() {
+    let root=fixture();
+    let path=root.join("profile").join("prefs.json");
+    let runtime=root.join("runtime");
+    let attached=OptimizationSettingsStore::new(&path).unwrap();
+    assert_eq!(attached.activate(&runtime,true),Ok(Settings::default()));
+    assert_eq!(fs::read(runtime.join(ACTIVE_FILENAME)).unwrap(),Settings::default().canonical());
+    assert!(!path.exists());
+}
+#[test] fn existing_client_preserves_malformed_active_instead_of_recovering_profile() {
+    let root=fixture();
+    let path=root.join("profile").join("prefs.json");
+    let runtime=root.join("runtime");
+    fs::create_dir(&runtime).unwrap();
+    let saved=OptimizationSettingsStore::new(&path).unwrap();
+    saved.replace(&Settings::default().revision(),&changed()).unwrap();
+    let active_path=runtime.join(ACTIVE_FILENAME);
+    let invalid=b"{\"schema\":1,\"settings\":{}}";
+    fs::write(&active_path,invalid).unwrap();
+    let attached=OptimizationSettingsStore::new(&path).unwrap();
+    assert_eq!(attached.activate(&runtime,true),Err(StoreError::InvalidStore));
+    assert_eq!(fs::read(&active_path).unwrap(),invalid);
+    assert_eq!(fs::read(&path).unwrap(),Settings::from_value(&changed()).unwrap().canonical());
+}
 #[test] fn stale_revision_and_malformed_settings_never_overwrite() {
     let root=fixture();let path=root.join("prefs.json");let s=OptimizationSettingsStore::new(&path).unwrap();let original=s.snapshot().unwrap();
     for revision in ["", "A", &"a".repeat(63),&"A".repeat(64)] {assert!(matches!(s.replace(revision,&changed()),Err(StoreError::InvalidRevision)));}
@@ -47,6 +98,7 @@ fn changed()->Value {let mut value=Settings::default().value();value["enabled"]=
     assert!(matches!(s.snapshot(),Err(StoreError::UnsafePath)));assert!(matches!(s.replace(&Settings::default().revision(),&changed()),Err(StoreError::UnsafePath)));assert_eq!(fs::read(&source).unwrap(),bytes);
     let runtime=root.join("runtime");fs::create_dir(&runtime).unwrap();fs::hard_link(&source,runtime.join(ACTIVE_FILENAME)).unwrap();
     let clean=OptimizationSettingsStore::new(root.join("clean.json")).unwrap();assert_eq!(clean.activate(&runtime,false),Err(StoreError::UnsafePath));assert_eq!(fs::read(&source).unwrap(),bytes);
+    assert_eq!(clean.activate(&runtime,true),Err(StoreError::UnsafePath));assert_eq!(fs::read(&source).unwrap(),bytes);
 }
 #[test] fn temporary_cleanup_and_ancestor_identity_hold_on_failure() {
     let root=fixture();let path=root.join("prefs.json");let safe=SafeStorePath::new(&path).unwrap();let guard=safe.begin(true).unwrap().unwrap();let _lock=guard.writer_lock().unwrap();
