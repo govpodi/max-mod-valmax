@@ -444,6 +444,7 @@ def native_retention_settings_panel(panel: str) -> str:
         '+ "; неверная цепочка " + ValMAXNative.Bridge.retentionDiagnostics.invalidOwner '
         '+ "; нет точного совпадения " + ValMAXNative.Bridge.retentionDiagnostics.unmatchedOwner '
         '+ "; ошибок маршрута " + ValMAXNative.Bridge.retentionDiagnostics.routeFailures '
+        '+ "; код причины " + ValMAXNative.Bridge.retentionDiagnostics.lastScopeFailureReason '
         '+ "; всего пропусков " + ValMAXNative.Bridge.retentionDiagnostics.boundedSkips; '
         'typography: Typography.FontUtil.Styles.Description }', 1)
     if "127.0.0.1" in panel or "XMLHttpRequest" in panel:

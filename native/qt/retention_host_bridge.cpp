@@ -211,6 +211,8 @@ QVariantMap RetentionHostBridge::diagnostics() const
         {QStringLiteral("invalidOwner"), qulonglong(host.invalid_owner_callbacks)},
         {QStringLiteral("unmatchedOwner"), qulonglong(host.unmatched_owner_callbacks)},
         {QStringLiteral("routeFailures"), qulonglong(host.route_failures)},
+        {QStringLiteral("lastScopeFailureReason"),
+            static_cast<quint32>(host.last_scope_failure_reason)},
         {QStringLiteral("boundedSkips"), qulonglong(host.bounded_skips)},
     };
 }

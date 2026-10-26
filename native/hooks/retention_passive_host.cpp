@@ -45,6 +45,7 @@ struct Runtime final {
     uint64_t bounded_skips = 0;
     uint64_t invalid_history_callbacks = 0, no_owner_callbacks = 0;
     uint64_t invalid_owner_callbacks = 0, unmatched_owner_callbacks = 0;
+    ScopeFailureReason last_scope_failure_reason = ScopeFailureReason::None;
     std::array<char,64> revision{};
     HostError error = HostError::NotInstalled;
     std::array<uintptr_t,kOwners> owners{};
@@ -163,10 +164,11 @@ bool activate_locked(Runtime &r) noexcept {
     r.error=HostError::Worker;
     return false;
 }
-void fail_scope(Runtime &r) noexcept {
+void fail_scope(Runtime &r, ScopeFailureReason reason) noexcept {
     std::lock_guard lock(r.scope);
     increment(r.route_failures);
     if (r.owner_count != 0 && r.error == HostError::None) {
+        r.last_scope_failure_reason=reason;
         r.error=HostError::OwnerScope;
         if (r.worker) r.worker->revoke(pilot::AsyncError::InvalidRoute);
     }
@@ -211,13 +213,17 @@ void owner_leave(GumInvocationContext *context,gpointer raw) {
         if (std::find(r.owners.begin(),r.owners.begin()+static_cast<ptrdiff_t>(r.owner_count),*slot)
             != r.owners.begin()+static_cast<ptrdiff_t>(r.owner_count)) return;
         if (r.owner_count == kOwners) {
-            r.error=HostError::OwnerScope;
-            if (r.worker) r.worker->revoke(pilot::AsyncError::InvalidRoute);
+            increment(r.route_failures);
+            if (r.error==HostError::None) {
+                r.last_scope_failure_reason=ScopeFailureReason::OwnerCapacity;
+                r.error=HostError::OwnerScope;
+                if (r.worker) r.worker->revoke(pilot::AsyncError::InvalidRoute);
+            }
             return;
         }
         r.owners[r.owner_count++]=*slot;
         increment(r.owner_constructed);
-    } catch (...) { fail_scope(r); }
+    } catch (...) { fail_scope(r,ScopeFailureReason::OwnerCallbackException); }
 }
 void owner_destroyed(GumInvocationContext *context,gpointer raw) {
     auto &r=*static_cast<Runtime *>(raw);
@@ -231,7 +237,7 @@ void owner_destroyed(GumInvocationContext *context,gpointer raw) {
             if (r.owner_count == 0) r.owner_join=false;
             break;
         }
-    } catch (...) { fail_scope(r); }
+    } catch (...) { fail_scope(r,ScopeFailureReason::DestroyCallbackException); }
 }
 bool read_rows_vector(uintptr_t pointer, uintptr_t &begin,size_t &count) noexcept {
     struct Vector { uintptr_t begin,end,cap; } value{};
@@ -256,7 +262,9 @@ void rows_enter(GumInvocationContext *context,gpointer raw) {
         // Lock only callback parsing/enqueue ordering. No filesystem or Rust
         // call runs on a MAX thread; MAX's original write always proceeds.
         std::lock_guard event_lock(r.events);
-        if (!context->cpu_context) { fail_scope(r); return; }
+        if (!context->cpu_context) {
+            fail_scope(r,ScopeFailureReason::MissingCpuContext);return;
+        }
         const auto sp=static_cast<uintptr_t>(context->cpu_context->rsp);
         int32_t mode=-1;
         if (!read_at(sp,0x28,mode) || mode != 0) return;
@@ -267,7 +275,9 @@ void rows_enter(GumInvocationContext *context,gpointer raw) {
         if (resolution!=RouteResolution::Matched && resolution!=RouteResolution::Ambiguous) {
             note_untracked_skip(r,resolution);return;
         }
-        if (resolution==RouteResolution::Ambiguous) { fail_scope(r); return; }
+        if (resolution==RouteResolution::Ambiguous) {
+            fail_scope(r,ScopeFailureReason::AmbiguousRoute);return;
+        }
         bool enabled=false;
         {
             std::lock_guard lock(r.scope);
@@ -278,7 +288,9 @@ void rows_enter(GumInvocationContext *context,gpointer raw) {
         }
         if (!enabled) return;
         uintptr_t begin=0;size_t count=0;
-        if (!read_rows_vector(vector,begin,count)) { fail_scope(r); return; }
+        if (!read_rows_vector(vector,begin,count)) {
+            fail_scope(r,ScopeFailureReason::InvalidRowsVector);return;
+        }
         if (count==0) return;
         // An oversized but well-formed borrowed vector is a capacity event,
         // not evidence that the account route is invalid. Never poison later
@@ -294,34 +306,42 @@ void rows_enter(GumInvocationContext *context,gpointer raw) {
             uint32_t status_code=0;
             int64_t sender=0;
             if (!read_at(row,0x128,status_code) || !read_at(row,0x80,sender)) {
-                fail_scope(r);return;
+                fail_scope(r,ScopeFailureReason::UnreadableRowFields);return;
             }
             if (status_code<=1) {
-                if (sender<=0) { fail_scope(r);return; }
+                if (sender<=0) {
+                    fail_scope(r,ScopeFailureReason::InvalidSender);return;
+                }
                 // The selected account's own text is never copied into an
                 // owned SecureText buffer or submitted to the store.
                 if (sender==route.owner) continue;
             }
             rows::Snapshot message;
             if (!rows::decode(row,read_row,nullptr,message)) {
-                fail_scope(r);return;
+                fail_scope(r,ScopeFailureReason::RowDecodeFailed);return;
             }
             if (message.kind==rows::Kind::Text) {
                 const size_t bytes=message.text.bytes().size();
                 if (bytes>kMaxCallbackTextBytes-copied_text_bytes) {
                     note_bounded_skip(r);return;
                 }
-                if (!captured_ids.insert(message.id).second) { fail_scope(r);return; }
+                if (!captured_ids.insert(message.id).second) {
+                    fail_scope(r,ScopeFailureReason::DuplicateTextId);return;
+                }
                 copied_text_bytes+=bytes;
                 captured.push_back(std::move(message));
             } else if (message.kind==rows::Kind::Removed) {
-                if (!removed_ids.insert(message.id).second) { fail_scope(r);return; }
+                if (!removed_ids.insert(message.id).second) {
+                    fail_scope(r,ScopeFailureReason::DuplicateRemovedId);return;
+                }
                 removed.push_back(message.id);
             }
         }
         const auto now=std::chrono::duration_cast<std::chrono::milliseconds>(
             std::chrono::system_clock::now().time_since_epoch()).count();
-        if (now<0 || !r.worker) { fail_scope(r); return; }
+        if (now<0 || !r.worker) {
+            fail_scope(r,ScopeFailureReason::InvalidClockOrWorker);return;
+        }
         for (size_t offset=0;offset<captured.size();offset+=rows::kMaxBatchRows) {
             const size_t length=std::min(rows::kMaxBatchRows,captured.size()-offset);
             std::vector<rows::Snapshot> batch;
@@ -335,7 +355,7 @@ void rows_enter(GumInvocationContext *context,gpointer raw) {
             if (!r.worker->submit_removed(route,
                 std::span<const int64_t>(removed.data()+offset,length))) return;
         }
-    } catch (...) { fail_scope(r); }
+    } catch (...) { fail_scope(r,ScopeFailureReason::RowsCallbackException); }
 }
 bool pin_callback_module() noexcept {
     HMODULE pinned=nullptr;
@@ -527,6 +547,7 @@ NativeStatus status() noexcept {
     value.no_owner_callbacks=r.no_owner_callbacks;
     value.invalid_owner_callbacks=r.invalid_owner_callbacks;
     value.unmatched_owner_callbacks=r.unmatched_owner_callbacks;
+    value.last_scope_failure_reason=r.last_scope_failure_reason;
     value.revision=r.revision;value.error=r.error;
     if (r.worker) value.worker=r.worker->status();
     return value;

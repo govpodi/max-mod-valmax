@@ -54,6 +54,12 @@ target_compile_options(valmax_retention_passive_host_test PRIVATE /W4 /WX /permi
 target_link_libraries(valmax_retention_passive_host_test PRIVATE "${VALMAX_GUM_DIRECTORY}/frida-gum.lib" bcrypt)
 set_target_properties(valmax_retention_passive_host_test PROPERTIES MSVC_RUNTIME_LIBRARY "MultiThreadedDLL")
 add_test(NAME retention_passive_host COMMAND valmax_retention_passive_host_test)
+add_test(NAME retention_passive_host_invalid_sender
+    COMMAND valmax_retention_passive_host_test --invalid-sender)
+add_test(NAME retention_passive_host_duplicate_text_id
+    COMMAND valmax_retention_passive_host_test --duplicate-text-id)
+add_test(NAME retention_passive_host_owner_capacity
+    COMMAND valmax_retention_passive_host_test --owner-capacity)
 add_library(valmax_hooks STATIC hook_set.cpp hook_set.h)
 target_include_directories(valmax_hooks PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
 target_include_directories(valmax_hooks SYSTEM PRIVATE ${VALMAX_GUM_DIRECTORY})

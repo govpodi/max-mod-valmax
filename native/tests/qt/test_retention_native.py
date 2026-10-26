@@ -202,7 +202,8 @@ class NativeRetentionSettings(unittest.TestCase):
                        "ownerConstructed": 4, "joinedUpserts": 5,
                        "invalidHistory": 6, "noOwner": 7,
                        "invalidOwner": 8, "unmatchedOwner": 9,
-                       "routeFailures": 10, "boundedSkips": 11}
+                       "routeFailures": 10, "lastScopeFailureReason": 5,
+                       "boundedSkips": 11}
         setup = ("var ValMAXNative={Bridge:{retentionDiagnostics:"
                  + json.dumps(diagnostics) + "}}; var retentionPage="
                  + json.dumps({"runtimeTrusted": True,
@@ -219,6 +220,7 @@ class NativeRetentionSettings(unittest.TestCase):
         self.assertIn("обнаружено после запуска перехвата: 4", labels[0])
         self.assertIn("нет владельца 7", labels[1])
         self.assertIn("нет точного совпадения 9", labels[1])
+        self.assertIn("код причины 5", labels[1])
         for forbidden in ("PRIVATE_ACCOUNT_CANARY", "PRIVATE_TEXT_CANARY"):
             self.assertNotIn(forbidden, " ".join(labels))
         self.assertNotIn("retentionDiagnostics", self.validator)

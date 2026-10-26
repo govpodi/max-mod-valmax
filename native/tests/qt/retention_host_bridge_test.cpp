@@ -115,13 +115,14 @@ int main()
     host.invalid_owner_callbacks = 7;
     host.unmatched_owner_callbacks = 8;
     host.route_failures = 9;
+    host.last_scope_failure_reason = valmax::retention::passive::ScopeFailureReason::AmbiguousRoute;
     host.bounded_skips = 10;
     ValmaxRuntime runtime;
     {
         valmax::RetentionHostBridge bridge(&runtime, QString::fromStdWString(profile));
         bridge.initialize();
         const QVariantMap diagnostics = bridge.diagnostics();
-        if (!check(diagnostics.size() == 11
+        if (!check(diagnostics.size() == 12
             && diagnostics.value(QStringLiteral("schema")).toInt() == 1
             && diagnostics.value(QStringLiteral("listeners")).toUInt() == 3
             && diagnostics.value(QStringLiteral("activeOwners")).toUInt() == 2
@@ -132,6 +133,8 @@ int main()
             && diagnostics.value(QStringLiteral("invalidOwner")).toULongLong() == 7
             && diagnostics.value(QStringLiteral("unmatchedOwner")).toULongLong() == 8
             && diagnostics.value(QStringLiteral("routeFailures")).toULongLong() == 9
+            && diagnostics.value(QStringLiteral("lastScopeFailureReason")).toUInt()
+                == static_cast<uint32_t>(valmax::retention::passive::ScopeFailureReason::AmbiguousRoute)
             && diagnostics.value(QStringLiteral("boundedSkips")).toULongLong() == 10,
             "diagnostic map has only the expected aggregate route fields")) return 1;
         if (!check(preflights == 1 && applied == 1 && host.generation == 1,

@@ -132,12 +132,12 @@ void send(OwnerFixture &owner,int64_t id,int64_t sender,uint32_t status_code,
     fake_rows(owner.history.data(),nullptr,&vector,nullptr,0);
 }
 void send_many(OwnerFixture &owner,int64_t first_id,size_t count,
-               uint32_t status_code,const char *content) {
+               uint32_t status_code,const char *content,bool repeat_id=false) {
     CHECK(count>0 && count<=1024 && (status_code==0 || status_code==2));
     std::vector<TestRow> batch(count);
     for (size_t i=0;i<count;++i) {
         auto &row=batch[i].bytes;
-        const int64_t id=first_id+static_cast<int64_t>(i);
+        const int64_t id=first_id+(repeat_id ? 0 : static_cast<int64_t>(i));
         write(row,0,id);write(row,0x80,int64_t{12});write(row,0x128,status_code);
         if (status_code != 2) {
             write(row,0x18,1700000000000 + id);
@@ -194,7 +194,7 @@ extern "C" uint32_t valmax_core_retention_capture_text(
 extern "C" uint32_t valmax_core_retention_store_process(
     const uint16_t *,size_t,const ValmaxRetentionRequest *,const int64_t *,ValmaxRetentionAck *) { return 5; }
 
-int main() {
+int main(int argc,char **argv) {
     static uint64_t owner_vtable=1,data_vtable=2,history_owner_vtable=3;
     static uint64_t factory_vtable=4,chat_history_vtable=5;
     Backend backend;
@@ -203,6 +203,57 @@ int main() {
         reinterpret_cast<uintptr_t>(&owner_vtable),reinterpret_cast<uintptr_t>(&data_vtable),
         reinterpret_cast<uintptr_t>(&history_owner_vtable),reinterpret_cast<uintptr_t>(&factory_vtable),
         reinterpret_cast<uintptr_t>(&chat_history_vtable)};
+    if (argc==2) {
+        const bool invalid_sender=std::strcmp(argv[1],"--invalid-sender")==0;
+        const bool duplicate_text_id=std::strcmp(argv[1],"--duplicate-text-id")==0;
+        const bool owner_capacity=std::strcmp(argv[1],"--owner-capacity")==0;
+        CHECK(invalid_sender || duplicate_text_id || owner_capacity);
+        CHECK(install_synthetic(L"E:\\ValMAXBuild\\retention-p11-sandbox\\synthetic-profile",
+            targets,{&backend,&Backend::capture,&Backend::mark}));
+        if (owner_capacity) {
+            std::vector<OwnerFixture> owners(130);
+            for (size_t i=0;i<owners.size();++i) {
+                owners[i].setup(targets,11+static_cast<int64_t>(i),
+                    -22-static_cast<int64_t>(i));
+                fake_owner_create(owners[i].owner.data());
+                if (i==128) {
+                    CHECK(status().error==HostError::OwnerScope);
+                    CHECK(status().route_failures==1);
+                    CHECK(status().last_scope_failure_reason==ScopeFailureReason::OwnerCapacity);
+                }
+            }
+            CHECK(status().error==HostError::OwnerScope);
+            CHECK(status().route_failures==2);
+            CHECK(status().active_owners==128);
+            CHECK(status().last_scope_failure_reason==ScopeFailureReason::OwnerCapacity);
+            CHECK(status().worker.error==pilot::AsyncError::InvalidRoute);
+            shutdown();
+            return 0;
+        }
+        OwnerFixture owner;
+        owner.setup(targets,11,-22);
+        fake_owner_create(owner.owner.data());
+        send(owner,31,12,0,"fixture start");
+        CHECK(synthetic_store_ready());
+        CHECK(set_enabled(true,std::string(64,'a'),1));
+        CHECK(status().capture_enabled());
+        CHECK(status().last_scope_failure_reason==ScopeFailureReason::None);
+        if (invalid_sender) send(owner,32,0,0,"bad sender");
+        else send_many(owner,32,2,0,"duplicate",true);
+        const auto failed=status();
+        CHECK(failed.error==HostError::OwnerScope);
+        CHECK(failed.route_failures==1);
+        CHECK(failed.last_scope_failure_reason==(invalid_sender
+            ? ScopeFailureReason::InvalidSender : ScopeFailureReason::DuplicateTextId));
+        CHECK(failed.worker.error==pilot::AsyncError::InvalidRoute);
+        CHECK(!failed.capture_enabled() && failed.worker.captured==0);
+        send(owner,33,12,0,"after failure");
+        CHECK(status().last_scope_failure_reason==failed.last_scope_failure_reason);
+        CHECK(status().route_failures==failed.route_failures);
+        shutdown();
+        return 0;
+    }
+    CHECK(argc==1);
     // An account owner that exists before hook attachment must never be
     // borrowed from another account just to make the receipt look ready.
     OwnerFixture preAttached;
@@ -335,6 +386,7 @@ int main() {
     send(second,6002,11,0,"ambiguous");
     CHECK(status().error==HostError::OwnerScope);
     CHECK(status().route_failures==before_bad_scope.route_failures+1);
+    CHECK(status().last_scope_failure_reason==ScopeFailureReason::AmbiguousRoute);
     CHECK(status().worker.error==pilot::AsyncError::InvalidRoute);
     fake_owner_destroy(first.owner.data());fake_owner_destroy(second.owner.data());
     CHECK(!status().owner_join && !status().infrastructure_ready());

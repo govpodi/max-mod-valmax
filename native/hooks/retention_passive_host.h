@@ -13,6 +13,25 @@ enum class HostError : uint32_t {
     Store, OwnerScope, Worker, Shutdown
 };
 
+// Finite, count-only reason latched at the first terminal owner-scope failure.
+// Never expose a pointer, account/chat/message identifier, profile path or text.
+enum class ScopeFailureReason : uint32_t {
+    None = 0,
+    OwnerCapacity,
+    OwnerCallbackException,
+    DestroyCallbackException,
+    MissingCpuContext,
+    AmbiguousRoute,
+    InvalidRowsVector,
+    UnreadableRowFields,
+    InvalidSender,
+    RowDecodeFailed,
+    DuplicateTextId,
+    DuplicateRemovedId,
+    InvalidClockOrWorker,
+    RowsCallbackException,
+};
+
 struct NativeStatus final {
     bool installed = false;
     bool images_exact = false;
@@ -32,6 +51,7 @@ struct NativeStatus final {
     uint64_t no_owner_callbacks = 0;
     uint64_t invalid_owner_callbacks = 0;
     uint64_t unmatched_owner_callbacks = 0;
+    ScopeFailureReason last_scope_failure_reason = ScopeFailureReason::None;
     std::array<char,64> revision{};
     HostError error = HostError::NotInstalled;
     pilot::AsyncCounters worker{};
