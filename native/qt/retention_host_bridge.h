@@ -2,6 +2,7 @@
 
 #include <QByteArray>
 #include <QString>
+#include <QVariantMap>
 #include <mutex>
 #include <utility>
 
@@ -21,6 +22,8 @@ public:
 
     void initialize();
     void refresh();
+    // Only bounded aggregate counters; returns an empty map for another profile.
+    QVariantMap diagnostics() const;
 
     struct Change final {
         bool selected = false;

@@ -158,6 +158,7 @@ NativeBridge::NativeBridge(QObject *parent) : QObject(parent)
             qint64 notificationRefreshMs = -1;
             qint64 ghostRefreshMs = -1;
             qint64 retentionInitMs = -1;
+            QVariantMap retentionDiagnostics;
 #if VALMAX_HAS_NOTIFICATIONS
             if (opened) {
                 const qint64 started = openingClock.elapsed();
@@ -181,6 +182,7 @@ NativeBridge::NativeBridge(QObject *parent) : QObject(parent)
                     .value(QStringLiteral("profileDirectory")).toString();
                 context->retention = std::make_unique<RetentionHostBridge>(context->handle, profile);
                 context->retention->initialize();
+                retentionDiagnostics = context->retention->diagnostics();
                 retentionInitMs = openingClock.elapsed() - started;
             }
 #endif
@@ -188,7 +190,7 @@ NativeBridge::NativeBridge(QObject *parent) : QObject(parent)
             QMetaObject::invokeMethod(this, [this, opened, ghostState, notificationState,
                                              openingClock, workerQueueMs, rustOpenMs,
                                              notificationRefreshMs, ghostRefreshMs, retentionInitMs,
-                                             workerMs]() {
+                                             workerMs, retentionDiagnostics]() {
 #if VALMAX_HAS_EXPORT_DOWNLOAD
                 if (opened) static_cast<ExportDownloader*>(exportDownloader_)->setRuntime(runtime_->handle, runtime_);
 #endif
@@ -209,6 +211,7 @@ NativeBridge::NativeBridge(QObject *parent) : QObject(parent)
                     {QStringLiteral("totalMs"), openingClock.elapsed()},
                 };
                 runtimeState_ = opened ? QStringLiteral("ready") : QStringLiteral("error");
+                retentionDiagnostics_ = retentionDiagnostics;
                 ghostRuntimeState_ = ghostState;
                 notificationRuntimeState_ = notificationState;
                 const QPointer<NativeBridge> alive(this);
@@ -219,6 +222,8 @@ NativeBridge::NativeBridge(QObject *parent) : QObject(parent)
                 emit notificationRuntimeStateChanged();
                 if (!alive) return;
                 emit startupTimingsChanged();
+                if (!alive) return;
+                emit retentionDiagnosticsChanged();
                 if (!alive) return;
 #if VALMAX_HAS_NOTIFICATIONS
                 if (opened) notificationTimer_.start();
@@ -329,8 +334,13 @@ void NativeBridge::refreshRetention()
         || context->retentionSyncing.exchange(true)) return;
     workers_.start(QRunnable::create([this, context]() {
         context->retention->refresh();
-        QMetaObject::invokeMethod(this, [context]() {
+        const QVariantMap report = context->retention->diagnostics();
+        QMetaObject::invokeMethod(this, [this, context, report]() {
             context->retentionSyncing.store(false);
+            if (retentionDiagnostics_ != report) {
+                retentionDiagnostics_ = report;
+                emit retentionDiagnosticsChanged();
+            }
         }, Qt::QueuedConnection);
     }));
 }

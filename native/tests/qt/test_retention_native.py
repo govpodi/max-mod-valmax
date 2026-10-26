@@ -65,7 +65,8 @@ class NativeRetentionSettings(unittest.TestCase):
             raise AssertionError("Actual generated retention counts label missing")
         cls.counts_visible, cls.counts_text = counts.groups()
         cls.technical = {}
-        for name in ("retentionTechnicalStatus", "retentionTechnicalQueue"):
+        for name in ("retentionTechnicalStatus", "retentionTechnicalQueue",
+                     "retentionRouteOwners", "retentionRouteCauses"):
             marker = f'objectName: "{name}";'
             lines = [line for line in cls.panel.splitlines() if marker in line]
             if len(lines) != 1 or '; visible: ' not in lines[0] or '; text: ' not in lines[0]:
@@ -195,6 +196,32 @@ class NativeRetentionSettings(unittest.TestCase):
                 value = status()
                 value["runtime"]["error"] = code
                 self.assertTrue(self.accepts(value))
+
+    def test_route_diagnostics_are_aggregate_and_do_not_claim_readiness(self):
+        diagnostics = {"schema": 1, "listeners": 3, "activeOwners": 2,
+                       "ownerConstructed": 4, "joinedUpserts": 5,
+                       "invalidHistory": 6, "noOwner": 7,
+                       "invalidOwner": 8, "unmatchedOwner": 9,
+                       "routeFailures": 10, "boundedSkips": 11}
+        setup = ("var ValMAXNative={Bridge:{retentionDiagnostics:"
+                 + json.dumps(diagnostics) + "}}; var retentionPage="
+                 + json.dumps({"runtimeTrusted": True,
+                               "accountId": "PRIVATE_ACCOUNT_CANARY",
+                               "text": "PRIVATE_TEXT_CANARY"}) + ";")
+        labels = []
+        for name in ("retentionRouteOwners", "retentionRouteCauses"):
+            visible, expression = self.technical[name]
+            self.assertTrue(self.evaluate("(function(){" + setup + "return ("
+                                          + visible + ");})()").toBool())
+            labels.append(self.evaluate("(function(){" + setup + "return ("
+                                        + expression + ");})()").toString())
+        self.assertIn("сейчас 2", labels[0])
+        self.assertIn("обнаружено после запуска перехвата: 4", labels[0])
+        self.assertIn("нет владельца 7", labels[1])
+        self.assertIn("нет точного совпадения 9", labels[1])
+        for forbidden in ("PRIVATE_ACCOUNT_CANARY", "PRIVATE_TEXT_CANARY"):
+            self.assertNotIn(forbidden, " ".join(labels))
+        self.assertNotIn("retentionDiagnostics", self.validator)
 
     def test_capture_disabled_rejects_fabricated_ready_applied_enabled(self):
         for field in ("ready", "applied", "enabled"):

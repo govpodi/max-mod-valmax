@@ -43,6 +43,8 @@ struct Runtime final {
     uint32_t listeners_attached = 0;
     uint64_t generation = 0, owner_constructed = 0, joined_upserts = 0, route_failures = 0;
     uint64_t bounded_skips = 0;
+    uint64_t invalid_history_callbacks = 0, no_owner_callbacks = 0;
+    uint64_t invalid_owner_callbacks = 0, unmatched_owner_callbacks = 0;
     std::array<char,64> revision{};
     HostError error = HostError::NotInstalled;
     std::array<uintptr_t,kOwners> owners{};
@@ -93,7 +95,9 @@ bool owner_scope(const Runtime &r, uintptr_t owner, rows::OwnerScope &out) noexc
         || !database || !control) return false;
     out={account,database,control};return true;
 }
-enum class RouteResolution : uint8_t { Matched, Untracked, Ambiguous };
+enum class RouteResolution : uint8_t {
+    Matched, InvalidHistory, NoOwner, InvalidOwner, UnmatchedOwner, Ambiguous
+};
 RouteResolution route_for(Runtime &r, uintptr_t history, rows::Route &route) noexcept {
     route={};
     uintptr_t vtable=0,database=0,control=0;
@@ -101,12 +105,13 @@ RouteResolution route_for(Runtime &r, uintptr_t history, rows::Route &route) noe
     if (!read_at(history,0,vtable) || vtable != r.layout.chat_history
         || !read_at(history,0x30,database) || !read_at(history,0x38,control)
         || !read_at(history,0xd8,chat) || !database || !control || chat == 0)
-        return RouteResolution::Untracked;
+        return RouteResolution::InvalidHistory;
     std::array<rows::OwnerScope,kOwners> candidates{};
     size_t valid=0,matches=0;
     // The destructor probe removes an owner under this same lock before its
     // body can free it. Keep the lock while reading the bounded owner chain.
     std::lock_guard lock(r.scope);
+    if (r.owner_count == 0) return RouteResolution::NoOwner;
     for (size_t i=0;i<r.owner_count;++i) {
         rows::OwnerScope candidate{};
         if (owner_scope(r,r.owners[i],candidate)) {
@@ -118,7 +123,8 @@ RouteResolution route_for(Runtime &r, uintptr_t history, rows::Route &route) noe
     // remains active. Never attribute that write to the remaining owner, and
     // never revoke healthy accounts for an untracked callback. The skipped
     // callback is counted in the native missed total instead.
-    if (matches==0) return RouteResolution::Untracked;
+    if (matches==0) return valid==0 ? RouteResolution::InvalidOwner
+                                    : RouteResolution::UnmatchedOwner;
     if (matches!=1 || !rows::unique_route(std::span(candidates.data(),valid),
                                           database,control,chat,route))
         return RouteResolution::Ambiguous;
@@ -169,8 +175,18 @@ void note_bounded_skip(Runtime &r) noexcept {
     std::lock_guard lock(r.scope);
     increment(r.bounded_skips);
 }
-void note_untracked_skip(Runtime &r) noexcept {
+void note_untracked_skip(Runtime &r, RouteResolution reason) noexcept {
     std::lock_guard lock(r.scope);
+    // Aggregate route categories only. Never retain a pointer, account/chat
+    // identifier, message identifier, profile path, or text for diagnostics.
+    switch (reason) {
+    case RouteResolution::InvalidHistory: increment(r.invalid_history_callbacks); break;
+    case RouteResolution::NoOwner: increment(r.no_owner_callbacks); break;
+    case RouteResolution::InvalidOwner: increment(r.invalid_owner_callbacks); break;
+    case RouteResolution::UnmatchedOwner: increment(r.unmatched_owner_callbacks); break;
+    case RouteResolution::Matched:
+    case RouteResolution::Ambiguous: return;
+    }
     // Startup and a disabled preference cannot lose a requested capture.
     // Once capture is requested, surface every ignored callback through the
     // count-only missed status instead of silently claiming full coverage.
@@ -248,7 +264,9 @@ void rows_enter(GumInvocationContext *context,gpointer raw) {
         const auto vector=reinterpret_cast<uintptr_t>(gum_invocation_context_get_nth_argument(context,2));
         rows::Route route{};
         const auto resolution=route_for(r,history,route);
-        if (resolution==RouteResolution::Untracked) { note_untracked_skip(r); return; }
+        if (resolution!=RouteResolution::Matched && resolution!=RouteResolution::Ambiguous) {
+            note_untracked_skip(r,resolution);return;
+        }
         if (resolution==RouteResolution::Ambiguous) { fail_scope(r); return; }
         bool enabled=false;
         {
@@ -502,8 +520,13 @@ NativeStatus status() noexcept {
     value.owner_join=r.owner_join;value.store_ready=r.store_ready;
     value.preference_enabled=r.preference_enabled;value.applied=r.applied;
     value.listeners=r.listeners_attached;value.generation=r.generation;
+    value.active_owners=static_cast<uint32_t>(r.owner_count);
     value.owner_constructed=r.owner_constructed;value.joined_upserts=r.joined_upserts;
     value.route_failures=r.route_failures;value.bounded_skips=r.bounded_skips;
+    value.invalid_history_callbacks=r.invalid_history_callbacks;
+    value.no_owner_callbacks=r.no_owner_callbacks;
+    value.invalid_owner_callbacks=r.invalid_owner_callbacks;
+    value.unmatched_owner_callbacks=r.unmatched_owner_callbacks;
     value.revision=r.revision;value.error=r.error;
     if (r.worker) value.worker=r.worker->status();
     return value;

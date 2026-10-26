@@ -23,10 +23,15 @@ struct NativeStatus final {
     uint32_t listeners = 0;
     uint32_t gates = 0;
     uint64_t generation = 0;
+    uint32_t active_owners = 0;
     uint64_t owner_constructed = 0;
     uint64_t joined_upserts = 0;
     uint64_t route_failures = 0;
     uint64_t bounded_skips = 0;
+    uint64_t invalid_history_callbacks = 0;
+    uint64_t no_owner_callbacks = 0;
+    uint64_t invalid_owner_callbacks = 0;
+    uint64_t unmatched_owner_callbacks = 0;
     std::array<char,64> revision{};
     HostError error = HostError::NotInstalled;
     pilot::AsyncCounters worker{};

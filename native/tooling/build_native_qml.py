@@ -429,6 +429,22 @@ def native_retention_settings_panel(panel: str) -> str:
         '+ "; без записи: " + retentionPage.runtime.queue.missing '
         '+ "; пропущено: " + retentionPage.runtime.queue.missed '
         '+ "; ошибок: " + retentionPage.runtime.queue.failures : ""; '
+        'typography: Typography.FontUtil.Styles.Description }\n'
+        '                RetentionText { objectName: "retentionRouteOwners"; Layout.fillWidth: true; '
+        'visible: retentionPage.runtimeTrusted && ValMAXNative.Bridge.retentionDiagnostics.schema === 1; '
+        'text: "Владельцы: сейчас " + ValMAXNative.Bridge.retentionDiagnostics.activeOwners '
+        '+ "; обнаружено после запуска перехвата: " + ValMAXNative.Bridge.retentionDiagnostics.ownerConstructed '
+        '+ "; привязанных событий: " + ValMAXNative.Bridge.retentionDiagnostics.joinedUpserts '
+        '+ "; обработчиков: " + ValMAXNative.Bridge.retentionDiagnostics.listeners; '
+        'typography: Typography.FontUtil.Styles.Description }\n'
+        '                RetentionText { objectName: "retentionRouteCauses"; Layout.fillWidth: true; '
+        'visible: retentionPage.runtimeTrusted && ValMAXNative.Bridge.retentionDiagnostics.schema === 1; '
+        'text: "Маршрутизация: неверная история " + ValMAXNative.Bridge.retentionDiagnostics.invalidHistory '
+        '+ "; нет владельца " + ValMAXNative.Bridge.retentionDiagnostics.noOwner '
+        '+ "; неверная цепочка " + ValMAXNative.Bridge.retentionDiagnostics.invalidOwner '
+        '+ "; нет точного совпадения " + ValMAXNative.Bridge.retentionDiagnostics.unmatchedOwner '
+        '+ "; ошибок маршрута " + ValMAXNative.Bridge.retentionDiagnostics.routeFailures '
+        '+ "; всего пропусков " + ValMAXNative.Bridge.retentionDiagnostics.boundedSkips; '
         'typography: Typography.FontUtil.Styles.Description }', 1)
     if "127.0.0.1" in panel or "XMLHttpRequest" in panel:
         raise ValueError("Legacy retention settings transport remained")

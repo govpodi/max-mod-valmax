@@ -203,20 +203,40 @@ int main() {
         reinterpret_cast<uintptr_t>(&owner_vtable),reinterpret_cast<uintptr_t>(&data_vtable),
         reinterpret_cast<uintptr_t>(&history_owner_vtable),reinterpret_cast<uintptr_t>(&factory_vtable),
         reinterpret_cast<uintptr_t>(&chat_history_vtable)};
+    // An account owner that exists before hook attachment must never be
+    // borrowed from another account just to make the receipt look ready.
+    OwnerFixture preAttached;
+    preAttached.setup(targets,13,-22);
+    fake_owner_create(preAttached.owner.data());
     CHECK(install_synthetic(L"E:\\ValMAXBuild\\retention-p11-sandbox\\synthetic-profile",
         targets,{&backend,&Backend::capture,&Backend::mark}));
     CHECK(profile_matches(L"E:\\ValMAXBuild\\retention-p11-sandbox\\synthetic-profile"));
     CHECK(!profile_matches(L"E:\\ValMAXBuild\\retention-p11-sandbox\\other-profile"));
+    CHECK(status().active_owners==0 && status().owner_constructed==0);
+    send(preAttached,29,12,0,"before attach");
+    CHECK(status().no_owner_callbacks==1 && status().bounded_skips==0);
+    CHECK(!status().owner_join && !status().infrastructure_ready());
     OwnerFixture first,second;
     first.setup(targets,11,-22);second.setup(targets,12,-22);
-    fake_owner_create(first.owner.data());fake_owner_create(second.owner.data());
-    CHECK(status().owner_constructed==2);
+    fake_owner_create(first.owner.data());
+    write(first.factory,0,uintptr_t{0});
+    send(first,29,12,0,"invalid owner");
+    CHECK(status().invalid_owner_callbacks==1 && status().active_owners==1);
+    write(first.factory,0,targets.factory_vtable);
+    fake_owner_create(second.owner.data());
+    CHECK(status().owner_constructed==2 && status().active_owners==2);
     send(first,31,12,0,"fixture start");
     CHECK(status().owner_join && status().joined_upserts==1);
     CHECK(!status().infrastructure_ready());
     CHECK(synthetic_store_ready());
     CHECK(set_enabled(true,std::string(64,'a'),1));
     CHECK(status().infrastructure_ready() && status().capture_enabled());
+    const auto before_pre_attached=status();
+    send(preAttached,30,12,0,"unmatched");
+    CHECK(status().unmatched_owner_callbacks==before_pre_attached.unmatched_owner_callbacks+1);
+    CHECK(status().bounded_skips==before_pre_attached.bounded_skips+1);
+    CHECK(status().worker.captured==0 && status().capture_enabled());
+    fake_owner_destroy(preAttached.owner.data());
     send(first,31,12,0,"fixture edit");
     CHECK(wait_for([&]{return status().worker.captured==1;}));
     send(first,31,12,2,"");
@@ -304,6 +324,7 @@ int main() {
     write(first.history,0x30,uintptr_t{0});
     send(first,6000,12,0,"bad route");
     CHECK(status().bounded_skips==before_bad_scope.bounded_skips+1);
+    CHECK(status().invalid_history_callbacks==before_bad_scope.invalid_history_callbacks+1);
     CHECK(status().route_failures==before_bad_scope.route_failures);
     CHECK(status().error==HostError::None && status().worker.ready);
     write(first.history,0x30,reinterpret_cast<uintptr_t>(&first.pair[0]));

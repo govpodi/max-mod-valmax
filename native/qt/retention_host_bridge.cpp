@@ -194,6 +194,27 @@ void RetentionHostBridge::refresh()
     publish();
 }
 
+QVariantMap RetentionHostBridge::diagnostics() const
+{
+    if (!profile_matches()) return {};
+    const passive::NativeStatus host = passive::status();
+    // Keep this separate from the Rust ACK and its readiness contract. It
+    // contains counts only; no pointer, account, chat, message, path, or text.
+    return {
+        {QStringLiteral("schema"), 1},
+        {QStringLiteral("listeners"), host.listeners},
+        {QStringLiteral("activeOwners"), host.active_owners},
+        {QStringLiteral("ownerConstructed"), qulonglong(host.owner_constructed)},
+        {QStringLiteral("joinedUpserts"), qulonglong(host.joined_upserts)},
+        {QStringLiteral("invalidHistory"), qulonglong(host.invalid_history_callbacks)},
+        {QStringLiteral("noOwner"), qulonglong(host.no_owner_callbacks)},
+        {QStringLiteral("invalidOwner"), qulonglong(host.invalid_owner_callbacks)},
+        {QStringLiteral("unmatchedOwner"), qulonglong(host.unmatched_owner_callbacks)},
+        {QStringLiteral("routeFailures"), qulonglong(host.route_failures)},
+        {QStringLiteral("boundedSkips"), qulonglong(host.bounded_skips)},
+    };
+}
+
 RetentionHostBridge::Change RetentionHostBridge::before_dispatch(const QByteArray &request)
 {
     Change change;
