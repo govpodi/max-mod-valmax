@@ -1,95 +1,83 @@
 <p align="center"><strong>Your conversations. Your rules.</strong></p>
 
-# ValMAX — a MAX mod for Windows
+# ValMAX — a MAX messenger mod for Windows
 
-An unofficial MAX modification for Windows x64, with added features for conversations and work. **The installed client runs on C++/Qt and Rust.** This checkout contains ValMAX 8.9.0 source, based on MAX 26.35.1.80662.
+ValMAX is an unofficial mod for MAX on Windows x64. Use multiple accounts, reply with saved messages, and open the business dashboard in one app. You can save available conversations together with photos, videos, and voice messages.
 
-**[Download ValMAX 8.9.0](https://github.com/govpodi/max-mod-valmax/releases/tag/v8.9.0)** · [Source for this release](https://github.com/govpodi/max-mod-valmax/tree/v8.9.0) · [Development and builds](docs/DEVELOPMENT.md) · [Русский](README.md)
+**[Download ValMAX 8.9.0 for Windows](https://github.com/govpodi/max-mod-valmax/releases/tag/v8.9.0)** · [How to install](#installation) · [Features](#features) · [Help](#help) · [Русский](README.md)
 
 [![Release](https://img.shields.io/github/v/release/govpodi/max-mod-valmax?label=release)](https://github.com/govpodi/max-mod-valmax/releases/latest)
-[![Source checks](https://github.com/govpodi/max-mod-valmax/actions/workflows/source-check.yml/badge.svg?branch=main)](https://github.com/govpodi/max-mod-valmax/actions/workflows/source-check.yml)
 [![Windows x64](https://img.shields.io/badge/Windows-x64-0078D4)](https://github.com/govpodi/max-mod-valmax/releases/latest)
-[![MIT license](https://img.shields.io/github/license/govpodi/max-mod-valmax)](LICENSE)
 
 <p align="center"><img src="docs/assets/settings-ru.png" alt="ValMAX settings with personal details redacted" width="1200"></p>
 <p align="center"><small>ValMAX settings. Name, phone number and profile photos are redacted.</small></p>
 
-Chat export saves available history and media, but the server has not confirmed that all older messages can be retrieved. Deleted-message retention works only after you enable it. Feature limits are listed below and in the [changelog](CHANGELOG.md).
+**BETA features:** export may miss older messages and some attachments. Deleted messages are saved only after you enable the feature. [Read about the limitations](#what-to-know).
 
-**VAL** — **V**ersatility · **A**utomation · **L**ocal control.
+In Russian, **ВАЛ** stands for **В**озможности (features) · **А**втоматизация (automation) · **Л**ичный контроль (personal control).
 
-In Russian, **ВАЛ** stands for «Возможности · Автоматизация · Личный контроль»: capabilities, automation and personal control.
-
-## Source layout
-
-The installed client runs on **C++/Qt and Rust**. It needs no separate Python installation, PyInstaller, or local HTTP server.
-
-| Directory | Purpose |
-| --- | --- |
-| [`native/core/`](native/core/) | Rust: local settings and stores, MData, chat export and deleted-message retention. |
-| [`native/qt/`](native/qt/), [`native/media/`](native/media/), [`native/hooks/`](native/hooks/) | C++/Qt: interface, media, client integration and native handlers. |
-| [`native/launcher/`](native/launcher/), [`native/installer/`](native/installer/) | Native Windows launcher and installer. |
-| [`modkit/`](modkit/), [`native/tooling/`](native/tooling/), [`native/tests/`](native/tests/) | Resource generators, build tools, tests and code from the earlier Python client. The native build still uses some of these files; none is installed with 8.9.0. |
-
-GitHub's language chart highlights native client code: Python files from the earlier implementation, build and tests are excluded through [`.gitattributes`](.gitattributes), while their source remains available. Rebuilding requires a prepared MAX baseline and the toolchain described in the [developer guide](docs/DEVELOPMENT.md).
-
-## Working with customers
-
-**Closer to customers. More freedom at work.**
+## Features
 
 | Feature | What it does |
 | --- | --- |
-| Up to three accounts · BETA | Phone accounts with local labels, colors and separate notification schedules. |
-| Quick replies | Shared or account-specific templates triggered by `/command`, with multiple messages and attachments. Sending remains manual. |
-| Business dashboard | The official [business.max.ru](https://business.max.ru/) dashboard in a ValMAX tab. Sign in yourself; it does not use a phone account slot. |
-| Chat export · BETA | An HTML copy of available history, photos, videos and voice messages. The UI shows progress and warns that the archive may be incomplete. |
-| MData · BETA | Compact transfer of an authorized session for one or all of your own accounts, including the required MAX keys from Windows. |
+| Multiple accounts · BETA | Up to three accounts with labels, colors, and separate notification settings. |
+| Quick replies | Saved messages triggered by `/command`, including attachments. You can review and edit them before sending. |
+| Business dashboard | [business.max.ru](https://business.max.ru/) in its own tab. Sign in to the dashboard separately. |
+| Chat export · BETA | An HTML copy of available messages, photos, videos, and voice messages. You can see download progress; the archive may be incomplete. |
+| Deleted messages · BETA | If you enable retention in advance, a received message may remain as a trash-icon bubble in the chat after it is deleted. |
+| Account transfer · BETA | MData creates a password-protected file to move sign-in for your own accounts to another computer. It does not include chat history or media. |
 
-## Other features
+### Other settings
 
-- **Ghost mode.** Filter switches for typing, message read receipts, online status and story views. Off by default.
-- **Deleted messages · BETA.** Keeps messages already received by the client when a deletion is observed; a trash-icon bubble appears in the conversation. Off by default.
-- **Chat PIN.** A local access restriction for a selected chat, with its preview hidden.
-- **Privacy.** Disables verified diagnostics and statistics modules and masks logs.
-- **Media search.** `@pic query` and `@vid query` search Wikimedia Commons after you click Find. The creator, license and source link are added to the draft with the file.
-- **Optimization · BETA.** Controls list loading, cache, photos and background tab activity. Changes take effect after a full restart.
-- **Integrated interface.** Developer settings and icons for added features styled to match MAX.
-- **Help and diagnostics.** Preview and save a technical JSON report for a bug report. You attach it manually.
+- **Ghost mode** controls typing indicators, read receipts, online status, and story views. It is off by default.
+- **Chat PIN** restricts access to a selected conversation on this computer and hides its preview.
+- **Photo and video search** adds files found on Wikimedia Commons to your draft with `@pic` and `@vid`. You decide whether to send them.
+- **Privacy and speed** offer controls for diagnostics, logs, lists, and media loading. Some BETA settings require a restart.
 
 ## Installation
 
-The ValMAX 8.9.0 Setup, separate Qt and FFmpeg source-material archives, and checksums are listed on the [v8.9.0 release page](https://github.com/govpodi/max-mod-valmax/releases/tag/v8.9.0). Source for this exact release is at the `v8.9.0` tag; `main` contains later changes. The release notes give the exact size, SHA-256, and installed-version verification results.
+1. Download `ValMAX-8.9.0-Setup.exe` from the [8.9.0 release page](https://github.com/govpodi/max-mod-valmax/releases/tag/v8.9.0). The other archives on that page are not needed for installation.
+2. If ValMAX is already running, exit fully from the tray icon → **Exit**. The window close button or `Alt+F4` may only hide it.
+3. Run Setup, then open ValMAX from its shortcut. The first launch may take up to a minute.
 
-1. Download `ValMAX-8.9.0-Setup.exe` and `SHA256SUMS.txt` from the v8.9.0 release page. Verify Setup's SHA-256. The separate Qt and FFmpeg source-material archives are not needed to run the app.
-2. Fully exit ValMAX from its tray menu and preserve a rollback path. `Alt+F4` may only hide the window to the tray.
-3. Run Setup and open ValMAX through its shortcut. No separate Python installation is needed. The first launch may take up to a minute.
+The Business tab and mini apps need Microsoft Edge WebView2. Setup checks for it and, if it is missing, needs internet access to download it from Microsoft. You do not need to install Python separately.
 
-**Compact package.** The Business tab and mini apps use the system [Microsoft Edge WebView2 Evergreen Runtime](https://developer.microsoft.com/en-us/microsoft-edge/webview2/). Setup checks whether it is present; downloading Microsoft's official component requires a network connection if it is absent.
+The `SHA256SUMS.txt` file on the release page lets you check the installer. Its size, checksum, and verification results are in the [release notes](docs/releases/v8.9.0.md).
 
-The chosen release notes list its installed-client checks and known issues. Chat export remains **BETA**: the server has not confirmed complete access to older conversations, and individual attachments may be unavailable.
+## What to know
+
+- **This is an unofficial mod.** ValMAX is not affiliated with the MAX team and uses a separate profile on your computer. It is not signed with a ValMAX developer certificate, so Windows may show a warning when you run it.
+- **BETA means a feature is still being tested.** Export may miss older messages or some attachments. Deleted-message retention only works for messages already received after you enable it and cannot guarantee that every deletion is saved.
+- **Protect your data.** HTML chat archives are not password-protected. An MData account-transfer file contains sign-in data: store the file and its password separately, and do not share them. A chat PIN restricts access in the app but does not encrypt the message database.
+- **Privacy settings do not provide full anonymity.** The server still receives data needed for your account to work. MAX's built-in updater is disabled; new verified ValMAX versions appear in [GitHub Releases](https://github.com/govpodi/max-mod-valmax/releases).
+
+[All known limitations and verification results for version 8.9.0](docs/releases/v8.9.0.md).
 
 <details>
-<summary>About your data and BETA features</summary>
+<summary>More about BETA features</summary>
 
-**BETA** labels mean a feature is still being tested. Detailed instructions in Russian are included in the installer.
+The detailed [user guide](ValMAX-инструкция.txt) is also included with Setup.
 
-- Selecting a quick reply immediately adds its attachments to the draft; uploads may start before you press Send. Quick replies and media search results are sent manually.
-- MData excludes conversations, media, cache and the 2FA password. The server may require another sign-in check. Store the MData archive and its password separately.
-- The PIN restricts access locally. It does not encrypt the message database or close previously opened media windows. HTML chat copies are not password-protected; unavailable attachments and incomplete history are noted in the export report.
-- Export downloads available photos, videos and voice messages sequentially, with pacing and a 4 GiB per-file limit. Some attachments may be unavailable. Deleted-message retention covers events observed after the feature was enabled; older retained bubbles may have approximate positions in the timeline.
-- The FFmpeg archives contain reference source materials; an exact match to the distributed DLLs and their build options has not yet been established. Early protection before the first background event also needs a separate check.
-- Privacy settings do not provide full anonymity: the server receives your connection address and data required to operate your account. Ghost mode shows active status after the client confirms its filters.
-- The local ghost-mode unread counter adjustment is BETA and lasts for the current run. After a restart, message deletion or changed read marks from another device, the counter may show the server's remaining unread count again. Full resynchronization still needs validation.
-- ValMAX uses a profile separate from the official MAX client. Updating an older modified build preserves MXMOD data. MAX's built-in updater is disabled; public builds and checksums appear in GitHub Releases after verification.
-- ValMAX is not affiliated with the MAX team. The application is not signed with a ValMAX developer certificate; Windows may display a warning when you run it.
+- Quick-reply attachments may start uploading to the draft before you press Send. You send the message yourself.
+- MData moves sign-in but not conversations, media, cache, or your two-factor authentication password. The server may ask you to confirm sign-in again.
+- Export downloads available attachments one at a time, with pauses between requests and a 4 GiB limit per file. Unavailable files are listed in the report. Older retained deletions may have approximate bubble positions and dates.
+- Ghost-mode settings take effect after the client confirms them. The unread counter may return to the server's value after a restart or changes on another device. Early protection before the first background event has not yet been confirmed.
+- Updating an older modified build preserves MXMOD data. A backup of the program is not a backup of your account data. Component details and open checks are in the [release notes](docs/releases/v8.9.0.md).
 
 </details>
 
-## Contact and contributing
+## Help
 
-[Contact the developer on Telegram](https://t.me/VALMAX_dev) · [ValMAX channel](https://t.me/VALMAX_github)
+[User guide](ValMAX-инструкция.txt) · [Contact the developer on Telegram](https://t.me/VALMAX_dev) · [ValMAX channel](https://t.me/VALMAX_github)
 
-Found a bug or have a feature idea? [How to report it and what to include](CONTRIBUTING.md).
+Found a bug or have an idea? [Tell us about it](CONTRIBUTING.md).
+
+## For developers
+
+The installed ValMAX client runs on C++/Qt and Rust without a separate Python installation. The repository also contains Python build and test tools and code from an earlier implementation; they are not part of the installed 8.9.0 client. [Source for the released version](https://github.com/govpodi/max-mod-valmax/tree/v8.9.0) · [How the project works and how to build it](docs/DEVELOPMENT.md).
+
+[![Source checks](https://github.com/govpodi/max-mod-valmax/actions/workflows/source-check.yml/badge.svg?branch=main)](https://github.com/govpodi/max-mod-valmax/actions/workflows/source-check.yml)
+[![MIT license](https://img.shields.io/github/license/govpodi/max-mod-valmax)](LICENSE)
 
 ValMAX's own code is released under MIT. MAX and third-party components remain the property of their respective rights holders.
 

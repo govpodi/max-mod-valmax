@@ -1,0 +1,5 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" role="img" aria-label="ValMAX">
+  <defs><linearGradient id="a" x2="1" y2="1"><stop stop-color="#c9b7ff"/><stop offset="1" stop-color="#875ff4"/></linearGradient></defs>
+  <rect width="64" height="64" rx="16" fill="url(#a)"/>
+  <path d="m16 18 11 29h10l11-29H38l-6 19-6-19z" fill="#190e2f"/>
+</svg>
