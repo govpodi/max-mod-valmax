@@ -1,12 +1,13 @@
 # Изменения / Changelog
 
-## 8.9.0 — черновик выпуска / release draft
+## 8.9.0 — Windows x64
 
-- Подготовлена компактная поставка для Windows x64: ValMAX использует общий WebView2 Evergreen в системе вместо отдельной Fixed-копии. Установщик проверяет наличие Runtime до обновления. Из пакета убраны неиспользуемые файлы QtWebEngine, а соответствующие исходники Qt подготовлены отдельным архивом.
-- Экспорт чата по-прежнему сохраняет только доступную сервером историю. Фото, видео и голосовые скачиваются при доступности; неполная история и ошибки вложений отмечаются в архиве. Это ограничение функции сохраняется независимо от статуса выпуска приложения.
-- Дата, размеры, SHA-256 и результаты проверки установленного клиента будут добавлены после сборки и испытаний точного релизного пакета. Эта запись не является подтверждением выпуска.
+- Подготовлена компактная поставка Windows x64: ValMAX использует общий WebView2 Evergreen в системе вместо отдельной Fixed-копии. Установщик проверяет Runtime до обновления; неиспользуемые файлы QtWebEngine исключены.
+- В локальном кандидате preview.29 проверено сохранение удалённого текста в обоих направлениях между двумя собственными аккаунтами: пузыри с корзиной появились прямо в чатах и остались после перезапуска. Также проверено сохранение настройки после выключения, повторного включения и перезапусков.
+- Экспорт выбранного чата остаётся **BETA**: доступны фото, видео и голосовые при успешной загрузке; интерфейс предупреждает о возможной неполноте истории и показывает ход работы. Недоступные вложения фиксируются в архиве, полнота старой переписки сервером не подтверждена.
+- В кандидате проверены воспроизведение собственного тестового фото, видео и голосового и открытие встроенной бизнес-вкладки. Бета-экспорт собственного тестового диалога сохранил 18 сообщений и 6 файлов (4 фото, 1 видео, 1 голосовое); 2 вложения отмечены как недоступные. Сигнатуры и SHA-256 сохранённых файлов проверены. Итоги проверки точного установленного выпуска, его размеры и контрольные суммы приведены в [заметках GitHub Release 8.9.0](https://github.com/govpodi/max-mod-valmax/releases/tag/v8.9.0).
 
-The Windows x64 package is being prepared to use the shared WebView2 Evergreen Runtime instead of bundling a Fixed copy. Setup checks for the Runtime before upgrading. Unused QtWebEngine files are omitted, and corresponding Qt sources are prepared as a separate archive. Chat export remains limited to history and media available from the server; incomplete history and failed attachments are reported. Release date, sizes, checksums and installed-client results will be added only after the exact release package passes verification.
+The compact Windows x64 package uses the system WebView2 Evergreen Runtime and omits unused QtWebEngine files. In local preview.29, both directions of deleted-message retention between two own accounts produced in-chat trash bubbles that survived a restart; the setting also persisted through off/on changes and restarts. The candidate opened the embedded Business tab and played own test photo, video, and voice media. Own-chat BETA export saved 18 messages and six files (four photos, one video, one voice); it reported two unavailable attachments, and saved-file signatures and SHA-256 hashes passed verification. Complete older history remains unconfirmed. The exact installed release results, asset sizes, and checksums are recorded in the [GitHub Release 8.9.0 notes](https://github.com/govpodi/max-mod-valmax/releases/tag/v8.9.0).
 
 ## 8.9.0-native.preview.22 Beta — 2026-10-26
 

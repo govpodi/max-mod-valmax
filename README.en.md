@@ -40,17 +40,17 @@ In Russian, **ВАЛ** stands for «Возможности · Автоматиз
 
 ## Installation
 
-The latest verified build is [ValMAX 8.9.0 BETA (preview.22)](https://github.com/govpodi/max-mod-valmax/releases/tag/v8.9.0-native.preview.22). It is a beta; the project source is on `main`.
+Setup, separate source-material archives, and checksums are available on the [latest published release page](https://github.com/govpodi/max-mod-valmax/releases/latest). That release lists its version, size, and verification results; project source is on `main`.
 
-1. From the [preview.22 release](https://github.com/govpodi/max-mod-valmax/releases/tag/v8.9.0-native.preview.22), download `ValMAX-8.9.0-native.preview.22-Setup.exe`, `ValMAX-Qt-6.11.2-sources-native-beta3.zip`, `ValMAX-FFmpeg-sources-8.9.0-native.preview.22.zip`, and `SHA256SUMS.txt`. Check the SHA-256 of all three files against the list. The source archives are separate assets and are not installed by Setup.
+1. Download the `Setup.exe` installer and `SHA256SUMS.txt` from the release page. Verify Setup's SHA-256. Qt and FFmpeg source-material archives are separate assets and are not needed to run the app.
 2. Fully exit ValMAX from its tray menu and preserve a rollback path. `Alt+F4` may only hide the window to the tray.
-3. Run the installer and open ValMAX through its shortcut. No separate Python installation is needed. The first launch may take up to a minute.
+3. Run Setup and open ValMAX through its shortcut. No separate Python installation is needed. The first launch may take up to a minute.
 
-**Compact Beta.** The Business tab and mini apps use the system [Microsoft Edge WebView2 Evergreen Runtime](https://developer.microsoft.com/en-us/microsoft-edge/webview2/). Setup checks whether it is present; downloading Microsoft's official component requires a network connection if it is absent. The release lists the exact Setup size and checksums.
+**Compact package.** The Business tab and mini apps use the system [Microsoft Edge WebView2 Evergreen Runtime](https://developer.microsoft.com/en-us/microsoft-edge/webview2/). Setup checks whether it is present; downloading Microsoft's official component requires a network connection if it is absent.
 
-The installed preview.22 was tested for launch and graceful restart with two preserved accounts, switching between them, sending and deleting a test message, and showing its trash-icon bubble inside the chat. An export of an own test dialog saved 15 messages, 4 photos, 1 video and 1 voice message; 2 other attachments were recorded as omitted. The six downloaded files passed format and SHA-256 checks. These checks do not establish complete chat history or validate every client feature.
+The chosen release notes list its installed-client checks and known issues. Chat export remains **BETA**: the server has not confirmed complete access to older conversations, and individual attachments may be unavailable.
 
-**Known preview.22 issue:** the current installation with two test accounts reports a message-handler error while deleted-message capture is enabled. Older saved bubbles remain visible in chat, but new deletions cannot currently be counted as retained. The cause is under investigation; check the feature status in Settings before relying on it.
+**If you use preview.22:** a deleted-message handler failure was observed there. Older saved bubbles remained visible, but new deletions might not be retained. Check the feature status in Settings and the verification notes before upgrading.
 
 <details>
 <summary>About your data and BETA features</summary>
