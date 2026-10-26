@@ -50,6 +50,8 @@ The latest verified build is [ValMAX 8.9.0 BETA (preview.22)](https://github.com
 
 The installed preview.22 was tested for launch and graceful restart with two preserved accounts, switching between them, sending and deleting a test message, and showing its trash-icon bubble inside the chat. An export of an own test dialog saved 15 messages, 4 photos, 1 video and 1 voice message; 2 other attachments were recorded as omitted. The six downloaded files passed format and SHA-256 checks. These checks do not establish complete chat history or validate every client feature.
 
+**Known preview.22 issue:** the current installation with two test accounts reports a message-handler error while deleted-message capture is enabled. Older saved bubbles remain visible in chat, but new deletions cannot currently be counted as retained. The cause is under investigation; check the feature status in Settings before relying on it.
+
 <details>
 <summary>About your data and BETA features</summary>
 

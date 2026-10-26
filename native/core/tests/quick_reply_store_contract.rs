@@ -4,8 +4,12 @@ use valmax_core::quick_reply_store::{self as store,Error,QuickReplyStore};
 
 fn row(n:u32)->Value{json!({"id":format!("{n:032x}"),"command":format!("ответ{n}"),"title":"Искусственная заготовка","text":"Искусственный текст.\nВторая строка."})}
 fn with(n:u32,changes:Value)->Value{let mut row=row(n);for (key,value) in changes.as_object().unwrap(){row[key]=value.clone();}row}
-fn scratch()->PathBuf{let mut random=[0u8;8];getrandom::getrandom(&mut random).unwrap();PathBuf::from("C:/ValMAXBuild/test-data").join(format!("quick-reply-{:x}",u64::from_le_bytes(random)))}
-fn cleanup(path:&Path){if path.exists(){let actual=fs::canonicalize(path).unwrap();let parent=fs::canonicalize("C:/ValMAXBuild/test-data").unwrap();assert!(actual.starts_with(&parent)&&actual!=parent);fs::remove_dir_all(actual).unwrap();}}
+fn test_root()->PathBuf{
+    let root=std::env::var_os("VALMAX_TEST_TEMP_ROOT").map(PathBuf::from).unwrap_or_else(std::env::temp_dir).join("quick-reply-store");
+    fs::create_dir_all(&root).unwrap();root
+}
+fn scratch()->PathBuf{let mut random=[0u8;8];getrandom::getrandom(&mut random).unwrap();test_root().join(format!("quick-reply-{:x}",u64::from_le_bytes(random)))}
+fn cleanup(path:&Path){if path.exists(){let actual=fs::canonicalize(path).unwrap();let parent=fs::canonicalize(test_root()).unwrap();assert!(actual.starts_with(&parent)&&actual!=parent);fs::remove_dir_all(actual).unwrap();}}
 fn save(store:&QuickReplyStore,replies:&Value)->Value{store.replace(store.snapshot().unwrap()["revision"].as_str().unwrap(),replies).unwrap()}
 
 #[test]

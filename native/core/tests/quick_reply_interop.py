@@ -1,14 +1,17 @@
 """Differential quick-reply tests: synthetic text/URLs, never attachment access.
 
 Build the quick_reply_interop_driver example first. Temp profiles and proof live
-under C:/ValMAXBuild; neither Python nor Rust opens the saved attachment URLs.
+under VALMAX_TEST_TEMP_ROOT when set; neither Python nor Rust opens the saved
+attachment URLs.
 """
 from pathlib import Path
 import copy
 import hashlib
 import json
+import os
 import subprocess
 import sys
+import tempfile
 import threading
 import uuid
 
@@ -16,8 +19,8 @@ ROOT=Path(__file__).resolve().parents[3]
 sys.path.insert(0,str(ROOT/'modkit'))
 import quick_reply_store as py
 
-DRIVER=Path('C:/ValMAXBuild/target/release/examples/quick_reply_interop_driver.exe')
-ARTIFACTS=Path('C:/ValMAXBuild/fixtures/quick-reply-v1')
+DRIVER=Path(os.environ.get('CARGO_TARGET_DIR', str(ROOT/'target')))/'release/examples/quick_reply_interop_driver.exe'
+ARTIFACTS=Path(os.environ.get('VALMAX_TEST_TEMP_ROOT', tempfile.gettempdir()))/'quick-reply-v1'
 CHECKS=[]
 
 def row(n=1,**changes):

@@ -64,6 +64,15 @@ class NativeRetentionSettings(unittest.TestCase):
         if counts is None:
             raise AssertionError("Actual generated retention counts label missing")
         cls.counts_visible, cls.counts_text = counts.groups()
+        cls.technical = {}
+        for name in ("retentionTechnicalStatus", "retentionTechnicalQueue"):
+            marker = f'objectName: "{name}";'
+            lines = [line for line in cls.panel.splitlines() if marker in line]
+            if len(lines) != 1 or '; visible: ' not in lines[0] or '; text: ' not in lines[0]:
+                raise AssertionError(f"Actual generated diagnostic label missing: {name}")
+            visible = lines[0].split('; visible: ', 1)[1].split('; text: ', 1)[0]
+            expression = lines[0].split('; text: ', 1)[1].rsplit('; typography:', 1)[0]
+            cls.technical[name] = (visible, expression)
 
     def evaluate(self, source):
         result = self.engine.evaluate(source)
@@ -143,6 +152,49 @@ class NativeRetentionSettings(unittest.TestCase):
         self.assertIn("(2)", label)
         self.assertIn("может быть неполным", label)
         self.assertFalse(warning(2, False)[0])
+
+    def test_technical_status_reports_only_fixed_error_and_aggregate_counters(self):
+        value = status(True)
+        value["runtime"]["error"] = "route"
+        value["runtime"]["queue"] = {"queued": 1, "inFlight": 1, "pending": 2,
+                                      "captured": 3, "marked": 4, "missing": 5,
+                                      "missed": 6, "failures": 7}
+        self.assertTrue(self.accepts(value))
+        setup = ("var retentionPage=" + json.dumps({
+            "runtimeTrusted": True, "runtime": value["runtime"],
+            "accountId": "PRIVATE_ACCOUNT_CANARY", "chatId": "PRIVATE_CHAT_CANARY",
+            "text": "PRIVATE_TEXT_CANARY", "profilePath": "PRIVATE_PATH_CANARY",
+            "token": "PRIVATE_TOKEN_CANARY",
+        }) + ";")
+        visible, expression = self.technical["retentionTechnicalStatus"]
+        self.assertTrue(self.evaluate("(function(){" + setup + "return (" + visible + ");})()").toBool())
+        state = self.evaluate("(function(){" + setup + "return (" + expression + ");})()").toString()
+        self.assertIn("Код: route", state)
+        self.assertIn("захват активен: нет", state)
+        visible, expression = self.technical["retentionTechnicalQueue"]
+        self.assertTrue(self.evaluate("(function(){" + setup + "return (" + visible + ");})()").toBool())
+        queue = self.evaluate("(function(){" + setup + "return (" + expression + ");})()").toString()
+        for field in ("Очередь: 1", "выполняется: 1", "ожидает записи: 2",
+                      "захвачено: 3", "сохранено: 4", "без записи: 5",
+                      "пропущено: 6", "ошибок: 7"):
+            self.assertIn(field, queue)
+        for forbidden in ("PRIVATE_ACCOUNT_CANARY", "PRIVATE_CHAT_CANARY", "PRIVATE_TEXT_CANARY",
+                          "PRIVATE_PATH_CANARY", "PRIVATE_TOKEN_CANARY"):
+            self.assertNotIn(forbidden, state + queue)
+        value["runtime"]["accountId"] = "PRIVATE_ACCOUNT_CANARY"
+        self.assertFalse(self.accepts(value))
+        del value["runtime"]["accountId"]
+        value["runtime"]["error"] = "C:/PRIVATE_PATH_CANARY"
+        self.assertFalse(self.accepts(value))
+
+    def test_technical_status_accepts_only_known_native_error_codes(self):
+        for code in (None, "preflight", "route", "queue_full", "buffer_full",
+                     "storage", "stalled", "shutdown", "retention_unavailable",
+                     "retention_not_ready", "host_status_stale", "retention_not_integrated"):
+            with self.subTest(code=code):
+                value = status()
+                value["runtime"]["error"] = code
+                self.assertTrue(self.accepts(value))
 
     def test_capture_disabled_rejects_fabricated_ready_applied_enabled(self):
         for field in ("ready", "applied", "enabled"):

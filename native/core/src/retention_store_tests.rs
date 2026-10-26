@@ -1,21 +1,33 @@
 use super::*;
-use std::{fs, mem::MaybeUninit, sync::atomic::{AtomicU64, Ordering}};
+use std::{fs, mem::MaybeUninit, os::windows::fs::MetadataExt,
+    sync::atomic::{AtomicU64, Ordering}};
 
 static NEXT: AtomicU64 = AtomicU64::new(1);
-struct Fixture(PathBuf);
+struct Fixture(PathBuf, PathBuf);
+fn fixture_parent() -> PathBuf {
+    let root = std::env::var_os("VALMAX_TEST_TEMP_ROOT")
+        .map(PathBuf::from)
+        .unwrap_or_else(|| PathBuf::from("E:/ValMAXBuild/fixtures/synthetic"));
+    assert!(root.is_absolute(), "synthetic fixture root must be absolute");
+    root.join("retention-store-p12")
+}
 impl Fixture {
     fn new() -> Self {
-        let parent = PathBuf::from("E:/ValMAXBuild/fixtures/synthetic/retention-store-p12");
+        let parent = fixture_parent();
         fs::create_dir_all(&parent).unwrap();
         let root = parent.join(format!("case-{}-{}", std::process::id(), NEXT.fetch_add(1, Ordering::Relaxed)));
         fs::create_dir(&root).unwrap();
-        Self(root)
+        Self(root, parent)
     }
 }
 impl Drop for Fixture {
     fn drop(&mut self) {
-        let parent = Path::new("E:/ValMAXBuild/fixtures/synthetic/retention-store-p12");
-        assert_eq!(self.0.parent(), Some(parent));
+        let safe = self.0.parent() == Some(self.1.as_path())
+            && fs::canonicalize(&self.1).ok().zip(fs::canonicalize(&self.0).ok())
+                .is_some_and(|(parent, child)| child.parent() == Some(parent.as_path()))
+            && fs::symlink_metadata(&self.0).is_ok_and(|metadata|
+                metadata.is_dir() && metadata.file_attributes() & 0x400 == 0);
+        assert!(safe, "unsafe synthetic fixture path");
         fs::remove_dir_all(&self.0).unwrap();
     }
 }

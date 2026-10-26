@@ -45,12 +45,14 @@ def main():
     parser.add_argument("--fixture", type=Path, required=True)
     parser.add_argument("--build", type=Path, required=True)
     parser.add_argument("--rust-dll", type=Path, required=True)
+    parser.add_argument("--report", type=Path, default=PROJECT / "analysis/native-migration-v1/support-qt-proof.json")
     args = parser.parse_args()
-    fixture = Path(tempfile.mkdtemp(prefix="qt-support-", dir="C:/ValMAXBuild/build"))
+    test_root = Path(os.environ.get("VALMAX_TEST_TEMP_ROOT", tempfile.gettempdir()))
+    test_root.mkdir(parents=True, exist_ok=True)
+    fixture = Path(tempfile.mkdtemp(prefix="qt-support-", dir=test_root))
     shutil.copytree(args.fixture, fixture, dirs_exist_ok=True)
     module = fixture / "qml/ValMAX/Native"
-    for name in ("valmaxnativeplugin.dll", "qmldir", "SettingsTransport.qml", "ChatLockTransport.qml", "SupportTransport.qml"):
-        shutil.copy2(args.build / "qml/ValMAX/Native" / name, module / name)
+    shutil.copytree(args.build / "qml/ValMAX/Native", module, dirs_exist_ok=True)
     shutil.copy2(args.build / "valmax_qml_bridge_test.exe", fixture / "valmax_qml_bridge_test.exe")
     shutil.copy2(args.rust_dll, fixture / "valmax_core.dll")
     source = (PROJECT / "modkit/support_panel.qml").read_text(encoding="utf-8").replace("\r\n", "\n")
@@ -94,7 +96,7 @@ def main():
         run(phase, qml, fixture / "qml", phase != "unconfigured")
         if phase == "preview":
             assert not report.exists() and not list(reports.iterdir()), "preview must not publish files"
-            assert not list(settings.iterdir()), "preview must not create settings files"
+            assert not any(path.is_file() for path in settings.rglob("*")), "preview must not create settings files"
         elif phase == "export":
             value = json.loads(report.read_text(encoding="utf-8"))
             assert value["schema"] == 2 and value["runtime"]["kind"] == "native"
@@ -125,7 +127,8 @@ def main():
              "rawPrivacySnapshotForwarded": False, "legacyTemplateModified": False,
              "fullVisualSdkTest": False, "actualUserAppTest": False,
              "limits": ["SaveFile dialog/SDK visuals replaced; real controller and transport tested", "abort suppresses delivery; accepted export may still finish", "only known client application version copied; unknown host versions/startup/counters remain null"]}
-    (PROJECT / "analysis/native-migration-v1/support-qt-proof.json").write_text(json.dumps(proof, indent=2) + "\n", encoding="utf-8")
+    args.report.parent.mkdir(parents=True, exist_ok=True)
+    args.report.write_text(json.dumps(proof, indent=2) + "\n", encoding="utf-8")
 
 
 if __name__ == "__main__":

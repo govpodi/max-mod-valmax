@@ -3,15 +3,21 @@ use serde_json::{Value, json};
 use valmax_core::{retention_store::{IncomingText, RetentionStore}, runtime::Runtime};
 use rusqlite::Connection;
 
-const FIXTURE_BASE: &str = "E:/ValMAXBuild/fixtures/synthetic/retention-runtime-p11";
-struct Fixture(PathBuf);
+fn fixture_base() -> PathBuf {
+    let root = std::env::var_os("VALMAX_TEST_TEMP_ROOT")
+        .map(PathBuf::from)
+        .unwrap_or_else(|| PathBuf::from("E:/ValMAXBuild/fixtures/synthetic"));
+    assert!(root.is_absolute(), "synthetic fixture root must be absolute");
+    root.join("retention-runtime-p11")
+}
+struct Fixture(PathBuf, PathBuf);
 impl Deref for Fixture {
     type Target = Path;
     fn deref(&self) -> &Path { &self.0 }
 }
 impl Drop for Fixture {
     fn drop(&mut self) {
-        let base = Path::new(FIXTURE_BASE);
+        let base = self.1.as_path();
         let ordinary_base = base.ancestors().take_while(|path| path.parent().is_some())
             .all(|path| fs::symlink_metadata(path).is_ok_and(|metadata|
                 metadata.is_dir() && metadata.file_attributes() & 0x400 == 0));
@@ -36,14 +42,14 @@ impl Drop for Fixture {
     }
 }
 fn fixture_root() -> Fixture {
-    let base = Path::new(FIXTURE_BASE);
-    fs::create_dir_all(base).unwrap();
+    let base = fixture_base();
+    fs::create_dir_all(&base).unwrap();
     let mut random = [0_u8; 16];
     getrandom::getrandom(&mut random).unwrap();
     let child = random.iter().map(|part| format!("{part:02x}")).collect::<String>();
     let path = base.join(child);
     fs::create_dir(&path).unwrap();
-    let root = Fixture(path);
+    let root = Fixture(path, base);
     fs::create_dir(root.join("profile")).unwrap();
     fs::create_dir(root.join("runtime")).unwrap();
     root

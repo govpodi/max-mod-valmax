@@ -16,7 +16,8 @@ sys.path.insert(0, str(ROOT / "native/tooling"))
 sys.path.insert(0, str(ROOT / "native/launcher"))
 import package_native_client as package
 from prepare_public_qt_source_asset import prepare as prepare_public_qt_source_asset
-from qt_source_asset import PUBLIC_BETA_AVAILABILITY, verify_external_qt_source_asset
+from qt_source_asset import (PUBLIC_BETA_AVAILABILITY, verify_external_qt_source_asset,
+                             verify_qt_notice_snapshot)
 from launcher_generate_pins import REQUIRED, EVERGREEN_REQUIRED, generate, inventory
 from webview2_bootstrapper import load_pin as webview2_bootstrapper_pin
 from webview2_bootstrapper import verify as verify_webview2_bootstrapper
@@ -112,11 +113,14 @@ class SlimPackaging(unittest.TestCase):
             "notices/mod/WebView/qtwebview-6.11.2-valmax-source.zip": b"old WebView source",
             "notices/mod/WebView/webview-third-party-notices.zip": b"old WebView notices",
             "notices/transfer/Qt/source-materials/QT-NOTICES.txt": b"same notice",
+            "notices/mod/QtBase/README.txt": b"exact ordinary notice",
         }
         self.planned_file(plan, "mod/licenses/WebView/qtwebview-6.11.2-valmax-source.zip", b"new Evergreen source")
         self.planned_file(plan, "mod/licenses/WebView/webview-third-party-notices.zip", b"new Evergreen notices")
         ordinary_notice = self.planned_file(plan, "transfer/licenses/Qt/source-materials/QT-NOTICES.txt",
                                            notice_data["notices/transfer/Qt/source-materials/QT-NOTICES.txt"])
+        self.planned_file(plan, "mod/licenses/QtBase/README.txt",
+                          notice_data["notices/mod/QtBase/README.txt"])
         source_row = {"name": archive_name, "bytes": len(source_bytes), "sha256": digest(source_bytes),
                       "sourcePathsInP16": source_paths, "archiveTest": "passed"}
         notice_rows = [{"path": name, "bytes": len(data), "sha256": digest(data)}
@@ -144,6 +148,39 @@ class SlimPackaging(unittest.TestCase):
             for name, data in notice_data.items():
                 bundle.writestr(name, data)
         return plan, zip_path, manifest_path, ordinary_notice, source_paths
+
+    def final_notice_rows(self, plan):
+        rows = [{"path": item["path"], "size": Path(item["source"]).stat().st_size,
+                 "sha256": item["sha256"]} for item in plan.values()]
+        final_stage = b"final generated staging receipt"
+        rows.append({"path": "mod/licenses/STAGING-MATERIALS.json",
+                     "size": len(final_stage), "sha256": digest(final_stage)})
+        return rows
+
+    def test_final_notice_snapshot_allows_only_declared_generated_differences(self):
+        plan, archive, manifest, _, _ = self.source_fixture("public-beta-asset")
+        rows = self.final_notice_rows(plan)
+        expected = ["mod/licenses/STAGING-MATERIALS.json",
+                    "mod/licenses/WebView/qtwebview-6.11.2-valmax-source.zip",
+                    "mod/licenses/WebView/webview-third-party-notices.zip"]
+        with zipfile.ZipFile(archive) as bundle:
+            proof = verify_qt_notice_snapshot(bundle, json.loads(manifest.read_text("utf8")),
+                                              rows, expected)
+        self.assertEqual(proof["snapshotNoticesVerified"], 5)
+        self.assertEqual(proof["snapshotNoticesMatchingRuntime"], 2)
+        self.assertEqual(proof["generatedNoticeDifferences"], sorted(expected))
+
+        ordinary = next(row for row in rows if row["path"] ==
+                        "mod/licenses/QtBase/README.txt")
+        ordinary["sha256"] = digest(b"unexpected runtime notice")
+        with zipfile.ZipFile(archive) as bundle, \
+             self.assertRaisesRegex(ValueError, "differences do not match"):
+            verify_qt_notice_snapshot(bundle, json.loads(manifest.read_text("utf8")), rows,
+                                      expected)
+        with zipfile.ZipFile(archive) as bundle, \
+             self.assertRaisesRegex(ValueError, "unreviewed Qt source asset notice difference"):
+            verify_qt_notice_snapshot(bundle, json.loads(manifest.read_text("utf8")), rows,
+                                      expected + [ordinary["path"]])
 
     def test_exact_external_asset_omits_duplicate_sources_and_rejects_notice_drift(self):
         plan, archive, manifest, ordinary_notice, paths = self.source_fixture()

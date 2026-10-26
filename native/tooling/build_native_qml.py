@@ -359,7 +359,9 @@ def native_retention_settings_panel(panel: str) -> str:
                     || ["applied", "enabled", "error", "historySyncVerified", "ready", "retainedEvents", "retainedMessages"].some(function(key) { return !Object.prototype.hasOwnProperty.call(r, key); })
                     || typeof r.ready !== "boolean" || typeof r.applied !== "boolean" || typeof r.enabled !== "boolean"
                     || typeof r.historySyncVerified !== "boolean"
-                    || !(r.error === null || typeof r.error === "string" && r.error.length <= 128)
+                     || !(r.error === null || ["preflight", "route", "queue_full", "buffer_full",
+                         "storage", "stalled", "shutdown", "retention_unavailable",
+                         "retention_not_ready", "host_status_stale", "retention_not_integrated"].indexOf(r.error) >= 0)
                     || r.enabled && (!value.enabled || !r.applied || !r.ready || r.error !== null)
                     || (r.ready || r.applied || r.enabled) && !c.capture
                     || c.enable && (!r.ready || r.error !== null)
@@ -400,7 +402,34 @@ def native_retention_settings_panel(panel: str) -> str:
         '                RetentionText { objectName: "retentionMissed"; Layout.fillWidth: true; '
         'visible: retentionPage.runtimeTrusted && retentionPage.runtime !== null && retentionPage.runtime.queue !== undefined && retentionPage.runtime.queue.missed > 0; '
         'text: retentionPage.runtime && retentionPage.runtime.queue ? "Часть событий в этом запуске пропущена (" + retentionPage.runtime.queue.missed + "). Локальный архив может быть неполным." : ""; '
-        'typography: Typography.FontUtil.Styles.Description; color: retentionPage.maxwellColorTokens.colorTextAttention }', 1)
+         'typography: Typography.FontUtil.Styles.Description; color: retentionPage.maxwellColorTokens.colorTextAttention }', 1)
+    technical = '                RetentionText { objectName: "retentionMissed";'
+    if panel.count(technical) != 1:
+        raise ValueError("Native retention technical status anchor changed")
+    line = next(line for line in panel.splitlines() if line.startswith(technical))
+    panel = panel.replace(line, line + '\n'
+        '                RetentionText { objectName: "retentionTechnicalHeading"; Layout.fillWidth: true; '
+        'visible: retentionPage.runtimeTrusted && retentionPage.runtime !== null; '
+        'text: "Техническое состояние"; typography: Typography.FontUtil.Styles.BodyStrong }\n'
+        '                RetentionText { objectName: "retentionTechnicalStatus"; Layout.fillWidth: true; '
+        'visible: retentionPage.runtimeTrusted && retentionPage.runtime !== null; '
+        'text: retentionPage.runtime ? "Код: " + (retentionPage.runtime.error === null ? "ok" : retentionPage.runtime.error) '
+        '+ "; готовность: " + (retentionPage.runtime.ready ? "да" : "нет") '
+        '+ "; настройка применена: " + (retentionPage.runtime.applied ? "да" : "нет") '
+        '+ "; захват активен: " + (retentionPage.runtime.enabled ? "да" : "нет") : ""; '
+        'typography: Typography.FontUtil.Styles.Description }\n'
+        '                RetentionText { objectName: "retentionTechnicalQueue"; Layout.fillWidth: true; '
+        'visible: retentionPage.runtimeTrusted && retentionPage.runtime !== null && retentionPage.runtime.queue !== undefined; '
+        'text: retentionPage.runtime && retentionPage.runtime.queue ? '
+        '"Очередь: " + retentionPage.runtime.queue.queued '
+        '+ "; выполняется: " + retentionPage.runtime.queue.inFlight '
+        '+ "; ожидает записи: " + retentionPage.runtime.queue.pending '
+        '+ "; захвачено: " + retentionPage.runtime.queue.captured '
+        '+ "; сохранено: " + retentionPage.runtime.queue.marked '
+        '+ "; без записи: " + retentionPage.runtime.queue.missing '
+        '+ "; пропущено: " + retentionPage.runtime.queue.missed '
+        '+ "; ошибок: " + retentionPage.runtime.queue.failures : ""; '
+        'typography: Typography.FontUtil.Styles.Description }', 1)
     if "127.0.0.1" in panel or "XMLHttpRequest" in panel:
         raise ValueError("Legacy retention settings transport remained")
     return panel

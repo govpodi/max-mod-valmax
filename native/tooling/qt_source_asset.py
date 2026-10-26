@@ -35,6 +35,15 @@ ASSET_MANIFEST_FIELDS = frozenset({
     "retainedNoticeFiles", "retainedSourceArchiveBytes", "retainedSourceArchiveCount",
     "retainedSourceArchives", "schema", "variant", "version", "publicationStatus",
 })
+GENERATED_NOTICE_PATHS = frozenset({
+    "mod/licenses/STAGING-MATERIALS.json",
+    "mod/licenses/WebView/qtwebview-6.11.2-valmax-source.zip",
+    "mod/licenses/WebView/webview-third-party-notices.zip",
+    "mod/licenses/shared-component-materials/Qt/source-materials/QT-NOTICES.txt",
+    "mod/licenses/shared-component-materials/Qt/source-materials/materials-manifest.json",
+    "transfer/licenses/Qt/source-materials/QT-NOTICES.txt",
+    "transfer/licenses/Qt/source-materials/materials-manifest.json",
+})
 
 
 def require(value, reason):
@@ -75,6 +84,51 @@ def archived_digest(bundle, name):
             digest.update(chunk)
             count += len(chunk)
     return count, digest.hexdigest()
+
+
+def verify_qt_notice_snapshot(bundle, manifest, runtime_rows, expected_differences):
+    """Bind every source-asset notice to the final runtime inventory.
+
+    Generated assembly notices may differ from the earlier source snapshot,
+    but any other difference is an input drift rather than a legal conclusion.
+    """
+    notice_rows = manifest.get("retainedNoticeFiles") if isinstance(manifest, dict) else None
+    require(isinstance(notice_rows, list) and 0 < len(notice_rows) <= 4096,
+            "invalid Qt source asset notice inventory")
+    require(isinstance(expected_differences, list)
+            and len(expected_differences) == len(set(expected_differences))
+            and all(isinstance(path, str) for path in expected_differences)
+            and set(expected_differences) <= GENERATED_NOTICE_PATHS,
+            "unreviewed Qt source asset notice difference")
+    rows = {row["path"]: row for row in runtime_rows}
+    require(len(rows) == len(runtime_rows), "duplicate runtime inventory path")
+    seen, differences = set(), set()
+    for item in notice_rows:
+        require(isinstance(item, dict) and set(item) == {"path", "bytes", "sha256"}
+                and isinstance(item["path"], str)
+                and type(item["bytes"]) is int and item["bytes"] >= 0
+                and isinstance(item["sha256"], str) and SHA256.fullmatch(item["sha256"]),
+                "invalid Qt source asset notice record")
+        name = safe_member(item["path"])
+        parts = PurePosixPath(name).parts
+        require(len(parts) >= 3 and parts[0] == "notices"
+                and parts[1] in {"mod", "transfer"} and name not in seen,
+                "invalid or duplicate Qt source asset notice path")
+        seen.add(name)
+        require(archived_digest(bundle, name) == (item["bytes"], item["sha256"]),
+                "Qt source asset notice member changed: " + name)
+        runtime_name = parts[1] + "/licenses/" + "/".join(parts[2:])
+        row = rows.get(runtime_name)
+        require(isinstance(row, dict) and type(row.get("size")) is int
+                and isinstance(row.get("sha256"), str),
+                "Qt source asset notice missing from runtime: " + runtime_name)
+        if (row["size"], row["sha256"]) != (item["bytes"], item["sha256"]):
+            differences.add(runtime_name)
+    require(differences == set(expected_differences),
+            "Qt source asset notice differences do not match the final runtime")
+    return {"snapshotNoticesVerified": len(seen),
+            "snapshotNoticesMatchingRuntime": len(seen) - len(differences),
+            "generatedNoticeDifferences": sorted(differences)}
 
 
 def verify_external_qt_source_asset(plan_entries, archive_path, manifest_path):

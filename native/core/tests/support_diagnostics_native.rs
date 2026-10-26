@@ -2,7 +2,7 @@
 use serde_json::{Value, json};
 use std::{
     fs,
-    path::{Path, PathBuf},
+    path::PathBuf,
     sync::{Arc, Barrier},
 };
 use valmax_core::{settings_io::SafeStorePath, support_diagnostics::*};
@@ -13,7 +13,7 @@ impl Fixture {
         let mut nonce = [0u8; 16];
         getrandom::getrandom(&mut nonce).unwrap();
         let id: String = nonce.iter().map(|b| format!("{b:02x}")).collect();
-        let path = Path::new("C:/ValMAXBuild/fixtures/support").join(id);
+        let path = fixture_root().join(id);
         fs::create_dir_all(&path).unwrap();
         Self(path)
     }
@@ -26,11 +26,19 @@ impl Fixture {
 }
 impl Drop for Fixture {
     fn drop(&mut self) {
-        let base = fs::canonicalize("C:/ValMAXBuild/fixtures/support").unwrap();
+        let base = fs::canonicalize(fixture_root()).unwrap();
         let path = fs::canonicalize(&self.0).unwrap();
         assert!(path.starts_with(&base) && path != base);
         fs::remove_dir_all(path).unwrap();
     }
+}
+fn fixture_root() -> PathBuf {
+    let root = std::env::var_os("VALMAX_TEST_TEMP_ROOT")
+        .map(PathBuf::from)
+        .unwrap_or_else(std::env::temp_dir)
+        .join("support-diagnostics");
+    fs::create_dir_all(&root).unwrap();
+    root
 }
 fn sample() -> Value {
     build_report(

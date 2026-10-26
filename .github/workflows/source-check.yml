@@ -53,3 +53,29 @@ jobs:
           $env:LOCALAPPDATA = Join-Path $env:USERPROFILE 'AppData\Local'
           New-Item -ItemType Directory -Force -Path $env:VALMAX_TEST_TEMP_ROOT, $env:TEMP, $env:APPDATA, $env:LOCALAPPDATA | Out-Null
           python -B -X utf8 -m unittest discover -s modkit -p 'test_mdata*.py' -v
+
+  retention-synthetic:
+    runs-on: windows-latest
+    timeout-minutes: 30
+    steps:
+      - name: Checkout source
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+      - name: Set up pinned Rust toolchain
+        shell: pwsh
+        run: rustup toolchain install 1.99.1 --profile minimal --target x86_64-pc-windows-msvc
+      - name: Test account-scoped retention and restart with synthetic data
+        shell: pwsh
+        working-directory: native
+        run: |
+          $env:VALMAX_TEST_TEMP_ROOT = Join-Path '${{ runner.temp }}' 'valmax-retention-fixtures'
+          $env:CARGO_TARGET_DIR = Join-Path '${{ runner.temp }}' 'valmax-retention-target'
+          $env:CARGO_INCREMENTAL = '0'
+          New-Item -ItemType Directory -Force -Path $env:VALMAX_TEST_TEMP_ROOT | Out-Null
+          cargo test --locked -p valmax-core --lib retention_store::tests -- --test-threads=1
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          cargo test --locked -p valmax-core --test retention_runtime_selected -- --test-threads=1
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          cargo test --locked -p valmax-core --test quick_reply_store_contract --test support_diagnostics_native -- --test-threads=1
+          exit $LASTEXITCODE

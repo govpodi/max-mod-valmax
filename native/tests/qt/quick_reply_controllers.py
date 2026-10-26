@@ -78,12 +78,14 @@ def main():
     parser.add_argument("--fixture", type=Path, required=True)
     parser.add_argument("--build", type=Path, required=True)
     parser.add_argument("--rust-dll", type=Path, required=True)
+    parser.add_argument("--report", type=Path, default=PROJECT / "analysis/native-migration-v1/quick-reply-qt-proof.json")
     args = parser.parse_args()
-    fixture = Path(tempfile.mkdtemp(prefix="qt-quick-replies-", dir="C:/ValMAXBuild/build"))
+    test_root = Path(os.environ.get("VALMAX_TEST_TEMP_ROOT", tempfile.gettempdir()))
+    test_root.mkdir(parents=True, exist_ok=True)
+    fixture = Path(tempfile.mkdtemp(prefix="qt-quick-replies-", dir=test_root))
     shutil.copytree(args.fixture, fixture, dirs_exist_ok=True)
     module = fixture / "qml/ValMAX/Native"
-    for name in ("valmaxnativeplugin.dll", "qmldir", "SettingsTransport.qml", "ChatLockTransport.qml", "SupportTransport.qml"):
-        shutil.copy2(args.build / "qml/ValMAX/Native" / name, module / name)
+    shutil.copytree(args.build / "qml/ValMAX/Native", module, dirs_exist_ok=True)
     shutil.copy2(args.rust_dll, fixture / "valmax_core.dll")
     settings = fixture / "quick-reply-test-profile"
     runtime = fixture / "quick-reply-test-runtime"
@@ -128,7 +130,8 @@ def main():
                  "native/qt/SettingsTransport.qml", "native/tooling/build_native_qml.py", "native/tests/qt/quick_reply_controllers.py", "native/tests/qt/quick_reply_pages.qml")},
              "pluginSha256": hashlib.sha256((module / "valmaxnativeplugin.dll").read_bytes()).hexdigest(),
              "rustSha256": hashlib.sha256((fixture / "valmax_core.dll").read_bytes()).hexdigest()}
-    (PROJECT / "analysis/native-migration-v1/quick-reply-qt-proof.json").write_text(json.dumps(proof, ensure_ascii=False, indent=2), encoding="utf8")
+    args.report.parent.mkdir(parents=True, exist_ok=True)
+    args.report.write_text(json.dumps(proof, ensure_ascii=False, indent=2), encoding="utf8")
 
 
 if __name__ == "__main__":

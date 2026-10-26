@@ -23,6 +23,7 @@ from datetime import datetime, timedelta, timezone
 
 from package_transfer_helper import pe_imports, system_dependency
 from assemble_native_runtime import dependency_closure as runtime_dependency_closure
+from qt_source_asset import verify_qt_notice_snapshot
 from webview2_bootstrapper import verify as verify_webview2_bootstrapper
 from webview2_bootstrapper import load_pin as webview2_bootstrapper_pin
 
@@ -795,7 +796,8 @@ def bound_qt_source_asset(runtime, rows, assembly, material_binding, qt_source_m
     with zipfile.ZipFile(archive) as bundle:
         require(bundle.read("manifest.json") == manifest_file.read_bytes(),
                 "Qt source ZIP embedded manifest changed")
-        source_rows = read_json(manifest_file).get("retainedSourceArchives")
+        asset_manifest = read_json(manifest_file)
+        source_rows = asset_manifest.get("retainedSourceArchives")
         require(isinstance(source_rows, list) and len(source_rows) == receipt["sourceArchiveCount"],
                 "Qt source ZIP manifest archive count differs")
         pinned = {row["path"]: row for row in expected_rows}
@@ -818,6 +820,8 @@ def bound_qt_source_asset(runtime, rows, assembly, material_binding, qt_source_m
                         "Qt source asset no longer covers omitted runtime copy")
                 declared[path] = source
         require(set(declared) == omitted_names, "external Qt asset does not cover all omitted sources")
+        notice_proof = verify_qt_notice_snapshot(
+            bundle, asset_manifest, rows, receipt.get("assetNoticeSnapshotDifferences"))
     transfer_manifest = read_json(runtime / "transfer/package-manifest.json")
     require(transfer_manifest.get("qtSourceDistribution") == receipt
             and transfer_manifest.get("sourcePackageManifestSha256") ==
@@ -841,7 +845,8 @@ def bound_qt_source_asset(runtime, rows, assembly, material_binding, qt_source_m
                     and row.get("sha256") == transfer_rows[row["path"]]["sha256"]
                     and row.get("bytes") == transfer_rows[row["path"]]["size"]
                     for row in frozen_transfer), "transfer helper inventory differs from slim runtime")
-    return {"receipt": receipt, "archive": archive, "manifest": manifest_file}
+    return {"receipt": receipt, "archive": archive, "manifest": manifest_file,
+            "noticeSnapshotVerification": notice_proof}
 
 
 def validate_ffmpeg_source_distribution(receipt, subject):
@@ -1824,6 +1829,9 @@ def main():
                                                               else inputs["materialBinding"]["sha256"])
     report["artifactValidation"]["qtSourceAsset"] = (None if inputs is None or inputs.get("qtSourceAsset") is None
                                                         else inputs["qtSourceAsset"]["receipt"])
+    report["artifactValidation"]["qtSourceNoticeSnapshot"] = (
+        None if inputs is None or inputs.get("qtSourceAsset") is None
+        else inputs["qtSourceAsset"]["noticeSnapshotVerification"])
     report["artifactValidation"]["ffmpegSourceAsset"] = (None if beta_plan is None or
                                                             beta_plan.get("ffmpegSourceAsset") is None
                                                             else beta_plan["ffmpegSourceAsset"]["receipt"])
