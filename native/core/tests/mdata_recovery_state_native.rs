@@ -6,13 +6,20 @@ use std::{
 };
 use valmax_core::mdata_recovery_state::{self as state, RecoveryMarker, RecoveryRequired};
 
+const BASE: &str = "C:/ValMAXBuild/fixtures/mdata-recovery-state";
+fn fixture_base() -> PathBuf {
+    std::env::var_os("VALMAX_TEST_TEMP_ROOT")
+        .map(|root| PathBuf::from(root).join("mdata-recovery-state"))
+        .unwrap_or_else(|| PathBuf::from(BASE))
+}
+
 struct Fixture(PathBuf);
 impl Fixture {
     fn new() -> Self {
         let mut bytes = [0u8; 16];
         getrandom::getrandom(&mut bytes).unwrap();
         let id: String = bytes.iter().map(|b| format!("{b:02x}")).collect();
-        let path = PathBuf::from("C:/ValMAXBuild/fixtures/mdata-recovery-state").join(id);
+        let path = fixture_base().join(id);
         fs::create_dir_all(&path).unwrap();
         Self(path)
     }
@@ -31,7 +38,7 @@ impl Fixture {
 }
 impl Drop for Fixture {
     fn drop(&mut self) {
-        let base = fs::canonicalize("C:/ValMAXBuild/fixtures/mdata-recovery-state").unwrap();
+        let base = fs::canonicalize(fixture_base()).unwrap();
         let own = fs::canonicalize(&self.0).unwrap();
         assert!(own.starts_with(&base) && own != base);
         fs::remove_dir_all(own).unwrap();

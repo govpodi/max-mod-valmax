@@ -4,6 +4,11 @@ use std::{
     os::windows::{fs::OpenOptionsExt, process::CommandExt},
 };
 const BASE: &str = "C:/ValMAXBuild/fixtures/login-import-storage";
+fn fixture_base() -> PathBuf {
+    std::env::var_os("VALMAX_TEST_TEMP_ROOT")
+        .map(|root| PathBuf::from(root).join("login-import-storage"))
+        .unwrap_or_else(|| PathBuf::from(BASE))
+}
 struct Fixture {
     base: PathBuf,
     root: PathBuf,
@@ -13,7 +18,7 @@ impl Fixture {
         let mut random = [0u8; 16];
         getrandom::getrandom(&mut random).unwrap();
         let suffix: String = random.iter().map(|b| format!("{b:02x}")).collect();
-        let base = PathBuf::from(BASE).join(suffix);
+        let base = fixture_base().join(suffix);
         let root = base.join("MXMOD");
         fs::create_dir_all(&root).unwrap();
         Self { base, root }
@@ -28,7 +33,7 @@ impl Fixture {
 }
 impl Drop for Fixture {
     fn drop(&mut self) {
-        let base = fs::canonicalize(BASE).unwrap();
+        let base = fs::canonicalize(fixture_base()).unwrap();
         let own = fs::canonicalize(&self.base).unwrap();
         assert!(own.starts_with(&base) && own != base);
         fs::remove_dir_all(own).unwrap();

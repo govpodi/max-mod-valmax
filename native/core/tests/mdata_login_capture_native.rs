@@ -16,6 +16,11 @@ use valmax_core::{
 use zeroize::Zeroizing;
 
 const BASE: &str = "C:/ValMAXBuild/fixtures/login-capture";
+fn fixture_base() -> PathBuf {
+    std::env::var_os("VALMAX_TEST_TEMP_ROOT")
+        .map(|root| PathBuf::from(root).join("login-capture"))
+        .unwrap_or_else(|| PathBuf::from(BASE))
+}
 struct Fixture {
     base: PathBuf,
     root: PathBuf,
@@ -25,7 +30,7 @@ impl Fixture {
         let mut nonce = [0u8; 16];
         getrandom::getrandom(&mut nonce).unwrap();
         let id: String = nonce.iter().map(|b| format!("{b:02x}")).collect();
-        let base = PathBuf::from(BASE).join(id);
+        let base = fixture_base().join(id);
         let root = base.join("MXMOD");
         fs::create_dir_all(&root).unwrap();
         Self { base, root }
@@ -36,7 +41,7 @@ impl Fixture {
 }
 impl Drop for Fixture {
     fn drop(&mut self) {
-        let base = fs::canonicalize(BASE).unwrap();
+        let base = fs::canonicalize(fixture_base()).unwrap();
         let own = fs::canonicalize(&self.base).unwrap();
         assert!(own.starts_with(&base) && own != base);
         fs::remove_dir_all(own).unwrap();

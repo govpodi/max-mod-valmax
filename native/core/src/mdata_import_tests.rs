@@ -21,6 +21,11 @@ use std::{
 use zeroize::Zeroizing;
 
 const BASE: &str = "C:/ValMAXBuild/fixtures/mdata-import-service";
+fn fixture_base() -> PathBuf {
+    std::env::var_os("VALMAX_TEST_TEMP_ROOT")
+        .map(|root| PathBuf::from(root).join("mdata-import-service"))
+        .unwrap_or_else(|| PathBuf::from(BASE))
+}
 const PASSWORD: &str = "synthetic-service-import-password";
 const TOKEN: &[u8] = b"synthetic service import token";
 const AUTH: &[u8] = b"opaque synthetic auth\0\xff";
@@ -37,7 +42,7 @@ impl Fixture {
         let mut nonce = [0u8; 16];
         getrandom::getrandom(&mut nonce).unwrap();
         let name: String = nonce.iter().map(|b| format!("{b:02x}")).collect();
-        let root = PathBuf::from(BASE).join(name);
+        let root = fixture_base().join(name);
         let local = root.join("Local");
         let selected = root.join("selected");
         fs::create_dir_all(&local).unwrap();
@@ -79,7 +84,7 @@ impl Fixture {
 }
 impl Drop for Fixture {
     fn drop(&mut self) {
-        let base = fs::canonicalize(BASE).unwrap();
+        let base = fs::canonicalize(fixture_base()).unwrap();
         let own = fs::canonicalize(&self.root).unwrap();
         let name = self.root.file_name().unwrap().to_str().unwrap();
         assert!(own.starts_with(&base) && own != base && name.len() == 32);

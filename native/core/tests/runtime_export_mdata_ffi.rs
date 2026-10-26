@@ -20,6 +20,11 @@ use valmax_core::{
 };
 
 const BASE: &str = "C:/ValMAXBuild/fixtures/runtime-export-mdata";
+fn fixture_base() -> PathBuf {
+    std::env::var_os("VALMAX_TEST_TEMP_ROOT")
+        .map(|root| PathBuf::from(root).join("runtime-export-mdata"))
+        .unwrap_or_else(|| PathBuf::from(BASE))
+}
 const PASSWORD: &str = "synthetic-runtime-mdata-password";
 const OPAQUE: &[u8] = b"SYNTHETIC-OPAQUE-CREDENTIAL";
 
@@ -80,7 +85,7 @@ impl Fixture {
         let mut random = [0u8; 16];
         getrandom::getrandom(&mut random).unwrap();
         let name: String = random.iter().map(|b| format!("{b:02x}")).collect();
-        let root = PathBuf::from(BASE).join(name);
+        let root = fixture_base().join(name);
         fs::create_dir_all(&root).unwrap();
         let config = serde_json::to_vec(&json!({"profileDirectory":root.join("profile"),
             "runtimeDirectory":root.join("runtime"),"existingClient":true}))
@@ -112,7 +117,13 @@ impl Fixture {
             }
         }
         assert!(!fixture.runtime.is_null());
-        assert!(!fixture.root.join("profile").exists() && !fixture.root.join("runtime").exists());
+        assert!(!fixture.root.join("profile").exists());
+        let runtime_directory = fixture.root.join("runtime");
+        let active = runtime_directory.join(valmax_core::optimization_store::ACTIVE_FILENAME);
+        let snapshot: Value = serde_json::from_slice(&fs::read(active).unwrap()).unwrap();
+        assert_eq!(snapshot, json!({"schema":1,"settings":valmax_core::optimization_store::Settings::default().value()}));
+        assert_eq!(names(&fixture.root), vec!["runtime".to_owned()]);
+        assert_eq!(names(&runtime_directory), vec![valmax_core::optimization_store::ACTIVE_FILENAME.to_owned()]);
         fixture
     }
     fn raw(&self, input: &[u8]) -> Value {
@@ -147,7 +158,7 @@ impl Fixture {
 impl Drop for Fixture {
     fn drop(&mut self) {
         self.close();
-        let base = fs::canonicalize(BASE).unwrap();
+        let base = fs::canonicalize(fixture_base()).unwrap();
         let root = fs::canonicalize(&self.root).unwrap();
         assert!(root.starts_with(&base) && root != base && root.parent() == Some(base.as_path()));
         let own_name = root.file_name().unwrap().to_str().unwrap();
@@ -282,7 +293,9 @@ fn mdata_runtime_ffi_authenticates_before_projecting_only_public_metadata() {
         "unsafe_path",
     );
     assert_eq!(fs::read(&archive).unwrap(), encrypted());
-    assert_eq!(fs::read_dir(&f.root).unwrap().count(), 1);
+    let mut expected = vec!["runtime".to_owned(), archive.file_name().unwrap().to_string_lossy().into_owned()];
+    expected.sort();
+    assert_eq!(names(&f.root), expected);
 }
 
 #[test]

@@ -285,7 +285,9 @@ class FreshProfileTests(unittest.TestCase):
         from mdata_service import MDataService
         from test_mdata_login import MemoryCredentials
         from test_mdata_service import synthetic_disk_capacity
-        parent = Path(r"D:\CodexLabs\max-mod-26.35.1\analysis\test-temp") if os.name == "nt" else None
+        parent = Path(os.environ.get("VALMAX_TEST_TEMP_ROOT") or r"D:\CodexLabs\max-mod-26.35.1\analysis\test-temp") if os.name == "nt" else None
+        if parent is not None:
+            parent.mkdir(parents=True, exist_ok=True)
         with tempfile.TemporaryDirectory(prefix="mdata-first-login-", dir=parent) as temporary, \
                 patch("session_credentials._api", side_effect=AssertionError("Real tokens forbidden")), \
                 synthetic_disk_capacity(temporary):

@@ -8,13 +8,18 @@ use std::{
 };
 
 const BASE: &str = "C:/ValMAXBuild/fixtures/mdata-recovery-archive";
+fn fixture_base() -> PathBuf {
+    std::env::var_os("VALMAX_TEST_TEMP_ROOT")
+        .map(|root| PathBuf::from(root).join("mdata-recovery-archive"))
+        .unwrap_or_else(|| PathBuf::from(BASE))
+}
 struct Fixture(PathBuf);
 impl Fixture {
     fn new() -> Self {
         let mut bytes = [0u8; 16];
         getrandom::getrandom(&mut bytes).unwrap();
         let name: String = bytes.iter().map(|b| format!("{b:02x}")).collect();
-        let path = PathBuf::from(BASE).join(name);
+        let path = fixture_base().join(name);
         fs::create_dir_all(path.join(recovery::BACKUP_DIRECTORY)).unwrap();
         Self(path)
     }
@@ -37,7 +42,7 @@ impl Fixture {
 }
 impl Drop for Fixture {
     fn drop(&mut self) {
-        let base = fs::canonicalize(BASE).unwrap();
+        let base = fs::canonicalize(fixture_base()).unwrap();
         let own = fs::canonicalize(&self.0).unwrap();
         assert!(own.starts_with(&base) && own != base);
         fs::remove_dir_all(own).unwrap();
@@ -51,7 +56,7 @@ fn open_error(root: &Path, marker: &RecoveryMarker) -> RecoveryArchiveError {
 }
 
 fn move_owned_directory(fixture: &Fixture, source: &Path, target: &Path) -> io::Result<()> {
-    let approved = fs::canonicalize(BASE)?;
+    let approved = fs::canonicalize(fixture_base())?;
     let fixture_base = fs::canonicalize(&fixture.0)?;
     let source = fs::canonicalize(source)?;
     let target_parent = fs::canonicalize(target.parent().unwrap())?;

@@ -8,6 +8,11 @@ use std::{
 };
 
 const BASE: &str = "C:/ValMAXBuild/fixtures/mdata-profile-stage";
+fn fixture_base() -> PathBuf {
+    std::env::var_os("VALMAX_TEST_TEMP_ROOT")
+        .map(|root| PathBuf::from(root).join("mdata-profile-stage"))
+        .unwrap_or_else(|| PathBuf::from(BASE))
+}
 const PASSWORD: &str = "Synthetic-Recovery-Password-123";
 
 struct Fixture {
@@ -15,7 +20,7 @@ struct Fixture {
 }
 impl Fixture {
     fn new() -> Self {
-        let parent = PathBuf::from(BASE).join(crate::startup_status::new_operation_id().unwrap());
+        let parent = fixture_base().join(crate::startup_status::new_operation_id().unwrap());
         fs::create_dir_all(&parent).unwrap();
         Self { parent }
     }
@@ -27,7 +32,7 @@ impl Drop for Fixture {
     fn drop(&mut self) {
         // Test cleanup has authority only over this generated fixture. No live
         // profile path is ever supplied to this module or removed here.
-        let base = fs::canonicalize(BASE).unwrap();
+        let base = fs::canonicalize(fixture_base()).unwrap();
         let own = fs::canonicalize(&self.parent).unwrap();
         assert!(own.starts_with(&base) && own != base);
         fs::remove_dir_all(own).unwrap();

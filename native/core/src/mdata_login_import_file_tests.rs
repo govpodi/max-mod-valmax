@@ -14,6 +14,11 @@ use std::{
 };
 
 const BASE: &str = "C:/ValMAXBuild/fixtures/login-import-end-to-end";
+fn fixture_base() -> PathBuf {
+    std::env::var_os("VALMAX_TEST_TEMP_ROOT")
+        .map(|root| PathBuf::from(root).join("login-import-end-to-end"))
+        .unwrap_or_else(|| PathBuf::from(BASE))
+}
 const PASSWORD: &str = "synthetic compact import password";
 struct Fixture {
     base: PathBuf,
@@ -24,7 +29,7 @@ impl Fixture {
         let mut nonce = [0u8; 16];
         getrandom::getrandom(&mut nonce).unwrap();
         let name: String = nonce.iter().map(|b| format!("{b:02x}")).collect();
-        let base = PathBuf::from(BASE).join(name);
+        let base = fixture_base().join(name);
         let root = base.join("MXMOD");
         fs::create_dir_all(&root).unwrap();
         Self { base, root }
@@ -60,7 +65,7 @@ impl Fixture {
 }
 impl Drop for Fixture {
     fn drop(&mut self) {
-        let base = fs::canonicalize(BASE).unwrap();
+        let base = fs::canonicalize(fixture_base()).unwrap();
         let own = fs::canonicalize(&self.base).unwrap();
         let name = self.base.file_name().unwrap().to_str().unwrap();
         assert!(

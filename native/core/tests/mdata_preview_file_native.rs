@@ -19,6 +19,11 @@ use valmax_core::{
 
 const PASSWORD: &str = "synthetic-selected-archive-password";
 const BASE: &str = "C:/ValMAXBuild/fixtures/mdata-preview-file";
+fn fixture_base() -> PathBuf {
+    std::env::var_os("VALMAX_TEST_TEMP_ROOT")
+        .map(|root| PathBuf::from(root).join("mdata-preview-file"))
+        .unwrap_or_else(|| PathBuf::from(BASE))
+}
 
 struct Fixture(PathBuf);
 impl Fixture {
@@ -26,7 +31,7 @@ impl Fixture {
         let mut nonce = [0u8; 16];
         getrandom::getrandom(&mut nonce).unwrap();
         let name: String = nonce.iter().map(|b| format!("{b:02x}")).collect();
-        let path = PathBuf::from(BASE).join(name);
+        let path = fixture_base().join(name);
         fs::create_dir_all(&path).unwrap();
         Self(path)
     }
@@ -38,7 +43,7 @@ impl Fixture {
 }
 impl Drop for Fixture {
     fn drop(&mut self) {
-        let base = fs::canonicalize(BASE).unwrap();
+        let base = fs::canonicalize(fixture_base()).unwrap();
         let own = fs::canonicalize(&self.0).unwrap();
         assert!(own.starts_with(&base) && own != base);
         fs::remove_dir_all(own).unwrap();

@@ -54,7 +54,7 @@ class MemoryCredentials:
 class CompactLoginTests(unittest.TestCase):
     def setUp(self):
         # Tests never read the actual MXMOD root or call the Windows API.
-        temporary_parent = Path(r"D:\CodexLabs\max-mod-26.35.1\analysis\test-temp") if os.name == "nt" else None
+        temporary_parent = Path(os.environ.get("VALMAX_TEST_TEMP_ROOT") or r"D:\CodexLabs\max-mod-26.35.1\analysis\test-temp") if os.name == "nt" else None
         if temporary_parent is not None:
             temporary_parent.mkdir(parents=True, exist_ok=True)
         self.temporary = tempfile.TemporaryDirectory(prefix="mdata-login-synthetic-", dir=temporary_parent)

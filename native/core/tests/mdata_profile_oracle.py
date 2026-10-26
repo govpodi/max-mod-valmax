@@ -9,13 +9,14 @@ from __future__ import annotations
 import ast
 import hashlib
 import json
+import os
 from pathlib import Path
 import re
 import types
 import unicodedata
 
 ROOT = Path(__file__).resolve().parents[3]
-OUTPUT = Path("C:/ValMAXBuild/fixtures/mdata-profile/contract.json")
+OUTPUT = Path(os.environ.get("VALMAX_MDATA_PROFILE_FIXTURE") or "C:/ValMAXBuild/fixtures/mdata-profile/contract.json")
 SOURCES = {}
 
 

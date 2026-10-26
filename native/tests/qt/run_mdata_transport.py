@@ -20,7 +20,7 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--runtime", type=Path, default=Path("C:/ValMAXBuild/build/qt-support-0gb8v6n6"))
     parser.add_argument("--report", type=Path, default=ROOT / "analysis/native-migration-v1/mdata-transport-proof.json")
-    parser.add_argument("--work-root", type=Path, choices=(Path("C:/ValMAXBuild"), Path("D:/ValMAXBuild")), default=Path("C:/ValMAXBuild"))
+    parser.add_argument("--work-root", type=Path, choices=(Path("C:/ValMAXBuild"), Path("D:/ValMAXBuild"), Path("E:/ValMAXBuild")), default=Path("C:/ValMAXBuild"))
     args = parser.parse_args()
     runtime = args.runtime.resolve()
     exe = runtime / "valmax_qml_bridge_test.exe"

@@ -23,7 +23,7 @@ class MDataManagerTests(unittest.TestCase):
     service = fixtures.MDataServiceTests.service
 
     def setUp(self):
-        parent = Path(r"D:\ValMAX\audit\mdata-manager") if os.name == "nt" else None
+        parent = Path(os.environ.get("VALMAX_TEST_TEMP_ROOT") or r"D:\ValMAX\audit\mdata-manager") if os.name == "nt" else None
         if parent is not None: parent.mkdir(parents=True, exist_ok=True)
         self.temporary = tempfile.TemporaryDirectory(prefix="synthetic-", dir=parent)
         self.addCleanup(self.temporary.cleanup)

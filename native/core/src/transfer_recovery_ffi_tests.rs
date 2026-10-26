@@ -15,6 +15,11 @@ use std::{
 use zeroize::Zeroizing;
 
 const BASE: &str = "C:/ValMAXBuild/fixtures/transfer-recovery-ffi";
+fn fixture_base() -> PathBuf {
+    std::env::var_os("VALMAX_TEST_TEMP_ROOT")
+        .map(|root| PathBuf::from(root).join("transfer-recovery-ffi"))
+        .unwrap_or_else(|| PathBuf::from(BASE))
+}
 const PASSWORD: &str = "Synthetic-Recovery-FFI-123";
 const KEY: &str = "access_token_42@MXMOD";
 struct Fixture {
@@ -36,7 +41,7 @@ impl Fixture {
                 &mut output,&policy,ArchiveKind::Profile).unwrap();
             output
         });
-        let local = PathBuf::from(BASE).join(crate::startup_status::new_operation_id().unwrap());
+        let local = fixture_base().join(crate::startup_status::new_operation_id().unwrap());
         let root = local.join("MXMOD");
         let backup = local
             .join(mdata_recovery_state::BACKUP_DIRECTORY)
@@ -64,7 +69,7 @@ impl Fixture {
 }
 impl Drop for Fixture {
     fn drop(&mut self) {
-        let base = fs::canonicalize(BASE).unwrap();
+        let base = fs::canonicalize(fixture_base()).unwrap();
         let own = fs::canonicalize(&self.local).unwrap();
         assert!(own.starts_with(&base) && own != base);
         fs::remove_dir_all(own).unwrap();

@@ -12,8 +12,8 @@ import uuid
 import pefile
 
 ROOT=Path(__file__).resolve().parents[3]
-BUILD=Path('C:/ValMAXBuild/build/bootstrap')
-MAX_QT=Path('C:/ValMAXBuild/build/max-engine-probes/probe-2335f7ff38f4437d8a23497fc19f704d/runtime')
+BUILD=Path(os.environ.get('VALMAX_BOOTSTRAP_BUILD_ROOT','C:/ValMAXBuild/build/bootstrap'))
+MAX_QT=Path(os.environ.get('VALMAX_BOOTSTRAP_QT_ROOT','C:/ValMAXBuild/build/max-engine-probes/probe-2335f7ff38f4437d8a23497fc19f704d/runtime'))
 JOB_SOURCE=ROOT/'native/tests/qt/run_webview_blank_native.py'
 # Reuse only reviewed Win32 ctypes declarations. Import does not run its main,
 # load a browser, create profiles or start any process.
@@ -127,7 +127,9 @@ def run_case(fixture,mode):
         'caseDirectory':str(case),'stderrSha256':sha(case/'stderr.log')}
 
 def main():
-    fixture=Path('C:/ValMAXBuild/build/bootstrap-fixtures')/('run-'+uuid.uuid4().hex)
+    fixture_root=Path(os.environ.get('VALMAX_BOOTSTRAP_FIXTURE_ROOT','C:/ValMAXBuild/build/bootstrap-fixtures'))
+    fixture_root.mkdir(parents=True,exist_ok=True)
+    fixture=fixture_root/('run-'+uuid.uuid4().hex)
     fixture.mkdir(parents=True);(fixture/'plugins/generic').mkdir(parents=True)
     qt=copy_qt(fixture);shutil.copy2(BUILD/'valmax_bootstrap_harness.exe',fixture/'valmax_bootstrap_harness.exe')
     results=[run_case(fixture,mode) for mode in ('good','missing','invalid-image','wrong-key','reject','hang')]
@@ -150,9 +152,12 @@ def main():
             'No event loop is entered, no browser/network code is invoked; OS-level network absence is not independently proven',
             'Owned child environment is isolated, but this is not an OS filesystem sandbox or a complete production DLL closure proof'],
         'productionEntryChanged':False,'maxStarted':False,'userInstallationChanged':False}
-    output=ROOT/'analysis/native-migration-v1/bootstrap-generic-plugin-proof.json'
+    output=Path(os.environ.get('VALMAX_BOOTSTRAP_REPORT',str(ROOT/'analysis/native-migration-v1/bootstrap-generic-plugin-proof.json')))
+    output.parent.mkdir(parents=True,exist_ok=True)
     output.write_text(json.dumps(report,indent=2)+'\n',encoding='utf8')
     print(json.dumps({'ok':report['ok'],'checks':report['checks'],'cases':[{k:r[k] for k in ('mode','ok','timedOut','unprotectedSyntheticContinuation')} for r in results],'proof':str(output)}))
+    if os.environ.get('VALMAX_BOOTSTRAP_CLEAN_FIXTURE')=='1':
+        shutil.rmtree(fixture)
     return 0 if report['ok'] else 1
 
 if __name__=='__main__':raise SystemExit(main())

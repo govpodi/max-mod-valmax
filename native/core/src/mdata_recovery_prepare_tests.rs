@@ -12,6 +12,11 @@ use std::{
 };
 
 const BASE: &str = "C:/ValMAXBuild/fixtures/mdata-recovery-prepare";
+fn fixture_base() -> PathBuf {
+    std::env::var_os("VALMAX_TEST_TEMP_ROOT")
+        .map(|root| PathBuf::from(root).join("mdata-recovery-prepare"))
+        .unwrap_or_else(|| PathBuf::from(BASE))
+}
 const PASSWORD: &str = "Synthetic-Recovery-Prepare-123";
 struct Fixture {
     parent: PathBuf,
@@ -21,7 +26,7 @@ struct Fixture {
 }
 impl Fixture {
     fn new(archive: &[u8], existing: bool) -> Self {
-        let parent = PathBuf::from(BASE).join(crate::startup_status::new_operation_id().unwrap());
+        let parent = fixture_base().join(crate::startup_status::new_operation_id().unwrap());
         let root = parent.join("MXMOD");
         let backup = parent
             .join(mdata_recovery_state::BACKUP_DIRECTORY)
@@ -52,7 +57,7 @@ impl Fixture {
 }
 impl Drop for Fixture {
     fn drop(&mut self) {
-        let base = fs::canonicalize(BASE).unwrap();
+        let base = fs::canonicalize(fixture_base()).unwrap();
         let own = fs::canonicalize(&self.parent).unwrap();
         assert!(own.starts_with(&base) && own != base);
         fs::remove_dir_all(own).unwrap();

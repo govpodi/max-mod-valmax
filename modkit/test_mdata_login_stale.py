@@ -15,7 +15,8 @@ from test_mdata_login import MemoryCredentials
 import test_mdata_login as login_fixtures
 import test_mdata_service as fixtures
 
-TEMP_PARENT = Path(r"D:\CodexLabs\max-mod-26.35.1\analysis\test-temp") if os.name == "nt" else Path(tempfile.gettempdir())
+TEMP_PARENT = (Path(os.environ.get("VALMAX_TEST_TEMP_ROOT") or r"D:\CodexLabs\max-mod-26.35.1\analysis\test-temp")
+               if os.name == "nt" else Path(tempfile.gettempdir()))
 
 
 class StaleLoginTests(unittest.TestCase):
