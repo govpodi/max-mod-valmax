@@ -38,15 +38,13 @@
 
 ## Установка
 
-Исходники `8.9.0` в `main` — кандидат к выпуску. Пока `v8.9.0` не опубликован отдельно, устанавливайте последний доступный бета-выпуск.
+Последний проверенный выпуск — [ValMAX Native Beta 3 (preview.20)](https://github.com/govpodi/max-mod-valmax/releases/tag/v8.9.0-native.preview.20). Это предварительная бета-версия; исходники проекта находятся в `main`.
 
-1. В [GitHub Releases](https://github.com/govpodi/max-mod-valmax/releases) откройте опубликованный выпуск, скачайте его установщик с окончанием `-Setup.exe` и `SHA256SUMS.txt`. Сверьте SHA-256 установщика.
+1. В [выпуске Beta 3](https://github.com/govpodi/max-mod-valmax/releases/tag/v8.9.0-native.preview.20) скачайте `ValMAX-8.9.0-native.preview.20-Setup.exe`, `ValMAX-Qt-6.11.2-sources-native-beta3.zip` и `SHA256SUMS.txt`. Сверьте SHA-256 установщика и архива Qt. Архив содержит исходные материалы и не устанавливается вместе с программой.
 2. Полностью закройте ValMAX через значок в трее → «Выход» и сохраните возможность отката.
 3. Запустите установщик и откройте ValMAX через ярлык. Отдельный Python не нужен. Первый запуск может занять до минуты.
 
-**Почему размер сборок отличается.** Опубликованная Beta 2 (`preview.16`) содержит собственную копию WebView2 Fixed Version, поэтому отдельно устанавливать этот компонент для неё не нужно.
-
-Подготовленный компактный установщик `8.9.0` использует уже установленный [Microsoft Edge WebView2 Evergreen Runtime](https://developer.microsoft.com/en-us/microsoft-edge/webview2/) и проверит его наличие до обновления. Компактный установщик пока не опубликован.
+**Компактная Beta 3.** Установщик `preview.20` весит 251,58 МиБ. Для вкладки «Бизнес» и мини-приложений используется системный [Microsoft Edge WebView2 Evergreen Runtime](https://developer.microsoft.com/en-us/microsoft-edge/webview2/). Установщик проверяет его наличие; при отсутствии для загрузки официального компонента Microsoft нужна сеть. Исходные материалы Qt 6.11.2 опубликованы отдельным ZIP в том же выпуске.
 
 <details>
 <summary>О данных и функциях с пометкой «Бета»</summary>

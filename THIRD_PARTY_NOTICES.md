@@ -23,11 +23,14 @@
 
 Для нативных компонентов подготовлены отдельные материалы Rust, Qt, VC runtime,
 WebView2 и Gum с привязкой к версиям и SHA-256. Материалы одного компонента не
-подменяют материалы всего исходного клиента. В компактном кандидате 8.9.0
+подменяют материалы всего исходного клиента. В опубликованной компактной Beta 3
+(`preview.20`)
 приложение использует установленный в Windows WebView2 Evergreen; прежняя
 Fixed-копия в пакет не входит. Соответствующие исходные архивы Qt вынесены в
-отдельный файл выпуска, который должен быть опубликован и сверён вместе с
-установщиком. Полная привязка части MAX/Qt и сторонних библиотек пока не
+отдельный [архив выпуска Beta 3](https://github.com/govpodi/max-mod-valmax/releases/tag/v8.9.0-native.preview.20),
+опубликованный вместе с установщиком. Его SHA-256:
+`0ce0fe8534ca57d2d6f79959e7707141ccfb89be682988faa952b34a868b2e5d`.
+Полная привязка части MAX/Qt и сторонних библиотек пока не
 установлена. Условия WebView2 Fixed Version относятся к прежним preview и сами
 по себе не подтверждают применимость исторической редакции к тому runtime.
 
@@ -102,12 +105,15 @@ The MIT license covers original ValMAX work only. Generated `modkit/ui_privacy.p
 The native C++/Rust runtime does not bundle Python, PyInstaller, PySide or the
 former local server. Python is used at build/test time. Native components have
 separate version/hash-bound materials; those for one component do not establish
-coverage for the whole MAX client. The compact 8.9.0 candidate uses the system
+coverage for the whole MAX client. The published compact Beta 3 (`preview.20`)
+uses the system
 WebView2 Evergreen Runtime. Clean-PC, missing-runtime and offline installation
 behavior remains unverified. WebView2 Fixed Version terms concern earlier
-previews and do not establish the applicable terms for this candidate. The
-separate Qt source ZIP is currently a local prototype; publication alongside
-the installer and complete license scope have not been verified.
+previews and do not establish the applicable terms for this build. The
+separate Qt 6.11.2 source ZIP was [published with Beta 3](https://github.com/govpodi/max-mod-valmax/releases/tag/v8.9.0-native.preview.20).
+Its SHA-256 is
+`0ce0fe8534ca57d2d6f79959e7707141ccfb89be682988faa952b34a868b2e5d`.
+Complete whole-client license scope remains unverified.
 
 Preview.15 removed seven Qt Lottie binaries and their QML module directory after
 two pinned recording indicators switched to Qt Quick. The preview.16 package

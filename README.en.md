@@ -40,15 +40,13 @@ In Russian, **ВАЛ** stands for «Возможности · Автоматиз
 
 ## Installation
 
-The `8.9.0` source in `main` is a release candidate. Until `v8.9.0` is published separately, install the latest available beta release.
+The latest verified build is [ValMAX Native Beta 3 (preview.20)](https://github.com/govpodi/max-mod-valmax/releases/tag/v8.9.0-native.preview.20). It is a pre-release beta; the project source is on `main`.
 
-1. In [GitHub Releases](https://github.com/govpodi/max-mod-valmax/releases), open a published release and download its installer ending in `-Setup.exe` and `SHA256SUMS.txt`. Compare the installer's SHA-256 with the checksum.
+1. From the [Beta 3 release](https://github.com/govpodi/max-mod-valmax/releases/tag/v8.9.0-native.preview.20), download `ValMAX-8.9.0-native.preview.20-Setup.exe`, `ValMAX-Qt-6.11.2-sources-native-beta3.zip` and `SHA256SUMS.txt`. Check the SHA-256 of Setup and the Qt archive. The archive contains source materials and is not installed by Setup.
 2. Fully exit ValMAX from its tray menu and preserve a rollback path.
 3. Run the installer and open ValMAX through its shortcut. No separate Python installation is needed. The first launch may take up to a minute.
 
-**Why package sizes differ.** The published Beta 2 (`preview.16`) includes its own fixed-version WebView2 copy, so it needs no separate Runtime installation.
-
-The prepared compact `8.9.0` installer uses an existing [Microsoft Edge WebView2 Evergreen Runtime](https://developer.microsoft.com/en-us/microsoft-edge/webview2/) and checks for it before upgrading. The compact installer has not been published yet.
+**Compact Beta 3.** The `preview.20` Setup file is 251.58 MiB. The Business tab and mini apps use the system [Microsoft Edge WebView2 Evergreen Runtime](https://developer.microsoft.com/en-us/microsoft-edge/webview2/). Setup checks whether it is present; downloading Microsoft's official component requires a network connection if it is absent. Qt 6.11.2 source materials are a separate ZIP in the same release.
 
 <details>
 <summary>About your data and BETA features</summary>
