@@ -52,8 +52,11 @@ LOCAL_PREVIEW_BLOCKERS = frozenset(key for key, _ in CURRENT_RELEASE_BLOCKERS) |
 LOCAL_PREVIEW_INFO = "native-preview.txt"
 PUBLIC_BETA_INFO = "native-beta.txt"
 PUBLIC_BETA_MATERIAL_INFO = "native-beta-materials.json"
+PUBLIC_STABLE_CORE_INFO = "native-stable-core.txt"
+PUBLIC_STABLE_CORE_MATERIAL_INFO = "native-stable-core-materials.json"
 FFMPEG_SOURCE_INFO = "FFMPEG-SOURCE-AVAILABILITY.txt"
 QT_SOURCE_INFO = "QT-SOURCE-AVAILABILITY.txt"
+LIMITED_PUBLIC_MODES = frozenset({"public-beta", "public-stable-core"})
 PUBLIC_BETA_SCENARIOS = (
     "installed_launch",
     "existing_profile_and_accounts",
@@ -63,11 +66,32 @@ PUBLIC_BETA_SCENARIOS = (
     "export_photo_video_voice_with_beta_notice",
     "app_exit_restart",
 )
+PUBLIC_STABLE_CORE_SCENARIOS = (
+    "installed_launch",
+    "existing_profile_and_accounts",
+    "account_switch",
+    "chat_send_receive",
+    "chat_history_scroll",
+    "photo_video_voice_playback",
+    "deleted_message_bubble",
+    "retention_restart_persistence",
+    "retention_idle_health",
+    "export_photo_video_voice_with_beta_notice",
+    "business_embedded_webview",
+    "settings_toggle_restart",
+    "upgrade_preserves_profiles",
+    "app_exit_restart",
+)
 PUBLIC_BETA_LIMITATIONS = (
     {"id": "retention_scope", "reason": "Only messages already received after capture was enabled can be retained. Older saved records may have approximate placement and earlier deletions cannot be recovered."},
     {"id": "chat_export_history", "reason": "The server has not confirmed that every older message is available. Media export can report individual attachment failures and the archive may be incomplete."},
     {"id": "early_protection", "reason": "Ghost and notification protection before the first background event has not been demonstrated on the installed client."},
     {"id": "full_feature_regression", "reason": "The complete 16-group installed-client regression required for a stable release has not been completed."},
+)
+PUBLIC_STABLE_CORE_LIMITATIONS = (
+    *PUBLIC_BETA_LIMITATIONS[:3],
+    {"id": "mini_apps_unverified", "reason": "Mini-app launch has not passed installed-client live smoke and remains BETA."},
+    {"id": "advanced_beta_features", "reason": "Advanced BETA features have not passed the complete 16-group installed-client regression; the stable claim covers only the separately verified core scenarios."},
 )
 PUBLIC_BETA_MATERIAL_LIMITATIONS = (
     {"id": "max_baseline_notices_unassembled",
@@ -260,6 +284,16 @@ def evidence_time(value, now):
     return tested
 
 
+def registered_installation():
+    """Read the per-user Inno registration for the currently installed client."""
+    import winreg
+    key_name = r"Software\Microsoft\Windows\CurrentVersion\Uninstall\{419706B9-6FC7-46F8-B9FB-D7212FC91BAC}_is1"
+    with winreg.OpenKey(winreg.HKEY_CURRENT_USER, key_name) as key:
+        location, _ = winreg.QueryValueEx(key, "InstallLocation")
+        version, _ = winreg.QueryValueEx(key, "DisplayVersion")
+    return {"path": location, "version": version}
+
+
 def validate_subject(subject):
     require(isinstance(subject, dict) and set(subject) == SUBJECT_KEYS, "exact release subject required")
     require(isinstance(subject["version"], str) and re.fullmatch(r"\d+\.\d+\.\d+(?:[.-][A-Za-z0-9.]+)?", subject["version"]), "invalid release subject version")
@@ -271,31 +305,38 @@ def public_beta_preflight(subject, evidence, now, artifact_identity, materials,
                           artifact_verified, qml_compatibility_verified, max_rights_attested,
                           beta_materials=None, beta_materials_error=None,
                           webview2_mode="fixed", qt_source_mode="inline",
-                          ffmpeg_source_mode="inline"):
-    """A public BETA requires installed core use on the exact packaged bytes.
+                          ffmpeg_source_mode="inline", distribution_mode="public-beta",
+                          qml_proof_path=None):
+    """A bounded public release requires installed core use on exact bytes.
 
-    Accepted BETA limitations are disclosed, while byte integrity, exact
-    documented materials and a passing installed-client smoke stay gates.
+    Public stable core additionally proves an installed preview/final runtime
+    inventory and preserves the QML BETA channel for advanced features.
     """
+    require(distribution_mode in LIMITED_PUBLIC_MODES, "invalid bounded public mode")
     require(ffmpeg_source_mode in ("inline", "separate-asset"),
             "unknown FFmpeg source packaging mode")
+    stable_core = distribution_mode == "public-stable-core"
+    scenarios = PUBLIC_STABLE_CORE_SCENARIOS if stable_core else PUBLIC_BETA_SCENARIOS
+    limitations = PUBLIC_STABLE_CORE_LIMITATIONS if stable_core else PUBLIC_BETA_LIMITATIONS
     material_limitations = beta_material_limitations(webview2_mode, qt_source_mode)
     blockers = []
     result = {"schema": 1, "checkedAt": now.strftime("%Y-%m-%dT%H:%M:%SZ"),
-              "distributionMode": "public-beta", "releaseEligible": False,
+              "distributionMode": distribution_mode, "releaseEligible": False,
               "webview2Mode": webview2_mode, "qtSourceMode": qt_source_mode,
               "ffmpegSourceMode": ffmpeg_source_mode,
               "featureRuntimeTested": False, "betaCoreTested": False,
+              "stableCoreTested": False, "betaUiChannelVerified": False,
               "subject": subject, "evidenceVerified": False,
               "wholeClientMaterialsVerified": False, "materialsDocumentedForBeta": False,
               "betaMaterials": None, "maxRightsAttested": max_rights_attested is True,
               "evidenceManifestSha256": None, "installedSmokeSha256": None,
               "features": {}, "blockers": blockers,
-              "requiredEvidenceIds": list(PUBLIC_BETA_SCENARIOS),
-              "knownLimitations": ([dict(item) for item in PUBLIC_BETA_LIMITATIONS]
+              "requiredEvidenceIds": list(scenarios),
+              "knownLimitations": ([dict(item) for item in limitations]
                                    + [{"id": item["id"], "reason": item["statusText"]}
                                       for item in material_limitations]),
-              "scope": "Public BETA eligibility for exact bytes and installed core use; the stable 16-group feature regression is separate."}
+              "scope": ("Public stable core eligibility for exact installed bytes, while advanced features remain BETA; full 16-group feature regression is separate."
+                        if stable_core else "Public BETA eligibility for exact bytes and installed core use; the stable 16-group feature regression is separate.")}
 
     def block(key, reason):
         blockers.append({"id": key, "reason": reason})
@@ -327,7 +368,10 @@ def public_beta_preflight(subject, evidence, now, artifact_identity, materials,
         block("max_redistribution_attestation", "The MAX rights holder permission must be attested for this public BETA; the confidential document is not stored in the package.")
     try:
         validate_subject(subject)
-        require_preview_version(subject["version"])
+        if stable_core:
+            require_stable_version(subject["version"])
+        else:
+            require_preview_version(subject["version"])
     except (ValueError, TypeError, KeyError) as error:
         block("invalid_payload_subject", str(error))
     try:
@@ -340,18 +384,37 @@ def public_beta_preflight(subject, evidence, now, artifact_identity, materials,
         require(qml_compatibility_verified is True, "generated QML still has legacy references or lacks verification")
     except (ValueError, TypeError, KeyError) as error:
         block("artifact_integrity", str(error))
+    if stable_core:
+        try:
+            require(qml_proof_path is not None and isinstance(subject, dict),
+                    "BETA-channel native QML proof required")
+            proof_path = evidence_path(str(qml_proof_path))
+            require(proof_path.name == "native-qml-proof.json"
+                    and sha(proof_path) == subject["qmlProofSha256"],
+                    "native QML proof differs from stable core subject")
+            qml_proof = read_json(proof_path)
+            require(isinstance(qml_proof, dict) and qml_proof.get("nativeRuntime") is True
+                    and qml_proof.get("uiReleaseChannel") == "beta",
+                    "stable core must retain advanced-feature BETA labels")
+            result["betaUiChannelVerified"] = True
+        except (ValueError, OSError, TypeError, KeyError) as error:
+            block("beta_ui_channel", str(error))
     if evidence is None:
-        block("installed_smoke_missing", "A passing installed-client BETA smoke receipt was not supplied.")
+        block("installed_smoke_missing", "A passing installed-client core smoke receipt was not supplied.")
         return result
     try:
         smoke_path = evidence_path(str(evidence))
         smoke = read_json(smoke_path)
         required = {"schema", "kind", "status", "subject", "testedAt", "clientExecuted", "scope",
                     "installedLauncher", "launchMode", "scenarios", "unresolvedCritical"}
-        require(isinstance(smoke, dict) and set(smoke) == required, "exact installed BETA smoke receipt required")
+        if stable_core:
+            required.update(("installedPackage", "candidatePackage", "retentionIdleHealth"))
+        require(isinstance(smoke, dict) and set(smoke) == required,
+                "exact installed core smoke receipt required")
         require(type(smoke["schema"]) is int and smoke["schema"] == 1
-                and smoke["kind"] == "native-public-beta-installed-smoke"
-                and smoke["status"] == "passed", "unsupported or failed installed BETA smoke")
+                and smoke["kind"] == ("native-public-stable-core-installed-smoke" if stable_core
+                                      else "native-public-beta-installed-smoke")
+                and smoke["status"] == "passed", "unsupported or failed installed core smoke")
         validate_subject(smoke["subject"])
         require(smoke["subject"] == subject, "installed BETA smoke targets another payload")
         evidence_time(smoke["testedAt"], now)
@@ -368,18 +431,119 @@ def public_beta_preflight(subject, evidence, now, artifact_identity, materials,
         for ancestor in (launcher_path, *launcher_path.parents):
             ordinary(ancestor, ancestor.is_dir())
         require(sha(launcher_path) == subject["launcherSha256"],
-                "installed launcher bytes differ from BETA subject")
+                "installed launcher bytes differ from release subject")
+        if stable_core:
+            package_ref = smoke["installedPackage"]
+            require(isinstance(package_ref, dict)
+                    and set(package_ref) == {"path", "sha256", "version", "distributionMode"}
+                    and isinstance(package_ref["sha256"], str)
+                    and re.fullmatch(r"[0-9a-f]{64}", package_ref["sha256"]),
+                    "exact installed package reference required")
+            package_path = Path(package_ref["path"])
+            require(package_path.is_absolute() and package_path.name == "native-package.json"
+                    and package_path.parent == launcher_path.parent,
+                    "installed package must belong to the tested ValMAX launcher")
+            for ancestor in (package_path, *package_path.parents):
+                ordinary(ancestor, ancestor.is_dir())
+            require(sha(package_path) == package_ref["sha256"],
+                    "installed package manifest bytes changed")
+            installed_package = read_json(package_path)
+            require(installed_package.get("version") == package_ref["version"]
+                    and installed_package.get("distributionMode") == package_ref["distributionMode"]
+                    and package_ref["distributionMode"] in ("local-preview", "public-beta", "public-stable-core"),
+                    "unsupported or mismatched installed package")
+            registration = registered_installation()
+            require(isinstance(registration, dict) and set(registration) == {"path", "version"}
+                    and isinstance(registration["path"], str)
+                    and Path(registration["path"]) == package_path.parent
+                    and registration["version"] == package_ref["version"],
+                    "tested package is not the registered ValMAX installation")
+            candidate_ref = smoke["candidatePackage"]
+            require(isinstance(candidate_ref, dict)
+                    and set(candidate_ref) == {"path", "sha256"}
+                    and isinstance(candidate_ref["sha256"], str)
+                    and re.fullmatch(r"[0-9a-f]{64}", candidate_ref["sha256"]),
+                    "exact candidate package receipt reference required")
+            candidate_path = evidence_path(candidate_ref["path"])
+            require(candidate_path.name == "build-receipt.json"
+                    and sha(candidate_path) == candidate_ref["sha256"],
+                    "candidate package receipt changed")
+            candidate = read_json(candidate_path)
+            require(candidate.get("installerCompiled") is True
+                    and candidate.get("distributionMode") == package_ref["distributionMode"]
+                    and candidate.get("manifestSha256") == package_ref["sha256"]
+                    and candidate.get("releaseEligible") is
+                        (package_ref["distributionMode"] in LIMITED_PUBLIC_MODES),
+                    "candidate Setup receipt does not match installed package")
+            candidate_packaged = evidence_time(candidate.get("packagedAt"), now)
+            candidate_payload = owned(Path(candidate["payload"]))
+            require(candidate_payload == candidate_path.parent / "payload"
+                    and sha(candidate_payload / "native-package.json") == package_ref["sha256"],
+                    "candidate payload manifest differs from installed package")
+            setup_path = owned(Path(candidate["installer"]))
+            require(setup_path.parent == candidate_path.parent / "release"
+                    and setup_path.name == "ValMAX-" + package_ref["version"] + "-Setup.exe"
+                    and isinstance(candidate.get("installerSha256"), str)
+                    and re.fullmatch(r"[0-9a-f]{64}", candidate["installerSha256"])
+                    and sha(setup_path) == candidate["installerSha256"],
+                    "candidate Setup bytes changed after installation")
+            if package_ref["distributionMode"] == "public-stable-core":
+                require(package_ref["version"] == subject["version"],
+                        "installed stable core version differs from release")
+            else:
+                require_preview_version(package_ref["version"])
+            require(installed_package.get("launcherSha256") == subject["launcherSha256"]
+                    and isinstance(installed_package.get("runtimeFiles"), list)
+                    and inventory_digest(installed_package["runtimeFiles"]) == subject["runtimeInventorySha256"]
+                    and isinstance(installed_package.get("qml"), dict)
+                    and installed_package["qml"].get("proofSha256") == subject["qmlProofSha256"],
+                    "installed package does not match the stable core byte subject")
+            installed_runtime = package_path.parent / "runtime"
+            require(pins.inventory(installed_runtime, webview2_mode, qt_source_mode) ==
+                    installed_package["runtimeFiles"],
+                    "installed runtime bytes differ from the package manifest")
+            idle = smoke["retentionIdleHealth"]
+            require(isinstance(idle, dict)
+                    and set(idle) == {"startedAt", "checkedAt", "start", "end"},
+                    "exact retention idle-health window required")
+            started = evidence_time(idle["startedAt"], now)
+            checked = evidence_time(idle["checkedAt"], now)
+            tested_at = evidence_time(smoke["testedAt"], now)
+            require(timedelta(minutes=10) <= checked - started <= timedelta(hours=2)
+                    and checked <= tested_at <= now
+                    and tested_at <= checked + timedelta(hours=1),
+                    "retention idle-health window is too short or detached from smoke")
+            expected_health = {"error": "ok", "ready": True,
+                               "captureActive": True, "failures": 0}
+            snapshots = (idle["start"], idle["end"])
+            require(all(isinstance(snapshot, dict)
+                        and set(snapshot) == {*expected_health, "process"}
+                        and all(snapshot[key] == value for key, value in expected_health.items())
+                        for snapshot in snapshots),
+                    "retention handler stopped or failed during idle-health window")
+            processes = [snapshot["process"] for snapshot in snapshots]
+            require(all(isinstance(process, dict)
+                        and set(process) == {"pid", "createdAt", "path"}
+                        and type(process["pid"]) is int and process["pid"] > 0
+                        and isinstance(process["path"], str)
+                        and Path(process["path"]) == installed_runtime / "mod/max.exe"
+                        for process in processes)
+                    and processes[0] == processes[1],
+                    "retention idle-health snapshots must observe the same max.exe process")
+            process_created = evidence_time(processes[0]["createdAt"], now)
+            require(candidate_packaged < process_created <= started,
+                    "installed max.exe process must start after its candidate Setup")
         require(smoke["unresolvedCritical"] == [], "installed BETA smoke lists critical unresolved work")
-        require(isinstance(smoke["scenarios"], dict) and set(smoke["scenarios"]) == set(PUBLIC_BETA_SCENARIOS)
+        require(isinstance(smoke["scenarios"], dict) and set(smoke["scenarios"]) == set(scenarios)
                 and all(value is True for value in smoke["scenarios"].values()),
-                "required installed BETA scenario is missing/failed")
+                "required installed core scenario is missing/failed")
         result["installedSmokeSha256"] = sha(smoke_path)
         result["evidenceManifestSha256"] = result["installedSmokeSha256"]
         result["evidenceVerified"] = True
-        result["betaCoreTested"] = True
+        result["stableCoreTested" if stable_core else "betaCoreTested"] = True
     except (ValueError, OSError, TypeError, KeyError) as error:
         block("invalid_installed_smoke", str(error))
-    result["releaseEligible"] = result["betaCoreTested"] and not blockers
+    result["releaseEligible"] = result["evidenceVerified"] and not blockers
     return result
 
 
@@ -395,13 +559,15 @@ def release_preflight(subject=None, evidence=None, mode="user-release", now=None
     Stable release retains every unresolved product blocker. Public BETA has
     a separate installed-core contract and explicitly disclosed limitations.
     """
-    require(mode in ("user-release", "developer-staging", "local-preview", "public-beta"), "invalid distribution mode")
+    require(mode in ("user-release", "developer-staging", "local-preview", *LIMITED_PUBLIC_MODES),
+            "invalid distribution mode")
     now = now or datetime.now(timezone.utc)
-    if mode == "public-beta":
+    if mode in LIMITED_PUBLIC_MODES:
         return public_beta_preflight(subject, evidence, now, artifact_identity, materials,
                                      artifact_verified, qml_compatibility_verified, max_rights_attested,
                                      beta_materials, beta_materials_error,
-                                     webview2_mode, qt_source_mode, ffmpeg_source_mode)
+                                     webview2_mode, qt_source_mode, ffmpeg_source_mode,
+                                     mode, qml_proof_path)
     rights_attested = mode == "user-release" and max_rights_attested is True
     blockers = [{"id": key, "reason": reason} for key, reason in CURRENT_RELEASE_BLOCKERS]
     if not rights_attested:
@@ -877,8 +1043,9 @@ def validate_ffmpeg_source_distribution(receipt, subject):
 def ffmpeg_source_asset_plan(subject, source_paths, source_rows, config_row, config_bytes,
                              reference_hashes):
     """Build a deterministic source ZIP in memory, including its byte manifest."""
-    require_preview_version(subject["version"])
     validate_subject(subject)
+    require(re.fullmatch(r"\d+\.\d+\.\d+(?:-native\.preview\.\d+)?", subject["version"]),
+            "FFmpeg source asset requires a public BETA or stable core version")
     require([row["version"] for row in source_rows] == ["7.1.3", "7.1.5"]
             and config_row["assetMember"] == "build-configurations.json",
             "exact external FFmpeg source inventory required")
@@ -969,7 +1136,7 @@ def verify_ffmpeg_source_asset(path, receipt, summary):
 
 def beta_materials_documentation(binding, rows, assembly_receipt_sha, subject, evidence,
                                  webview2_mode="fixed", qt_source_mode="inline",
-                                 ffmpeg_source_mode="inline"):
+                                 ffmpeg_source_mode="inline", distribution_mode="public-beta"):
     """Document a bounded BETA materials gap without asserting legal completeness.
 
     `binding` is already byte-bound to the assembled runtime by bound_materials.
@@ -978,6 +1145,7 @@ def beta_materials_documentation(binding, rows, assembly_receipt_sha, subject, e
     """
     require(ffmpeg_source_mode in ("inline", "separate-asset"),
             "unknown FFmpeg source packaging mode")
+    require(distribution_mode in LIMITED_PUBLIC_MODES, "invalid public materials mode")
     require(isinstance(binding, dict) and isinstance(binding.get("status"), dict)
             and isinstance(binding.get("sha256"), str)
             and re.fullmatch(r"[0-9a-f]{64}", binding["sha256"]),
@@ -1046,7 +1214,9 @@ def beta_materials_documentation(binding, rows, assembly_receipt_sha, subject, e
                 "completeForWholeClient"}
     require(isinstance(material_manifest, dict) and set(material_manifest) == required
             and type(material_manifest["schema"]) is int and material_manifest["schema"] == 1
-            and material_manifest["kind"] == "native-public-beta-materials"
+            and material_manifest["kind"] == (
+                "native-public-stable-core-materials" if distribution_mode == "public-stable-core"
+                else "native-public-beta-materials")
             and material_manifest["subject"] == subject
             and material_manifest["materialsReceiptSha256"] == binding["sha256"]
             and material_manifest["assemblyReceiptSha256"] == assembly_receipt_sha
@@ -1252,7 +1422,8 @@ def ffmpeg_source_availability(asset):
     ).encode("utf-8-sig")
 
 
-def copy_beta_materials(payload, plan, output=None):
+def copy_beta_materials(payload, plan, output=None, distribution_mode="public-beta"):
+    require(distribution_mode in LIMITED_PUBLIC_MODES, "invalid public materials copy mode")
     summary = plan["summary"]
     source_mode = plan.get("ffmpegSourceMode", "inline")
     require(source_mode in ("inline", "separate-asset"), "unknown FFmpeg source copying mode")
@@ -1310,10 +1481,12 @@ def copy_beta_materials(payload, plan, output=None):
         plan["ffmpegSourceAssetCopy"] = {"path": str(target), "name": asset["assetName"],
                                          "size": asset["assetBytes"], "sha256": asset["assetSha256"]}
         plan["ffmpegSourceAvailability"] = {"path": FFMPEG_SOURCE_INFO, "sha256": sha(notice)}
-    info = payload / PUBLIC_BETA_MATERIAL_INFO
-    require(not info.exists(), "new public BETA materials summary required")
+    info_name = (PUBLIC_STABLE_CORE_MATERIAL_INFO if distribution_mode == "public-stable-core"
+                 else PUBLIC_BETA_MATERIAL_INFO)
+    info = payload / info_name
+    require(not info.exists(), "new public materials summary required")
     info.write_text(json.dumps(summary, ensure_ascii=False, sort_keys=True, indent=2) + "\n", encoding="utf8")
-    return {"path": PUBLIC_BETA_MATERIAL_INFO, "sha256": sha(info)}
+    return {"path": info_name, "sha256": sha(info)}
 
 
 def packaging_inputs(runtime_path, qml_path, launcher_proof, *, preflight_only=False):
@@ -1394,21 +1567,33 @@ def require_distribution(mode, report, installer=False):
         validate_subject(report.get("subject"))
         require_preview_version(report["subject"]["version"])
         return
-    if mode == "public-beta":
+    if mode in LIMITED_PUBLIC_MODES:
+        stable_core = mode == "public-stable-core"
+        core_key = "stableCoreTested" if stable_core else "betaCoreTested"
+        limitations = PUBLIC_STABLE_CORE_LIMITATIONS if stable_core else PUBLIC_BETA_LIMITATIONS
         material_limitations = beta_material_limitations(report.get("webview2Mode", "fixed"),
                                                         report.get("qtSourceMode", "inline"))
         ffmpeg_source_mode = report.get("ffmpegSourceMode", "inline")
         require(ffmpeg_source_mode in ("inline", "separate-asset"),
                 "unknown FFmpeg source packaging mode")
         require(report.get("distributionMode") == mode and report.get("releaseEligible") is True
-                and report.get("betaCoreTested") is True and report.get("featureRuntimeTested") is False
-                and report.get("evidenceVerified") is True, "public BETA requires passing installed core smoke without a stable feature claim")
+                and report.get(core_key) is True and report.get("featureRuntimeTested") is False
+                and report.get("evidenceVerified") is True,
+                ("stable core requires passing installed core smoke without a full feature claim"
+                 if stable_core else "public BETA requires passing installed core smoke without a stable feature claim"))
+        if stable_core:
+            require(report.get("betaUiChannelVerified") is True
+                    and report.get("betaCoreTested") is False,
+                    "stable core must retain advanced-feature BETA labels")
         require(report.get("blockers") == [] and report.get("wholeClientMaterialsVerified") is False
                 and report.get("materialsDocumentedForBeta") is True
                 and report.get("maxRightsAttested") is True, "public BETA has unresolved distribution blockers")
         subject = report.get("subject")
         validate_subject(subject)
-        require_preview_version(subject["version"])
+        if stable_core:
+            require_stable_version(subject["version"])
+        else:
+            require_preview_version(subject["version"])
         artifact = report.get("artifactValidation", {})
         require(artifact.get("verified") is True and artifact.get("identity") ==
                 {key: subject[key] for key in ARTIFACT_IDENTITY_KEYS}
@@ -1470,22 +1655,33 @@ def require_distribution(mode, report, installer=False):
                 and report.get("evidenceManifestSha256") == report["installedSmokeSha256"],
                 "public BETA requires a pinned installed-client smoke receipt")
         require(report.get("knownLimitations") ==
-                ([dict(item) for item in PUBLIC_BETA_LIMITATIONS]
+                ([dict(item) for item in limitations]
                  + [{"id": item["id"], "reason": item["statusText"]}
                     for item in material_limitations]),
-                "public BETA must disclose its accepted limitations")
+                "bounded public release must disclose its accepted limitations")
         return
     if mode == "user-release" or installer:
         require(report["releaseEligible"] is True, "complete user release is blocked: " + ", ".join(item["id"] for item in report["blockers"]))
     if mode == "user-release":
-        require(report.get("maxRightsAttested") is True,
-                "publisher MAX rights attestation is required for a user release")
+        require(report.get("distributionMode") == "user-release"
+                and report.get("featureRuntimeTested") is True
+                and report.get("wholeClientMaterialsVerified") is True
+                and report.get("stableUiChannelVerified") is True
+                and report.get("evidenceVerified") is True
+                and report.get("maxRightsAttested") is True
+                and report.get("blockers") == [],
+                "complete user release requires its own full-feature evidence, materials and rights attestation")
     require(not installer or mode == "user-release", "developer staging cannot compile a user installer")
 
 
 def require_preview_version(version):
     require(isinstance(version, str) and re.fullmatch(r"\d+\.\d+\.\d+-native\.preview\.\d+", version),
             "local preview version must visibly use -native.preview.<number>")
+
+
+def require_stable_version(version):
+    require(isinstance(version, str) and re.fullmatch(r"\d+\.\d+\.\d+", version),
+            "stable core version must be a plain x.y.z version")
 
 
 def preview_information(version, webview2_mode="fixed", qt_source_mode="inline", qt_source_asset=None):
@@ -1634,14 +1830,88 @@ def beta_information(version, webview2_mode="fixed", qt_source_mode="inline", qt
     ).encode("utf-8-sig")
 
 
+def stable_core_information(version, webview2_mode="fixed", qt_source_mode="inline",
+                            qt_source_asset=None, ffmpeg_source_mode="inline",
+                            ffmpeg_source_asset=None):
+    """Installer notice for a verified core with explicitly BETA advanced features."""
+    require_stable_version(version)
+    require(webview2_mode in ("fixed", "evergreen")
+            and qt_source_mode in ("inline", "separate-asset")
+            and ffmpeg_source_mode in ("inline", "separate-asset"),
+            "unknown stable core packaging mode")
+    material_limitations = beta_material_limitations(webview2_mode, qt_source_mode)
+    material_ru = "".join("• " + item["noticeRu"] + "\n" for item in material_limitations)
+    material_en = "".join("• " + item["noticeEn"] + "\n" for item in material_limitations)
+    qt_ru = qt_en = ""
+    if qt_source_mode == "separate-asset":
+        require(isinstance(qt_source_asset, dict)
+                and qt_source_asset.get("mode") == "separate-asset"
+                and qt_source_asset.get("manifestDistribution") == "public-beta-asset"
+                and qt_source_asset.get("availabilityDraftIncluded") is False
+                and isinstance(qt_source_asset.get("assetName"), str)
+                and PurePosixPath(qt_source_asset["assetName"]).name == qt_source_asset["assetName"]
+                and isinstance(qt_source_asset.get("assetSha256"), str)
+                and re.fullmatch(r"[0-9a-f]{64}", qt_source_asset["assetSha256"]),
+                "exact Qt source asset identity required for stable core")
+        qt_ru = ("Исходники Qt находятся в обязательном отдельном файле " + qt_source_asset["assetName"]
+                 + " (SHA-256 " + qt_source_asset["assetSha256"] + "). Скачайте его рядом с установщиком.\n")
+        qt_en = ("Qt sources are in the required separate file " + qt_source_asset["assetName"]
+                 + " (SHA-256 " + qt_source_asset["assetSha256"] + "). Download it beside Setup.\n")
+    else:
+        require(qt_source_asset is None, "inline Qt source mode claims an external asset")
+    if ffmpeg_source_mode == "separate-asset":
+        require(isinstance(ffmpeg_source_asset, dict),
+                "exact FFmpeg source asset identity required for stable core")
+        validate_ffmpeg_source_distribution(ffmpeg_source_asset, ffmpeg_source_asset["subject"])
+        require(ffmpeg_source_asset["subject"]["version"] == version,
+                "FFmpeg source asset belongs to another stable core version")
+        ffmpeg_ru = ("Материалы FFmpeg находятся в обязательном отдельном файле "
+                     + ffmpeg_source_asset["assetName"] + " (SHA-256 "
+                     + ffmpeg_source_asset["assetSha256"] + "). Скачайте его рядом с установщиком.\n")
+        ffmpeg_en = ("FFmpeg materials are in the required separate file "
+                     + ffmpeg_source_asset["assetName"] + " (SHA-256 "
+                     + ffmpeg_source_asset["assetSha256"] + "). Download it beside Setup.\n")
+    else:
+        require(ffmpeg_source_asset is None, "inline FFmpeg source mode claims an external asset")
+        ffmpeg_ru = "Материалы FFmpeg находятся внутри установщика в materials/FFmpeg.\n"
+        ffmpeg_en = "FFmpeg materials are inside Setup under materials/FFmpeg.\n"
+    evergreen_ru = ("Для бизнеса и мини-приложений нужен Microsoft Edge WebView2 Evergreen Runtime; при отсутствии мастер загрузит его через интернет.\n"
+                    if webview2_mode == "evergreen" else "")
+    evergreen_en = ("Business and mini apps require Microsoft Edge WebView2 Evergreen Runtime; Setup downloads it if missing.\n"
+                    if webview2_mode == "evergreen" else "")
+    return (
+        "ValMAX — стабильный основной клиент\nВерсия: " + version + "\n\n"
+        "Основные сценарии установленного клиента проверены на точных байтах. Расширенные функции ниже остаются BETA.\n\n"
+        "• Сохранение удалённого текста работает только для сообщений, полученных при включённом захвате; старые записи могут иметь приблизительное положение. Ранние удаления не восстанавливаются.\n"
+        "• Экспорт истории может быть неполным. Фото, видео и голосовые скачиваются при доступности; отдельные вложения могут завершиться ошибкой. Проверяйте отчёт архива.\n"
+        "• Готовность режима призрака и защиты уведомлений до первого фонового действия не подтверждена. Полная проверка расширенных функций ещё продолжается.\n"
+        + evergreen_ru
+        + "\nМатериалы сторонних компонентов — известные ограничения:\n" + material_ru + "\n"
+        + qt_ru + ffmpeg_ru
+        + "Установщик сохраняет данные аккаунтов и резервную копию предыдущей установки. Не запускайте старый uninstaller из резервной копии.\n"
+        "Подробные ограничения и доказательства находятся в native-package.json.\n\n"
+        "ValMAX — stable core client\nVersion: " + version + "\n\n"
+        "Installed core scenarios were verified against exact bytes. The advanced features below remain BETA.\n"
+        "Deleted-text retention covers only messages received while capture was enabled; older saved records may be approximately placed. Earlier deletions cannot be recovered.\n"
+        "Chat export may be incomplete. Photos, videos and voice messages download when available; individual attachments may fail. Check the archive report.\n"
+        "Ghost and notification readiness before the first background event remains unverified. Complete advanced-feature testing continues.\n"
+        + evergreen_en
+        + "Third-party materials — known limitations:\n" + material_en + "\n"
+        + qt_en + ffmpeg_en
+        + "Setup preserves account data and backs up the previous installation. Do not run the old uninstaller from the backup.\n"
+        "See native-package.json for limitations and evidence.\n"
+    ).encode("utf-8-sig")
+
+
 def write_release_state(payload, manifest, report):
     digest = sha(payload / "native-package.json")
-    require(manifest["distributionMode"] in ("user-release", "developer-staging", "local-preview", "public-beta"), "invalid native release marker mode")
+    require(manifest["distributionMode"] in ("user-release", "developer-staging", "local-preview",
+                                             *LIMITED_PUBLIC_MODES), "invalid native release marker mode")
     qt_source_mode = manifest.get("qtSourceMode", "inline")
     ffmpeg_source_mode = manifest.get("ffmpegSourceMode", "inline")
     require(qt_source_mode in ("inline", "separate-asset"), "unknown Qt source marker mode")
     require(ffmpeg_source_mode in ("inline", "separate-asset")
-            and (ffmpeg_source_mode == "inline" or manifest["distributionMode"] == "public-beta"),
+            and (ffmpeg_source_mode == "inline" or manifest["distributionMode"] in LIMITED_PUBLIC_MODES),
             "unknown or inapplicable FFmpeg source marker mode")
     if qt_source_mode == "separate-asset":
         asset = manifest.get("qtSourceDistribution")
@@ -1699,10 +1969,13 @@ def write_release_state(payload, manifest, report):
         require_preview_version(manifest["version"])
         marker += ('#define NativePreviewVersion "' + manifest["version"] + '"\n'
                    '#define NativePreviewInfoSha256 "' + manifest["previewInformation"]["sha256"] + '"\n')
-    elif manifest["distributionMode"] == "public-beta":
-        require_distribution("public-beta", report)
-        require(manifest.get("publicBeta") is True and manifest.get("betaCoreTested") is True
-                and manifest.get("featureRuntimeTested") is False
+    elif manifest["distributionMode"] in LIMITED_PUBLIC_MODES:
+        mode = manifest["distributionMode"]
+        stable_core = mode == "public-stable-core"
+        materials_info_name = (PUBLIC_STABLE_CORE_MATERIAL_INFO if stable_core
+                               else PUBLIC_BETA_MATERIAL_INFO)
+        require_distribution(mode, report)
+        require(manifest.get("featureRuntimeTested") is False
                 and manifest.get("wholeClientMaterialsVerified") is False
                 and manifest.get("materialsDocumentedForBeta") is True
                 and manifest.get("maxRightsAttested") is True
@@ -1710,24 +1983,45 @@ def write_release_state(payload, manifest, report):
                 and manifest.get("installedSmokeSha256") == report["installedSmokeSha256"]
                 and manifest.get("betaMaterials") == report["betaMaterials"]
                 and manifest.get("betaMaterialsInformation") == {
-                    "path": PUBLIC_BETA_MATERIAL_INFO, "sha256": sha(payload / PUBLIC_BETA_MATERIAL_INFO)}
-                and manifest.get("betaInformation") == {
-                    "path": PUBLIC_BETA_INFO, "sha256": sha(payload / PUBLIC_BETA_INFO)},
-                "public BETA evidence or information changed")
-        require(read_json(payload / PUBLIC_BETA_MATERIAL_INFO) == manifest["betaMaterials"],
-                "public BETA materials summary differs from manifest")
+                    "path": materials_info_name, "sha256": sha(payload / materials_info_name)},
+                ("stable core evidence or information changed" if stable_core
+                 else "public BETA evidence or information changed"))
+        if stable_core:
+            require(manifest.get("publicStableCore") is True
+                    and manifest.get("stableCoreTested") is True
+                    and manifest.get("betaCoreTested") is False
+                    and manifest.get("betaUiChannelVerified") is True
+                    and manifest.get("coreInformation") == {
+                        "path": PUBLIC_STABLE_CORE_INFO,
+                        "sha256": sha(payload / PUBLIC_STABLE_CORE_INFO)},
+                    "stable core evidence or information changed")
+        else:
+            require(manifest.get("publicBeta") is True
+                    and manifest.get("betaCoreTested") is True
+                    and manifest.get("betaInformation") == {
+                        "path": PUBLIC_BETA_INFO, "sha256": sha(payload / PUBLIC_BETA_INFO)},
+                    "public BETA evidence or information changed")
+        require(read_json(payload / materials_info_name) == manifest["betaMaterials"],
+                "public materials summary differs from manifest")
         if ffmpeg_source_mode == "inline":
             for row in (*manifest["betaMaterials"]["sourceBundles"],
                         *(item["signature"] for item in manifest["betaMaterials"]["sourceBundles"]),
                         manifest["betaMaterials"]["buildConfigurations"]):
                 target = payload / row["path"]
                 require(ordinary(target).st_size == row["size"] and sha(target) == row["sha256"],
-                        "public BETA source or configuration changed before installer compilation")
-        require_preview_version(manifest["version"])
-        marker += ('#define NativeBetaVersion "' + manifest["version"] + '"\n'
-                   '#define NativeBetaCoreTested 1\n'
-                   '#define NativeBetaInfoSha256 "' + manifest["betaInformation"]["sha256"] + '"\n'
-                   '#define NativeBetaMaterialsInfoSha256 "' + manifest["betaMaterialsInformation"]["sha256"] + '"\n'
+                        "public source or configuration changed before installer compilation")
+        if stable_core:
+            require_stable_version(manifest["version"])
+            marker += ('#define NativeStableCoreVersion "' + manifest["version"] + '"\n'
+                       '#define NativeStableCoreTested 1\n'
+                       '#define NativeBetaUiChannelVerified 1\n'
+                       '#define NativeStableCoreInfoSha256 "' + manifest["coreInformation"]["sha256"] + '"\n')
+        else:
+            require_preview_version(manifest["version"])
+            marker += ('#define NativeBetaVersion "' + manifest["version"] + '"\n'
+                       '#define NativeBetaCoreTested 1\n'
+                       '#define NativeBetaInfoSha256 "' + manifest["betaInformation"]["sha256"] + '"\n')
+        marker += ('#define NativeBetaMaterialsInfoSha256 "' + manifest["betaMaterialsInformation"]["sha256"] + '"\n'
                    '#define NativeBetaSource713Sha256 "' + manifest["betaMaterials"]["sourceBundles"][0]["sha256"] + '"\n'
                    '#define NativeBetaSource715Sha256 "' + manifest["betaMaterials"]["sourceBundles"][1]["sha256"] + '"\n'
                    '#define NativeBetaSource713SignatureSha256 "' + manifest["betaMaterials"]["sourceBundles"][0]["signature"]["sha256"] + '"\n'
@@ -1752,12 +2046,15 @@ def main():
     parser.add_argument("--iscc", type=Path)
     parser.add_argument("--evergreen-bootstrapper", type=Path,
                         help="Pinned, Microsoft-signed online Evergreen bootstrapper; required for Evergreen packaging.")
-    parser.add_argument("--distribution", choices=("user-release", "developer-staging", "local-preview", "public-beta"), default="user-release")
-    parser.add_argument("--release-evidence", type=Path, help="Full feature manifest for user-release, installed core smoke receipt for public-beta.")
-    parser.add_argument("--beta-materials-evidence", type=Path,
-                        help="Exact assembled-materials and FFmpeg source/config bundle receipt for public-beta.")
+    parser.add_argument("--distribution", choices=("user-release", "developer-staging", "local-preview",
+                                                   "public-beta", "public-stable-core"), default="user-release")
+    parser.add_argument("--release-evidence", type=Path,
+                        help="Full feature manifest for user-release, installed core smoke receipt for a bounded public release.")
+    parser.add_argument("--beta-materials-evidence", "--public-materials-evidence",
+                        dest="beta_materials_evidence", type=Path,
+                        help="Exact assembled-materials and FFmpeg source/config bundle receipt for a bounded public release.")
     parser.add_argument("--ffmpeg-source-mode", choices=("inline", "separate-asset"), default="inline",
-                        help="Keep FFmpeg source materials in Setup, or emit a required separate public-BETA ZIP asset.")
+                        help="Keep FFmpeg source materials in Setup, or emit a required separate public ZIP asset.")
     parser.add_argument("--max-rights-attested", action="store_true",
                         help="Publisher attests MAX rights holder permission for this public distribution; no confidential document is stored.")
     parser.add_argument("--preflight-only", action="store_true")
@@ -1770,12 +2067,14 @@ def main():
         require(args.release_evidence is None, "local preview does not consume full-release evidence")
     if args.distribution == "public-beta":
         require_preview_version(args.version)
-    require(not args.max_rights_attested or args.distribution in ("public-beta", "user-release"),
+    if args.distribution == "public-stable-core":
+        require_stable_version(args.version)
+    require(not args.max_rights_attested or args.distribution in (*LIMITED_PUBLIC_MODES, "user-release"),
             "MAX rights attestation is only accepted for public distribution")
-    require(args.beta_materials_evidence is None or args.distribution == "public-beta",
-            "BETA materials evidence is only accepted for public-beta")
-    require(args.ffmpeg_source_mode == "inline" or args.distribution == "public-beta",
-            "separate FFmpeg source asset is only accepted for public-beta")
+    require(args.beta_materials_evidence is None or args.distribution in LIMITED_PUBLIC_MODES,
+            "public materials evidence is only accepted for bounded public distribution")
+    require(args.ffmpeg_source_mode == "inline" or args.distribution in LIMITED_PUBLIC_MODES,
+            "separate FFmpeg source asset is only accepted for bounded public distribution")
     require(not args.preflight_only or args.iscc is None, "preflight never compiles an installer")
     require(args.preflight_report is not None or args.output is not None, "preflight report or output directory required")
     require(args.preflight_only or args.output is not None, "packaging output required")
@@ -1792,15 +2091,16 @@ def main():
     subject = None if artifact_identity is None or args.version is None else {"version": args.version, **artifact_identity}
     legacy_resources = [] if inputs is None else inputs["qmlResult"].get("legacyResources", [])
     beta_plan, beta_materials_error = None, None
-    if args.distribution == "public-beta":
+    if args.distribution in LIMITED_PUBLIC_MODES:
         try:
-            require(inputs is not None and subject is not None, "exact assembled BETA subject is unavailable")
+            require(inputs is not None and subject is not None,
+                    "exact assembled public subject is unavailable")
             beta_plan = beta_materials_documentation(
                 inputs.get("materialBinding"), inputs["rows"],
                 inputs["hookTargetIdentity"]["assemblyReceiptSha256"],
                 subject, args.beta_materials_evidence,
                 inputs.get("webview2Mode", "fixed"), inputs.get("qtSourceMode", "inline"),
-                args.ffmpeg_source_mode)
+                args.ffmpeg_source_mode, args.distribution)
         except (ValueError, OSError, KeyError, TypeError, tarfile.TarError, zipfile.BadZipFile) as error:
             beta_materials_error = str(error)
     report = release_preflight(subject, args.release_evidence, args.distribution,
@@ -1936,8 +2236,11 @@ def main():
     copy_ancillary(payload, ancillary)
     preview = args.distribution == "local-preview"
     public_beta = args.distribution == "public-beta"
-    preview_info = beta_info = None
-    beta_material_info = copy_beta_materials(payload, beta_plan, output) if public_beta else None
+    stable_core = args.distribution == "public-stable-core"
+    limited_public = public_beta or stable_core
+    preview_info = beta_info = core_info = None
+    beta_material_info = (copy_beta_materials(payload, beta_plan, output, args.distribution)
+                          if limited_public else None)
     ffmpeg_asset_copy = None if beta_plan is None else beta_plan.get("ffmpegSourceAssetCopy")
     ffmpeg_info = None if beta_plan is None else beta_plan.get("ffmpegSourceAvailability")
     if preview:
@@ -1953,6 +2256,15 @@ def main():
             None if beta_plan is None or beta_plan.get("ffmpegSourceAsset") is None
             else beta_plan["ffmpegSourceAsset"]["receipt"]))
         beta_info = {"path": PUBLIC_BETA_INFO, "sha256": sha(payload / PUBLIC_BETA_INFO)}
+    if stable_core:
+        (payload / PUBLIC_STABLE_CORE_INFO).write_bytes(stable_core_information(
+            args.version, webview2_mode, qt_source_mode,
+            None if qt_asset is None else qt_asset["receipt"],
+            args.ffmpeg_source_mode,
+            None if beta_plan is None or beta_plan.get("ffmpegSourceAsset") is None
+            else beta_plan["ffmpegSourceAsset"]["receipt"]))
+        core_info = {"path": PUBLIC_STABLE_CORE_INFO,
+                     "sha256": sha(payload / PUBLIC_STABLE_CORE_INFO)}
     manifest = {"schema": 1, "nativeOnly": True, "version": args.version, "webview2Mode": webview2_mode,
                 "webview2Bootstrapper": bootstrapper_pin,
                 "qtSourceMode": qt_source_mode,
@@ -1972,13 +2284,19 @@ def main():
                 "scope": ARTIFACT_AUDIT_SCOPE + " Installed feature testing is separate."}
     if preview:
         manifest.update(localPreview=True, previewInformation=preview_info)
-    if public_beta:
-        manifest.update(publicBeta=True, betaCoreTested=report["betaCoreTested"],
+    if limited_public:
+        manifest.update(betaCoreTested=report["betaCoreTested"],
+                        stableCoreTested=report["stableCoreTested"],
+                        betaUiChannelVerified=report["betaUiChannelVerified"],
                         materialsDocumentedForBeta=report["materialsDocumentedForBeta"],
                         betaMaterials=report["betaMaterials"], betaMaterialsInformation=beta_material_info,
                         installedSmokeSha256=report["installedSmokeSha256"],
                         maxRightsAttested=report["maxRightsAttested"],
-                        knownLimitations=report["knownLimitations"], betaInformation=beta_info)
+                        knownLimitations=report["knownLimitations"])
+        if public_beta:
+            manifest.update(publicBeta=True, betaInformation=beta_info)
+        else:
+            manifest.update(publicStableCore=True, coreInformation=core_info)
     elif args.distribution == "user-release":
         manifest["maxRightsAttested"] = report["maxRightsAttested"]
     (payload / "native-package.json").write_text(json.dumps(manifest, ensure_ascii=False, indent=2) + "\n", encoding="utf8")
@@ -2000,13 +2318,19 @@ def main():
                "preflightReport": str(report_path), "preflightReportSha256": sha(report_path)}
     if preview:
         receipt.update(localPreview=True, previewInformation=preview_info)
-    if public_beta:
-        receipt.update(publicBeta=True, betaCoreTested=report["betaCoreTested"],
+    if limited_public:
+        receipt.update(betaCoreTested=report["betaCoreTested"],
+                       stableCoreTested=report["stableCoreTested"],
+                       betaUiChannelVerified=report["betaUiChannelVerified"],
                        materialsDocumentedForBeta=report["materialsDocumentedForBeta"],
                        betaMaterials=report["betaMaterials"], betaMaterialsInformation=beta_material_info,
                        installedSmokeSha256=report["installedSmokeSha256"],
                        maxRightsAttested=report["maxRightsAttested"],
-                       knownLimitations=report["knownLimitations"], betaInformation=beta_info)
+                       knownLimitations=report["knownLimitations"])
+        if public_beta:
+            receipt.update(publicBeta=True, betaInformation=beta_info)
+        else:
+            receipt.update(publicStableCore=True, coreInformation=core_info)
     elif args.distribution == "user-release":
         receipt["maxRightsAttested"] = report["maxRightsAttested"]
     receipt.update(write_release_state(payload, manifest, report))
@@ -2050,6 +2374,9 @@ def main():
                 and sha(Path(bootstrapper_copy["path"])) == bootstrapper_pin["sha256"]
                 and sha(bootstrapper_source) == bootstrapper_pin["sha256"],
                 "Evergreen bootstrapper changed before final receipt")
+    if receipt["installerCompiled"] is True:
+        # Installed-client smoke must follow the completed Setup and source-asset checks.
+        receipt["packagedAt"] = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
     (output / "build-receipt.json").write_text(json.dumps(receipt, indent=2) + "\n", encoding="utf8")
     print(json.dumps(receipt))
 

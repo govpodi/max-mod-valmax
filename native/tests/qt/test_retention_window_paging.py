@@ -82,7 +82,8 @@ def main() -> None:
                   "failed window navigation preserves visible rows and retries",
                   "stale cursor clears prior windows and restarts from the first page",
                   "late old-account response is ignored",
-                  "account switch and UI component restart isolate cursors and bubbles"],
+                  "account switch and UI component restart isolate cursors and bubbles",
+                  "invalid native order and range error use footer fallback until valid retry"],
         "hashes": generated_hashes | {
             "windowHarnessSha256": digest(HARNESS),
             "rangeSourceSha256": digest(RANGE),

@@ -12,6 +12,8 @@ Item {
     property string chatId: ""
     property bool active: false
     property int nativeRowCount: 0
+    property bool orderedFallback: false
+    property var embeddedOrderedRows: []
     property var chatAppearance: null
     readonly property bool backendReady: Native.RetentionTransport.lookupAvailable
     readonly property int pageSize: 20
@@ -98,7 +100,7 @@ Item {
                 || !Native.RetentionTransport.validId(accountId, true)
                 || !Native.RetentionTransport.validId(chatId, false)) return;
         const requestedAccount = accountId, requestedChat = chatId, requestGeneration = generation;
-        const legacyOnly = nativeRowCount > 0;
+        const legacyOnly = nativeRowCount > 0 && !orderedFallback;
         const oldCursor = currentCursor, oldPrevious = previousCursors;
         let request;
         try { request = Native.RetentionTransport.createRequest("inline"); request.open("POST"); }
@@ -121,7 +123,14 @@ Item {
                 if (!validReply(value, requestedAccount, requestedChat)) throw new Error("schema");
                 if (legacyOnly && value.items.some(function(row) { return row.orderKey !== null; }))
                     throw new Error("ordered_row_in_legacy_page");
-                const footerRows = value.items;
+                const embeddedIds = {};
+                if (!legacyOnly && nativeRowCount > 0 && Array.isArray(embeddedOrderedRows))
+                    for (const row of embeddedOrderedRows)
+                        if (row && typeof row.messageId === "string")
+                            embeddedIds[row.messageId] = true;
+                const footerRows = value.items.filter(function(row) {
+                    return !embeddedIds[row.messageId];
+                });
                 if (cursor !== null && revision.length && revision !== value.revision) {
                     restartAfterStale(); return;
                 }
@@ -173,6 +182,8 @@ Item {
     onAccountIdChanged: if (completed) resetScope()
     onChatIdChanged: if (completed) resetScope()
     onNativeRowCountChanged: if (completed) resetScope()
+    onOrderedFallbackChanged: if (completed) resetScope()
+    onEmbeddedOrderedRowsChanged: if (completed && orderedFallback) resetScope()
     onActiveChanged: {
         if (!completed) return;
         if (!active) { generation += 1; abortPending(); }

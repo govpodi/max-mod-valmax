@@ -467,7 +467,6 @@ def native_retention_controller(source: str) -> str:
     return source
 
 
-RETENTION_ARCHIVE_RESOURCE = ":/valmax/MessageRetentionArchive.qml"
 RETENTION_INLINE_RESOURCE = ":/valmax/MessageRetentionInline.qml"
 RETENTION_RANGE_RESOURCE = ":/valmax/MessageRetentionRange.qml"
 RETENTION_BUBBLE_RESOURCE = ":/valmax/MessageRetentionBubble.qml"
@@ -482,55 +481,8 @@ def native_retention_history(source: str) -> str:
     """
     if hashlib.sha256(source.encode("utf8")).hexdigest() != RETENTION_HISTORY_INPUT_SHA256:
         raise ValueError("Native retention history input changed")
-    if source.count('id: valmaxRetentionLoader') != 1 or 'valmaxRetentionArchiveButton' in source:
+    if source.count('id: valmaxRetentionLoader') != 1:
         raise ValueError("Native retention controller anchor changed")
-    anchor = "    contentItem: ColumnLayout {\n"
-    if source.count(anchor) != 1:
-        raise ValueError("Native retention content anchor changed")
-    addition = '''    // Open the local archive only inside the selected chat. The viewer
-    // receives account/chat IDs from the existing bound client model.
-    Button {
-        id: valmaxRetentionArchiveButton
-        objectName: "valmaxRetentionArchiveButton"
-        anchors.top: root.top
-        anchors.right: root.right
-        anchors.margins: 12
-        z: 99
-        text: "Сохранённые удаления"
-        visible: root.isActiveChat && root.isHistoryPanelActive &&
-                 valmaxRetentionLoader.item !== null && valmaxRetentionLoader.item.nativeLookupAvailable
-        onClicked: valmaxRetentionArchiveLoader.active = true
-    }
-    Loader {
-        id: valmaxRetentionArchiveLoader
-        objectName: "valmaxRetentionArchiveLoader"
-        anchors.fill: parent
-        active: false
-        source: "qrc:/valmax/MessageRetentionArchive.qml"
-        z: 100
-        onLoaded: {
-            item.accountId = Qt.binding(function() {
-                return valmaxRetentionLoader.item ? valmaxRetentionLoader.item.accountId : "";
-            });
-            item.chatId = Qt.binding(function() {
-                return valmaxRetentionLoader.item ? valmaxRetentionLoader.item.chatId : "";
-            });
-            item.closeRequested.connect(function() { valmaxRetentionArchiveLoader.active = false; });
-            item.openArchive();
-        }
-    }
-    Connections {
-        target: root
-        function onIsActiveChatChanged() {
-            if (!root.isActiveChat) valmaxRetentionArchiveLoader.active = false;
-        }
-        function onIsHistoryPanelActiveChanged() {
-            if (!root.isHistoryPanelActive) valmaxRetentionArchiveLoader.active = false;
-        }
-    }
-
-'''
-    source = source.replace(anchor, addition + anchor, 1)
     footer_anchor = '''            footer: Item {
                 height: bottomLoader.visible ? bottomLoader.height : root.chatBottomPadding
             }
@@ -559,11 +511,17 @@ def native_retention_history(source: str) -> str:
                         item.chatId = Qt.binding(function() {
                             return valmaxRetentionLoader.item ? valmaxRetentionLoader.item.chatId : "";
                         });
+                        item.chatAppearance = Qt.binding(function() { return root.chatAppearance; });
+                        item.nativeRowCount = Qt.binding(function() { return listView.count; });
+                        item.orderedFallback = Qt.binding(function() {
+                            return valmaxRetentionRange.fallbackToFooter;
+                        });
+                        item.embeddedOrderedRows = Qt.binding(function() {
+                            return valmaxRetentionRange.cachedRows;
+                        });
                         item.active = Qt.binding(function() {
                             return valmaxRetentionLoader.item ? valmaxRetentionLoader.item.active : false;
                         });
-                        item.chatAppearance = Qt.binding(function() { return root.chatAppearance; });
-                        item.nativeRowCount = Qt.binding(function() { return listView.count; });
                     }
                 }
             }
@@ -578,7 +536,7 @@ def native_retention_inline_delegate(source: str) -> str:
     if source.count("property real valmaxLargestDelegate: 500") != 1:
         raise ValueError("Native retention cache height contract changed")
     view_anchor = "            id: listView\n"
-    if source.count(view_anchor) != 1 or "valmaxRetentionRange" in source:
+    if source.count(view_anchor) != 1 or "id: valmaxRetentionRange" in source:
         raise ValueError("Native retention list anchor changed")
     view_addition = '''            ValMAX.MessageRetentionRange {
                 id: valmaxRetentionRange
@@ -715,14 +673,6 @@ def native_retention_ghost_columns() -> str:
                         onClicked: valmaxRetentionRange.nextWindow()
                         onVisibleChanged: valmaxGhostBefore.forceLayout()
                     }
-                    Button {
-                        objectName: "valmaxRetentionRangeArchiveBefore"
-                        visible: valmaxRetentionRange.pagingBefore && valmaxRetentionRange.hasNextWindow &&
-                                 valmaxRetentionRange.pagingAnchorIndex === valmaxHistoryRow.index
-                        text: "Открыть архив сохранённых сообщений"
-                        onClicked: valmaxRetentionArchiveLoader.active = true
-                        onVisibleChanged: valmaxGhostBefore.forceLayout()
-                    }
                     Component.onCompleted: forceLayout()
                 }
                 // Native pointer handlers remain confined to messageDelegate.
@@ -772,14 +722,6 @@ def native_retention_ghost_columns() -> str:
                                  valmaxRetentionRange.pagingAnchorIndex === valmaxHistoryRow.index
                         text: "Следующая часть сохранённых сообщений"
                         onClicked: valmaxRetentionRange.nextWindow()
-                        onVisibleChanged: valmaxGhostAfter.forceLayout()
-                    }
-                    Button {
-                        objectName: "valmaxRetentionRangeArchiveAfter"
-                        visible: !valmaxRetentionRange.pagingBefore && valmaxRetentionRange.hasNextWindow &&
-                                 valmaxRetentionRange.pagingAnchorIndex === valmaxHistoryRow.index
-                        text: "Открыть архив сохранённых сообщений"
-                        onClicked: valmaxRetentionArchiveLoader.active = true
                         onVisibleChanged: valmaxGhostAfter.forceLayout()
                     }
                     Button {
@@ -1039,7 +981,6 @@ def prepare(binary: bytes, output: Path, *, native_runtime: bool, rcc: Path,
         key = ":/valmax/ChatExportPanel.qml"
         resources[key] = native_export_panel(resources[key].decode()).encode()
         resources[CONTROLLER_RESOURCE] = native_retention_controller(resources[CONTROLLER_RESOURCE].decode()).encode()
-        resources[RETENTION_ARCHIVE_RESOURCE] = (PROJECT / "native/qt/MessageRetentionArchive.qml").read_bytes()
         resources[RETENTION_INLINE_RESOURCE] = (PROJECT / "native/qt/MessageRetentionInline.qml").read_bytes()
         resources[RETENTION_RANGE_RESOURCE] = (PROJECT / "native/qt/MessageRetentionRange.qml").read_bytes()
         resources[RETENTION_BUBBLE_RESOURCE] = (PROJECT / "native/qt/MessageRetentionBubble.qml").read_bytes()

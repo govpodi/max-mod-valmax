@@ -2,6 +2,7 @@
 import argparse
 import hashlib
 import json
+import os
 from pathlib import Path
 import sys
 import tempfile
@@ -22,7 +23,7 @@ from recording_indicator_ui import RESOURCE_PATHS as RECORDING_RESOURCES, MARKER
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--report", type=Path, default=PROJECT / "analysis/native-migration-v1/qt-generator-proof.json")
-    parser.add_argument("--build-root", type=Path, default=Path("D:/ValMAXBuild/build"))
+    parser.add_argument("--build-root", type=Path, default=Path(os.environ.get("VALMAX_TEST_TEMP_ROOT") or "E:/ValMAXBuild/tmp"))
     args = parser.parse_args()
     baseline = Path("D:/CodexLabs/max-mod-26.35.1/runtime/baseline/max.exe").read_bytes()
     args.build_root.mkdir(parents=True, exist_ok=True)
@@ -88,7 +89,7 @@ def main():
     for family, endpoint in build_native_qml.SETTINGS_PAGES.values():
         assert 'SettingsTransport.createRequest("' + family + '")' in settings
         assert "http://127.0.0.1:18973/" + endpoint not in settings
-    # Configuration/status no longer needs the local helper; archive/capture
+    # Configuration/status no longer needs the local helper; capture
     # readiness is a separate, deliberately unresolved product contract.
     assert settings.count("new XMLHttpRequest()") == legacy_sources[":/qt/qml/OneMeUi/LeadingSettingsBar.qml"].decode().count("new XMLHttpRequest()") - 8
     assert "XMLHttpRequest" not in settings and "127.0.0.1:18973" not in settings
@@ -126,13 +127,9 @@ def main():
     assert "modQuickReplyNativeCleared" in composer
     changed_extra = [key for key in legacy["extraResourceHashes"] if legacy["extraResourceHashes"][key] != native["extraResourceHashes"][key]]
     assert set(changed_extra) == {QUEUE_RESOURCE, LOCK_RESOURCE, RETENTION_RESOURCE, ":/valmax/ChatExportPanel.qml"}
-    archive_resource = build_native_qml.RETENTION_ARCHIVE_RESOURCE
+    archive_resource = ":/valmax/MessageRetentionArchive.qml"
     assert archive_resource not in legacy["extraResourceHashes"]
-    assert archive_resource in native["extraResourceHashes"]
-    archive = (scratch / "native/icons/inputs/valmax/MessageRetentionArchive.qml").read_text(encoding="utf8")
-    assert 'RetentionTransport.createRequest("list")' in archive
-    assert 'RetentionTransport.createRequest("marker")' in archive
-    assert 'RetentionTransport.createRequest("settings")' in archive
+    assert archive_resource not in native["extraResourceHashes"]
     inline_resource = build_native_qml.RETENTION_INLINE_RESOURCE
     assert inline_resource not in legacy["extraResourceHashes"]
     assert inline_resource in native["extraResourceHashes"]
@@ -159,6 +156,8 @@ def main():
     history = native_sources[":/qt/qml/OneMeUi/HistoryListView.qml"].decode()
     assert 'objectName: "valmaxRetentionInlineFooter"' in history
     assert 'source: "qrc:/valmax/MessageRetentionInline.qml"' in history
+    assert "return valmaxRetentionRange.fallbackToFooter;" in history
+    assert "return valmaxRetentionRange.cachedRows;" in history
     assert 'objectName: "valmaxRetentionHistoryRow"' in history
     assert history.count('HistoryMessageDelegate {') == 1
     assert 'delegate: HistoryMessageDelegate {' not in history
@@ -174,7 +173,8 @@ def main():
     assert 'DelegateModelGroup' not in history
     assert 'height: valmaxRetentionInlineLoader.height +' in history
     assert '(bottomLoader.visible ? bottomLoader.height : root.chatBottomPadding)' in history
-    assert 'objectName: "valmaxRetentionArchiveButton"' in history
+    assert "valmaxRetentionArchive" not in history
+    assert "Открыть архив сохранённых сообщений" not in history
     export = (scratch / "native/icons/inputs/valmax/ChatExportPanel.qml").read_text(encoding="utf8")
     assert "ValMAXNative.ExportTransport.createRequest()" in export
     assert "http://127.0.0.1:18973/chat-export" not in export
@@ -202,7 +202,7 @@ def main():
         assert b"127.0.0.1:18973" not in content and b"localhost:18973" not in content
     assert native["compiledPreserved"] == legacy["compiledPreserved"]
     assert native["compiledPreserved"] == [":/qt/qml/OneMeUi/HistoryMessageDelegate.qml", ":/qt/qml/OneMeUi/VideoMessageBubbleContent.qml", ":/qt/qml/OneMeUi/MessageTimeCapsule.qml"]
-    # The selected-chat viewer is present, while actual capture readiness still
+    # Selected-chat retained bubbles are present, while capture readiness still
     # depends on a verified native producer and durable worker status.
     import package_native_client
     eligibility = package_native_client.release_preflight()
@@ -213,7 +213,7 @@ def main():
              "nativeOnlyRecordingResources": list(RECORDING_RESOURCES),
              "nativeAccountReaders": account_readers, "accountReadersUseHttp": False,
              "optimizationGatingPreserved": True, "compiledResourcesPreserved": native["compiledPreserved"],
-             "nativeLocalHelperReferences": 0, "retentionArchiveIntegrated": True,
+             "nativeLocalHelperReferences": 0, "retentionArchiveResourceExcluded": True,
              "retentionInlineIntegrated": True,
              "retentionRangeIntegrated": True,
              "retentionReleaseGatePreserved": True, "releaseEligible": False,

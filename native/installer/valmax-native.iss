@@ -64,18 +64,57 @@
       #error Local preview information belongs to another package
     #endif
   #else
-    #if NativeDistributionMode == "public-beta"
-      #ifndef NativeBetaVersion
-        #error A public BETA version is required
-      #endif
-      #ifndef NativeBetaInfoSha256
-        #error Public BETA information must be pinned
-      #endif
-      #ifndef NativeBetaCoreTested
-        #error Public BETA installed core smoke must be pinned
+    #if (NativeDistributionMode == "public-beta") || (NativeDistributionMode == "public-stable-core")
+      #if NativeDistributionMode == "public-stable-core"
+        #ifndef NativeStableCoreVersion
+          #error A public stable core version is required
+        #endif
+        #ifndef NativeStableCoreInfoSha256
+          #error Public stable core information must be pinned
+        #endif
+        #ifndef NativeStableCoreTested
+          #error Public stable core installed smoke must be pinned
+        #endif
+        #ifndef NativeBetaUiChannelVerified
+          #error Advanced-feature BETA UI channel must be pinned
+        #endif
+        #if (NativeReleaseEligible != 1) || (NativeReleaseBlockerCount != 0) || (NativeStableCoreTested != 1) || (NativeBetaUiChannelVerified != 1)
+          #error A blocked, untested or BETA-label-free stable core cannot become a user installer
+        #endif
+        #if (NativeStableCoreVersion != ProductVersion) || (Pos("-", ProductVersion) != 0)
+          #error The stable core product version must be plain x.y.z
+        #endif
+        #if !FileExists(Payload + "\native-stable-core.txt")
+          #error Public stable core information is missing
+        #endif
+        #if GetSHA256OfFile(Payload + "\native-stable-core.txt") != NativeStableCoreInfoSha256
+          #error Public stable core information belongs to another package
+        #endif
+      #else
+        #ifndef NativeBetaVersion
+          #error A public BETA version is required
+        #endif
+        #ifndef NativeBetaInfoSha256
+          #error Public BETA information must be pinned
+        #endif
+        #ifndef NativeBetaCoreTested
+          #error Public BETA installed core smoke must be pinned
+        #endif
+        #if (NativeReleaseEligible != 1) || (NativeReleaseBlockerCount != 0) || (NativeBetaCoreTested != 1)
+          #error A blocked or untested public BETA cannot become a user installer
+        #endif
+        #if (NativeBetaVersion != ProductVersion) || (Pos("-native.preview.", ProductVersion) == 0)
+          #error The public BETA product version must be visibly marked
+        #endif
+        #if !FileExists(Payload + "\native-beta.txt")
+          #error Public BETA information is missing
+        #endif
+        #if GetSHA256OfFile(Payload + "\native-beta.txt") != NativeBetaInfoSha256
+          #error Public BETA information belongs to another package
+        #endif
       #endif
       #ifndef NativeBetaMaterialsInfoSha256
-        #error Public BETA materials summary must be pinned
+        #error Public materials summary must be pinned
       #endif
       #ifndef NativeBetaSource713Sha256
         #error FFmpeg 7.1.3 source must be pinned
@@ -92,23 +131,20 @@
       #ifndef NativeBetaBuildConfigSha256
         #error FFmpeg build configurations must be pinned
       #endif
-      #if (NativeReleaseEligible != 1) || (NativeReleaseBlockerCount != 0) || (NativeBetaCoreTested != 1)
-        #error A blocked or untested public BETA cannot become a user installer
-      #endif
-      #if (NativeBetaVersion != ProductVersion) || (Pos("-native.preview.", ProductVersion) == 0)
-        #error The public BETA product version must be visibly marked
-      #endif
-      #if !FileExists(Payload + "\native-beta.txt")
-        #error Public BETA information is missing
-      #endif
-      #if GetSHA256OfFile(Payload + "\native-beta.txt") != NativeBetaInfoSha256
-        #error Public BETA information belongs to another package
-      #endif
-      #if !FileExists(Payload + "\native-beta-materials.json")
-        #error Public BETA materials summary is missing
-      #endif
-      #if GetSHA256OfFile(Payload + "\native-beta-materials.json") != NativeBetaMaterialsInfoSha256
-        #error Public BETA materials summary belongs to another package
+      #if NativeDistributionMode == "public-stable-core"
+        #if !FileExists(Payload + "\native-stable-core-materials.json")
+          #error Public stable core materials summary is missing
+        #endif
+        #if GetSHA256OfFile(Payload + "\native-stable-core-materials.json") != NativeBetaMaterialsInfoSha256
+          #error Public stable core materials summary belongs to another package
+        #endif
+      #else
+        #if !FileExists(Payload + "\native-beta-materials.json")
+          #error Public BETA materials summary is missing
+        #endif
+        #if GetSHA256OfFile(Payload + "\native-beta-materials.json") != NativeBetaMaterialsInfoSha256
+          #error Public BETA materials summary belongs to another package
+        #endif
       #endif
       #if NativeFFmpegSourceMode == "inline"
       #if !FileExists(Payload + "\materials\FFmpeg\ffmpeg-7.1.3.tar.xz") || !FileExists(Payload + "\materials\FFmpeg\ffmpeg-7.1.5.tar.xz")
@@ -184,8 +220,8 @@
     #endif
   #endif
   #if NativeFFmpegSourceMode == "separate-asset"
-    #if NativeDistributionMode != "public-beta"
-      #error Separate FFmpeg source asset is only supported for public BETA
+    #if (NativeDistributionMode != "public-beta") && (NativeDistributionMode != "public-stable-core")
+      #error Separate FFmpeg source asset is only supported for bounded public releases
     #endif
     #ifndef NativeFFmpegSourceAssetSha256
       #error Separate FFmpeg source asset digest is missing
@@ -296,6 +332,10 @@ InfoBeforeFile={#Payload}\native-preview.txt
   #else
     #if NativeDistributionMode == "public-beta"
 InfoBeforeFile={#Payload}\native-beta.txt
+    #else
+      #if NativeDistributionMode == "public-stable-core"
+InfoBeforeFile={#Payload}\native-stable-core.txt
+      #endif
     #endif
   #endif
 #endif

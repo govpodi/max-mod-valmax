@@ -130,7 +130,7 @@ def main() -> None:
         "realProfilesRead": False, "networkUsed": False,
         "footerIsApproximateSection": True,
         "originalMessagePositionProven": False,
-        "scope": "Real inline QML and transport in one offscreen ListView with fake Bridge and fake SvgIcon stub; bounded layout, plain text, paging, scope abort, minimize geometry and unchanged refresh",
+        "scope": "Real inline QML and transport in one offscreen ListView with fake Bridge and fake SvgIcon stub; bounded layout, plain text, paging, scope abort, unchanged refresh, ordered fallback, duplicate suppression and recovery",
     }
     args.report.parent.mkdir(parents=True, exist_ok=True)
     args.report.write_text(json.dumps(result, ensure_ascii=False, indent=2) + "\n", "utf8")

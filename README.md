@@ -41,7 +41,7 @@
 Последний проверенный выпуск — [ValMAX 8.9.0 BETA (preview.22)](https://github.com/govpodi/max-mod-valmax/releases/tag/v8.9.0-native.preview.22). Это бета-версия; исходники проекта находятся в `main`.
 
 1. В [выпуске preview.22](https://github.com/govpodi/max-mod-valmax/releases/tag/v8.9.0-native.preview.22) скачайте установщик `ValMAX-8.9.0-native.preview.22-Setup.exe`, архивы `ValMAX-Qt-6.11.2-sources-native-beta3.zip` и `ValMAX-FFmpeg-sources-8.9.0-native.preview.22.zip`, а также `SHA256SUMS.txt`. Сверьте SHA-256 всех трёх файлов с этим списком. Архивы исходных материалов опубликованы отдельно и не устанавливаются вместе с программой.
-2. Полностью закройте ValMAX через значок в трее → «Выход» или сочетанием `Alt+F4` и сохраните возможность отката.
+2. Полностью закройте ValMAX через значок в трее → «Выход» и сохраните возможность отката. `Alt+F4` может лишь скрыть окно в трей.
 3. Запустите установщик и откройте ValMAX через ярлык. Отдельный Python не нужен. Первый запуск может занять до минуты.
 
 **Компактная Beta.** Для вкладки «Бизнес» и мини-приложений используется системный [Microsoft Edge WebView2 Evergreen Runtime](https://developer.microsoft.com/en-us/microsoft-edge/webview2/). Установщик проверяет его наличие; при отсутствии для загрузки официального компонента Microsoft нужна сеть. Размер установщика и контрольные суммы указаны в выпуске.

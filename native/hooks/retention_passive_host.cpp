@@ -93,22 +93,36 @@ bool owner_scope(const Runtime &r, uintptr_t owner, rows::OwnerScope &out) noexc
         || !database || !control) return false;
     out={account,database,control};return true;
 }
-bool route_for(Runtime &r, uintptr_t history, rows::Route &route) noexcept {
+enum class RouteResolution : uint8_t { Matched, Untracked, Ambiguous };
+RouteResolution route_for(Runtime &r, uintptr_t history, rows::Route &route) noexcept {
+    route={};
     uintptr_t vtable=0,database=0,control=0;
     int64_t chat=0;
     if (!read_at(history,0,vtable) || vtable != r.layout.chat_history
         || !read_at(history,0x30,database) || !read_at(history,0x38,control)
-        || !read_at(history,0xd8,chat) || !database || !control || chat == 0) return false;
+        || !read_at(history,0xd8,chat) || !database || !control || chat == 0)
+        return RouteResolution::Untracked;
     std::array<rows::OwnerScope,kOwners> candidates{};
-    size_t valid=0;
+    size_t valid=0,matches=0;
     // The destructor probe removes an owner under this same lock before its
     // body can free it. Keep the lock while reading the bounded owner chain.
     std::lock_guard lock(r.scope);
     for (size_t i=0;i<r.owner_count;++i) {
         rows::OwnerScope candidate{};
-        if (owner_scope(r,r.owners[i],candidate)) candidates[valid++]=candidate;
+        if (owner_scope(r,r.owners[i],candidate)) {
+            candidates[valid++]=candidate;
+            if (candidate.database==database && candidate.control==control) ++matches;
+        }
     }
-    return rows::unique_route(std::span(candidates.data(),valid),database,control,chat,route);
+    // A MAX write can outlive its owner's destruction while another account
+    // remains active. Never attribute that write to the remaining owner, and
+    // never revoke healthy accounts for an untracked callback. The skipped
+    // callback is counted in the native missed total instead.
+    if (matches==0) return RouteResolution::Untracked;
+    if (matches!=1 || !rows::unique_route(std::span(candidates.data(),valid),
+                                          database,control,chat,route))
+        return RouteResolution::Ambiguous;
+    return RouteResolution::Matched;
 }
 bool capture_batch(void *raw, rows::Route route,
                    std::span<const pilot::CapturedText> messages) noexcept {
@@ -154,6 +168,14 @@ void fail_scope(Runtime &r) noexcept {
 void note_bounded_skip(Runtime &r) noexcept {
     std::lock_guard lock(r.scope);
     increment(r.bounded_skips);
+}
+void note_untracked_skip(Runtime &r) noexcept {
+    std::lock_guard lock(r.scope);
+    // Startup and a disabled preference cannot lose a requested capture.
+    // Once capture is requested, surface every ignored callback through the
+    // count-only missed status instead of silently claiming full coverage.
+    if (r.store_ready && r.applied && r.preference_enabled && r.error==HostError::None)
+        increment(r.bounded_skips);
 }
 void owner_enter(GumInvocationContext *context,gpointer) {
     auto *slot=static_cast<uintptr_t *>(gum_invocation_context_get_listener_invocation_data(
@@ -225,7 +247,9 @@ void rows_enter(GumInvocationContext *context,gpointer raw) {
         const auto history=reinterpret_cast<uintptr_t>(gum_invocation_context_get_nth_argument(context,0));
         const auto vector=reinterpret_cast<uintptr_t>(gum_invocation_context_get_nth_argument(context,2));
         rows::Route route{};
-        if (!route_for(r,history,route)) { fail_scope(r); return; }
+        const auto resolution=route_for(r,history,route);
+        if (resolution==RouteResolution::Untracked) { note_untracked_skip(r); return; }
+        if (resolution==RouteResolution::Ambiguous) { fail_scope(r); return; }
         bool enabled=false;
         {
             std::lock_guard lock(r.scope);

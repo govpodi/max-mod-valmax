@@ -17,6 +17,7 @@ import os
 ROOT = Path(__file__).resolve().parents[3]
 sys.path.insert(0, str(ROOT / "native/tooling"))
 import package_native_client as package
+import verify_public_stable_core as stable_publication
 
 
 def digest(data):
@@ -1001,6 +1002,393 @@ class NativePackaging(unittest.TestCase):
                          {"retention_scope", "chat_export_history", "early_protection", "full_feature_regression"}
                          | {item["id"] for item in package.PUBLIC_BETA_MATERIAL_LIMITATIONS})
         package.require_distribution("public-beta", report, installer=True)
+
+    def candidate_receipt_fixture(self, installed_package, version):
+        folder = self.root / "candidate-package"
+        payload = folder / "payload"
+        release = folder / "release"
+        payload.mkdir(parents=True)
+        release.mkdir()
+        (payload / "native-package.json").write_bytes(installed_package.read_bytes())
+        setup = release / ("ValMAX-" + version + "-Setup.exe")
+        setup.write_bytes(b"owned synthetic Inno Setup fixture")
+        receipt = folder / "build-receipt.json"
+        receipt.write_text(json.dumps({"installerCompiled": True,
+            "distributionMode": "local-preview", "releaseEligible": False,
+            "manifestSha256": package.sha(installed_package), "payload": str(payload),
+            "installer": str(setup), "installerSha256": package.sha(setup),
+            "packagedAt": (self.now - timedelta(minutes=12)).strftime("%Y-%m-%dT%H:%M:%SZ")}),
+            encoding="utf8")
+        return {"path": str(receipt), "sha256": package.sha(receipt)}
+
+    def stable_idle_health_fixture(self):
+        process = {"pid": 4242,
+                   "createdAt": (self.now - timedelta(minutes=11, seconds=30)).strftime("%Y-%m-%dT%H:%M:%SZ"),
+                   "path": str(self.root / "runtime/mod/max.exe")}
+        expected = {"error": "ok", "ready": True, "captureActive": True,
+                    "failures": 0, "process": process}
+        return {"startedAt": (self.now - timedelta(minutes=11)).strftime("%Y-%m-%dT%H:%M:%SZ"),
+                "checkedAt": (self.now - timedelta(seconds=30)).strftime("%Y-%m-%dT%H:%M:%SZ"),
+                "start": expected, "end": {**expected, "process": dict(process)}}
+
+    def stable_core_fixture(self):
+        self.now = datetime.now(timezone.utc).replace(microsecond=0)
+        launcher = self.root / "ValMAX.exe"
+        launcher.write_bytes(b"owned installed outer launcher fixture")
+        runtime = self.root / "runtime"
+        for name in sorted(package.pins.REQUIRED | package.pins.FIXED_REQUIRED):
+            target = runtime / name
+            target.parent.mkdir(parents=True, exist_ok=True)
+            target.write_bytes(("owned installed runtime fixture: " + name).encode())
+        rows = package.pins.inventory(runtime)
+        qml_folder = self.root / "qml-proof"
+        qml_folder.mkdir()
+        proof_path = qml_folder / "native-qml-proof.json"
+        proof_path.write_text(json.dumps({"schema": 1, "nativeRuntime": True,
+                                          "uiReleaseChannel": "beta"}), encoding="utf8")
+        subject = {"version": "8.9.0", "launcherSha256": package.sha(launcher),
+                   "runtimeInventorySha256": package.inventory_digest(rows),
+                   "qmlProofSha256": package.sha(proof_path)}
+        installed_package = self.root / "native-package.json"
+        installed_package.write_text(json.dumps({"version": "8.9.0-native.preview.24",
+            "distributionMode": "local-preview", "launcherSha256": subject["launcherSha256"],
+            "runtimeFiles": rows, "qml": {"proofSha256": subject["qmlProofSha256"]}}),
+            encoding="utf8")
+        smoke = self.root / "installed-stable-core-smoke.json"
+        smoke.write_text(json.dumps({"schema": 1,
+            "kind": "native-public-stable-core-installed-smoke", "status": "passed",
+            "subject": subject, "testedAt": self.now.strftime("%Y-%m-%dT%H:%M:%SZ"),
+            "clientExecuted": True, "scope": "installed-native-client",
+            "launchMode": "outer-installed-launcher",
+            "installedLauncher": {"path": str(launcher), "sha256": subject["launcherSha256"]},
+            "installedPackage": {"path": str(installed_package),
+                                 "sha256": package.sha(installed_package),
+                                 "version": "8.9.0-native.preview.24",
+                                 "distributionMode": "local-preview"},
+            "candidatePackage": self.candidate_receipt_fixture(
+                installed_package, "8.9.0-native.preview.24"),
+            "retentionIdleHealth": self.stable_idle_health_fixture(),
+            "scenarios": dict.fromkeys(package.PUBLIC_STABLE_CORE_SCENARIOS, True),
+            "unresolvedCritical": []}), encoding="utf8")
+        return subject, smoke, proof_path, runtime
+
+    def stable_core_report(self, subject, smoke, qml_proof_path, *, rights=True,
+                           registration=None):
+        summary = self.beta_material_summary()
+        identity = {key: subject[key] for key in package.ARTIFACT_IDENTITY_KEYS}
+        registration = registration if registration is not None else {
+            "path": str(self.root), "version": "8.9.0-native.preview.24"}
+        with patch.object(package, "registered_installation", return_value=registration):
+            report = package.release_preflight(subject, smoke, mode="public-stable-core",
+                now=self.now, artifact_identity=identity, artifact_verified=True,
+                qml_compatibility_verified=True, max_rights_attested=rights,
+                materials={"completeForWholeClient": False,
+                           "limitations": [item["statusText"] for item in package.PUBLIC_BETA_MATERIAL_LIMITATIONS]},
+                beta_materials=summary, qml_proof_path=qml_proof_path)
+        report["artifactValidation"] = {"verified": True, "identity": identity,
+            "materialsReceiptSha256": summary["materialsReceiptSha256"],
+            "hookTargetIdentity": {"assemblyReceiptSha256": summary["assemblyReceiptSha256"]}}
+        report["nativeQmlCompatibility"] = {"verifiedNoLegacyReferences": True}
+        return report
+
+    def test_stable_core_binds_installed_preview_bytes_and_keeps_beta_channel(self):
+        subject, smoke, proof_path, _ = self.stable_core_fixture()
+        report = self.stable_core_report(subject, smoke, proof_path)
+        self.assertTrue(report["releaseEligible"])
+        self.assertTrue(report["stableCoreTested"])
+        self.assertTrue(report["betaUiChannelVerified"])
+        self.assertFalse(report["featureRuntimeTested"])
+        self.assertFalse(report["wholeClientMaterialsVerified"])
+        self.assertFalse(report["betaCoreTested"])
+        self.assertEqual(report["blockers"], [])
+        self.assertIn("advanced_beta_features",
+                      {item["id"] for item in report["knownLimitations"]})
+        package.require_distribution("public-stable-core", report, installer=True)
+        with self.assertRaises(ValueError):
+            package.require_distribution("user-release", report, installer=True)
+
+    def test_stable_core_rejects_changed_installed_bytes_or_missing_scenario(self):
+        subject, smoke, proof_path, runtime = self.stable_core_fixture()
+        original_smoke = smoke.read_bytes()
+        report = self.stable_core_report(subject, smoke, proof_path,
+            registration={"path": str(self.root), "version": "8.9.0-native.preview.23"})
+        self.assertFalse(report["releaseEligible"])
+        self.assertIn("invalid_installed_smoke", {item["id"] for item in report["blockers"]})
+        (runtime / "mod/max.exe").write_bytes(b"changed installed runtime")
+        report = self.stable_core_report(subject, smoke, proof_path)
+        self.assertFalse(report["releaseEligible"])
+        self.assertIn("invalid_installed_smoke", {item["id"] for item in report["blockers"]})
+        (runtime / "mod/max.exe").write_bytes(b"owned installed runtime fixture: mod/max.exe")
+        data = json.loads(original_smoke)
+        data["scenarios"].pop("retention_restart_persistence")
+        smoke.write_text(json.dumps(data), encoding="utf8")
+        report = self.stable_core_report(subject, smoke, proof_path)
+        self.assertFalse(report["releaseEligible"])
+        self.assertIn("invalid_installed_smoke", {item["id"] for item in report["blockers"]})
+        data = json.loads(original_smoke)
+        data["retentionIdleHealth"]["startedAt"] = data["retentionIdleHealth"]["checkedAt"]
+        smoke.write_text(json.dumps(data), encoding="utf8")
+        report = self.stable_core_report(subject, smoke, proof_path)
+        self.assertFalse(report["releaseEligible"])
+        self.assertIn("invalid_installed_smoke", {item["id"] for item in report["blockers"]})
+        data = json.loads(original_smoke)
+        data["retentionIdleHealth"]["end"]["error"] = "route"
+        data["retentionIdleHealth"]["end"]["ready"] = False
+        data["retentionIdleHealth"]["end"]["captureActive"] = False
+        data["retentionIdleHealth"]["end"]["failures"] = 1
+        smoke.write_text(json.dumps(data), encoding="utf8")
+        report = self.stable_core_report(subject, smoke, proof_path)
+        self.assertFalse(report["releaseEligible"])
+        self.assertIn("invalid_installed_smoke", {item["id"] for item in report["blockers"]})
+        smoke.write_bytes(original_smoke)
+        candidate_ref = json.loads(original_smoke)["candidatePackage"]
+        candidate = json.loads(Path(candidate_ref["path"]).read_text("utf8"))
+        Path(candidate["installer"]).write_bytes(b"changed candidate Setup")
+        report = self.stable_core_report(subject, smoke, proof_path)
+        self.assertFalse(report["releaseEligible"])
+        self.assertIn("invalid_installed_smoke", {item["id"] for item in report["blockers"]})
+
+    def test_stable_core_rejects_repackaged_candidate_without_reinstall(self):
+        subject, smoke, proof_path, _ = self.stable_core_fixture()
+        data = json.loads(smoke.read_text("utf8"))
+        candidate_path = Path(data["candidatePackage"]["path"])
+        candidate = json.loads(candidate_path.read_text("utf8"))
+        candidate["packagedAt"] = (self.now - timedelta(minutes=10)).strftime("%Y-%m-%dT%H:%M:%SZ")
+        candidate_path.write_text(json.dumps(candidate), encoding="utf8")
+        data["candidatePackage"]["sha256"] = package.sha(candidate_path)
+        smoke.write_text(json.dumps(data), encoding="utf8")
+        report = self.stable_core_report(subject, smoke, proof_path)
+        self.assertFalse(report["releaseEligible"])
+        self.assertIn("invalid_installed_smoke", {item["id"] for item in report["blockers"]})
+
+    def test_stable_core_rejects_future_dated_idle_finish(self):
+        subject, smoke, proof_path, _ = self.stable_core_fixture()
+        data = json.loads(smoke.read_text("utf8"))
+        idle = data["retentionIdleHealth"]
+        idle["startedAt"] = (self.now - timedelta(minutes=6)).strftime("%Y-%m-%dT%H:%M:%SZ")
+        idle["checkedAt"] = (self.now + timedelta(minutes=4)).strftime("%Y-%m-%dT%H:%M:%SZ")
+        data["testedAt"] = idle["checkedAt"]
+        smoke.write_text(json.dumps(data), encoding="utf8")
+        report = self.stable_core_report(subject, smoke, proof_path)
+        self.assertFalse(report["releaseEligible"])
+        self.assertIn("invalid_installed_smoke", {item["id"] for item in report["blockers"]})
+        self.assertTrue(any("retention idle-health window is too short or detached" in item["reason"]
+                            for item in report["blockers"] if item["id"] == "invalid_installed_smoke"))
+
+    def test_stable_core_rejects_process_restart_during_idle_health(self):
+        subject, smoke, proof_path, _ = self.stable_core_fixture()
+        original = json.loads(smoke.read_text("utf8"))
+        for change in ("pid", "creation", "future_creation", "other_path"):
+            with self.subTest(change=change):
+                data = json.loads(json.dumps(original))
+                idle = data["retentionIdleHealth"]
+                if change == "pid":
+                    idle["end"]["process"]["pid"] += 1
+                elif change == "creation":
+                    idle["end"]["process"]["createdAt"] = (
+                        self.now - timedelta(minutes=11, seconds=20)).strftime("%Y-%m-%dT%H:%M:%SZ")
+                elif change == "future_creation":
+                    stamp = (self.now - timedelta(minutes=10)).strftime("%Y-%m-%dT%H:%M:%SZ")
+                    idle["start"]["process"]["createdAt"] = stamp
+                    idle["end"]["process"]["createdAt"] = stamp
+                else:
+                    idle["end"]["process"]["path"] = str(self.root / "other/max.exe")
+                smoke.write_text(json.dumps(data), encoding="utf8")
+                report = self.stable_core_report(subject, smoke, proof_path)
+                self.assertFalse(report["releaseEligible"])
+                self.assertIn("invalid_installed_smoke",
+                              {item["id"] for item in report["blockers"]})
+
+    def test_stable_core_rejects_preview_version_missing_rights_and_removed_beta_badges(self):
+        subject, smoke, proof_path, _ = self.stable_core_fixture()
+        report = self.stable_core_report(subject, smoke, proof_path, rights=False)
+        self.assertIn("max_redistribution_attestation", {item["id"] for item in report["blockers"]})
+        proof_path.write_text(json.dumps({"schema": 1, "nativeRuntime": True,
+                                          "uiReleaseChannel": "stable-candidate"}), encoding="utf8")
+        report = self.stable_core_report(subject, smoke, proof_path)
+        self.assertIn("beta_ui_channel", {item["id"] for item in report["blockers"]})
+        preview = {**subject, "version": "8.9.0-native.preview.24"}
+        report = self.stable_core_report(preview, smoke, proof_path)
+        self.assertIn("invalid_payload_subject", {item["id"] for item in report["blockers"]})
+
+    def test_stable_core_marker_binds_notice_materials_and_beta_ui(self):
+        subject, smoke, proof_path, _ = self.stable_core_fixture()
+        report = self.stable_core_report(subject, smoke, proof_path)
+        summary = report["betaMaterials"]
+        payload = self.root / "stable-core-payload"
+        payload.mkdir()
+        for row in (*summary["sourceBundles"],
+                    *(item["signature"] for item in summary["sourceBundles"]),
+                    summary["buildConfigurations"]):
+            data = ("owned source fixture: " + row["path"]).encode()
+            target = payload / row["path"]
+            target.parent.mkdir(parents=True, exist_ok=True)
+            target.write_bytes(data)
+            row["size"] = len(data)
+            row["sha256"] = digest(data)
+        materials_path = payload / package.PUBLIC_STABLE_CORE_MATERIAL_INFO
+        materials_path.write_text(json.dumps(summary), encoding="utf8")
+        information_path = payload / package.PUBLIC_STABLE_CORE_INFO
+        information_path.write_bytes(package.stable_core_information(subject["version"]))
+        self.assertIn("BETA", information_path.read_text("utf-8-sig"))
+        manifest = {"distributionMode": "public-stable-core", "version": subject["version"],
+            "webview2Mode": "fixed", "webview2Bootstrapper": None,
+            "qtSourceMode": "inline", "qtSourceDistribution": None,
+            "qtSourceAvailability": None, "ffmpegSourceMode": "inline",
+            "ffmpegSourceDistribution": None, "ffmpegSourceAvailability": None,
+            "publicStableCore": True, "stableCoreTested": True,
+            "betaCoreTested": False,
+            "betaUiChannelVerified": True, "featureRuntimeTested": False,
+            "wholeClientMaterialsVerified": False, "materialsDocumentedForBeta": True,
+            "maxRightsAttested": True, "knownLimitations": report["knownLimitations"],
+            "installedSmokeSha256": report["installedSmokeSha256"],
+            "betaMaterials": summary,
+            "betaMaterialsInformation": {"path": materials_path.name,
+                                          "sha256": package.sha(materials_path)},
+            "coreInformation": {"path": information_path.name,
+                                "sha256": package.sha(information_path)}}
+        (payload / "native-package.json").write_text(json.dumps(manifest), encoding="utf8")
+        state = package.write_release_state(payload, manifest, report)
+        marker = (payload / "native-release-state.iss").read_text("utf8")
+        self.assertIn('#define NativeDistributionMode "public-stable-core"', marker)
+        self.assertIn('#define NativeStableCoreVersion "8.9.0"', marker)
+        self.assertIn('#define NativeStableCoreTested 1', marker)
+        self.assertIn('#define NativeBetaUiChannelVerified 1', marker)
+        self.assertEqual(state["manifestSha256"], package.sha(payload / "native-package.json"))
+        information_path.write_bytes(b"changed notice")
+        with self.assertRaisesRegex(ValueError, "stable core evidence or information changed"):
+            package.write_release_state(payload, manifest, report)
+
+    def test_stable_core_packaging_keeps_ffmpeg_external_and_full_feature_claim_false(self):
+        inputs = self.staging_inputs()
+        _, material_evidence = self.beta_material_fixture(inputs)
+        qml = self.root / "qml"
+        qml.mkdir()
+        qml_proof = qml / "native-qml-proof.json"
+        qml_proof.write_text(json.dumps({"schema": 1, "nativeRuntime": True,
+                                         "uiReleaseChannel": "beta"}), encoding="utf8")
+        inputs["qmlResult"]["proofSha256"] = package.sha(qml_proof)
+        for name in sorted(package.pins.REQUIRED | package.pins.FIXED_REQUIRED):
+            target = inputs["runtime"] / name
+            if not target.exists():
+                target.parent.mkdir(parents=True, exist_ok=True)
+                target.write_bytes(("owned runtime fixture: " + name).encode())
+        inputs["rows"] = package.pins.inventory(inputs["runtime"])
+        subject = {"version": "8.9.0", "launcherSha256": inputs["launcherHash"],
+                   "runtimeInventorySha256": package.inventory_digest(inputs["rows"]),
+                   "qmlProofSha256": inputs["qmlResult"]["proofSha256"]}
+        material_data = json.loads(material_evidence.read_text("utf8"))
+        material_data["kind"] = "native-public-stable-core-materials"
+        material_data["subject"] = subject
+        material_evidence.write_text(json.dumps(material_data), encoding="utf8")
+        installed_package = self.root / "native-package.json"
+        installed_package.write_text(json.dumps({"version": "8.9.0-native.preview.24",
+            "distributionMode": "local-preview", "launcherSha256": subject["launcherSha256"],
+            "runtimeFiles": inputs["rows"], "qml": {"proofSha256": subject["qmlProofSha256"]}}),
+            encoding="utf8")
+        self.now = datetime.now(timezone.utc).replace(microsecond=0)
+        smoke = self.root / "stable-core-smoke.json"
+        smoke.write_text(json.dumps({"schema": 1,
+            "kind": "native-public-stable-core-installed-smoke", "status": "passed",
+            "subject": subject, "testedAt": self.now.strftime("%Y-%m-%dT%H:%M:%SZ"),
+            "clientExecuted": True, "scope": "installed-native-client",
+            "launchMode": "outer-installed-launcher",
+            "installedLauncher": {"path": str(inputs["launcher"]),
+                                  "sha256": subject["launcherSha256"]},
+            "installedPackage": {"path": str(installed_package),
+                                 "sha256": package.sha(installed_package),
+                                 "version": "8.9.0-native.preview.24",
+                                 "distributionMode": "local-preview"},
+            "candidatePackage": self.candidate_receipt_fixture(
+                installed_package, "8.9.0-native.preview.24"),
+            "retentionIdleHealth": self.stable_idle_health_fixture(),
+            "scenarios": dict.fromkeys(package.PUBLIC_STABLE_CORE_SCENARIOS, True),
+            "unresolvedCritical": []}), encoding="utf8")
+        output = self.root / "public-stable-core"
+        argv = ["package_native_client.py", "--version", subject["version"],
+                "--runtime", str(inputs["runtime"]), "--qml-build", str(qml),
+                "--launcher-proof", str(self.root / "launcher-proof.json"),
+                "--output", str(output), "--distribution", "public-stable-core",
+                "--release-evidence", str(smoke), "--public-materials-evidence",
+                str(material_evidence), "--max-rights-attested",
+                "--ffmpeg-source-mode", "separate-asset"]
+        with patch.object(sys, "argv", argv), \
+             patch.object(package, "packaging_inputs", return_value=inputs), \
+             patch.object(package, "registered_installation",
+                          return_value={"path": str(self.root), "version": "8.9.0-native.preview.24"}), \
+             patch.object(package.subprocess, "run") as compiler, redirect_stdout(io.StringIO()):
+            package.main()
+            compiler.assert_not_called()
+        payload = output / "payload"
+        manifest = json.loads((payload / "native-package.json").read_text("utf8"))
+        receipt = json.loads((output / "build-receipt.json").read_text("utf8"))
+        self.assertTrue(manifest["releaseEligible"])
+        self.assertTrue(manifest["publicStableCore"])
+        self.assertTrue(manifest["stableCoreTested"])
+        self.assertTrue(manifest["betaUiChannelVerified"])
+        self.assertFalse(manifest["featureRuntimeTested"])
+        self.assertFalse(manifest["wholeClientMaterialsVerified"])
+        self.assertEqual(manifest["betaMaterialsInformation"]["path"],
+                         "native-stable-core-materials.json")
+        self.assertFalse((payload / "materials/FFmpeg").exists())
+        asset = output / "source-assets" / manifest["ffmpegSourceDistribution"]["assetName"]
+        self.assertTrue(package.verify_ffmpeg_source_asset(
+            asset, manifest["ffmpegSourceDistribution"], manifest["betaMaterials"]))
+        self.assertEqual(receipt["ffmpegSourceAsset"]["sha256"],
+                         manifest["ffmpegSourceDistribution"]["assetSha256"])
+        self.assertIn("стабильный основной клиент",
+                      (payload / "native-stable-core.txt").read_text("utf-8-sig"))
+        setup_folder = output / "release"
+        setup_folder.mkdir()
+        setup = setup_folder / "ValMAX-8.9.0-Setup.exe"
+        setup.write_bytes(b"owned final Setup fixture")
+        receipt["installerCompiled"] = True
+        receipt["installer"] = str(setup)
+        receipt["installerSha256"] = package.sha(setup)
+        receipt["packagedAt"] = (self.now - timedelta(minutes=1)).strftime("%Y-%m-%dT%H:%M:%SZ")
+        build_receipt = output / "build-receipt.json"
+        build_receipt.write_text(json.dumps(receipt), encoding="utf8")
+        installed_package.write_bytes((payload / "native-package.json").read_bytes())
+        final_data = json.loads(smoke.read_text("utf8"))
+        final_data["installedPackage"] = {"path": str(installed_package),
+            "sha256": package.sha(installed_package), "version": "8.9.0",
+            "distributionMode": "public-stable-core"}
+        final_data["candidatePackage"] = {"path": str(build_receipt),
+                                          "sha256": package.sha(build_receipt)}
+        final_smoke = self.root / "final-installed-stable-core-smoke.json"
+        final_smoke.write_text(json.dumps(final_data), encoding="utf8")
+        with patch.object(package, "registered_installation",
+                          return_value={"path": str(self.root), "version": "8.9.0"}):
+            with self.assertRaisesRegex(ValueError, "final installed smoke must postdate"):
+                stable_publication.verify(build_receipt, final_smoke, qml_proof)
+            receipt["packagedAt"] = (self.now - timedelta(minutes=12)).strftime("%Y-%m-%dT%H:%M:%SZ")
+            build_receipt.write_text(json.dumps(receipt), encoding="utf8")
+            final_data["candidatePackage"]["sha256"] = package.sha(build_receipt)
+            final_smoke.write_text(json.dumps(final_data), encoding="utf8")
+            publication = stable_publication.verify(build_receipt, final_smoke, qml_proof)
+            self.assertTrue(publication["publicationEligible"])
+            self.assertEqual(publication["installerSha256"], package.sha(setup))
+            original_receipt = build_receipt.read_bytes()
+            original_asset = asset.read_bytes()
+            replacement = b"owned coherently replaced source ZIP fixture"
+            asset.write_bytes(replacement)
+            changed = json.loads(original_receipt)
+            changed["ffmpegSourceAsset"]["size"] = len(replacement)
+            changed["ffmpegSourceAsset"]["sha256"] = package.sha(asset)
+            changed["ffmpegSourceDistribution"]["assetBytes"] = len(replacement)
+            changed["ffmpegSourceDistribution"]["assetSha256"] = package.sha(asset)
+            build_receipt.write_text(json.dumps(changed), encoding="utf8")
+            final_data["candidatePackage"]["sha256"] = package.sha(build_receipt)
+            final_smoke.write_text(json.dumps(final_data), encoding="utf8")
+            with self.assertRaisesRegex(ValueError, "source asset distribution differs"):
+                stable_publication.verify(build_receipt, final_smoke, qml_proof)
+            asset.write_bytes(original_asset)
+            build_receipt.write_bytes(original_receipt)
+            final_data["candidatePackage"]["sha256"] = package.sha(build_receipt)
+            final_smoke.write_text(json.dumps(final_data), encoding="utf8")
+            setup.write_bytes(b"changed final Setup")
+            with self.assertRaisesRegex(ValueError, "final Setup bytes changed"):
+                stable_publication.verify(build_receipt, final_smoke, qml_proof)
 
     def test_public_beta_refuses_missing_rights_materials_or_exact_artifacts(self):
         subject = self.beta_subject()

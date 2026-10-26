@@ -46,6 +46,12 @@ Item {
     property bool failed: false
     property int pagingAnchorIndex: -1
     property bool pagingBefore: false
+    property bool fallbackLatched: false
+    // If original-order placement cannot be read, the chat footer can still
+    // reach every retained row through the same bounded local page API. Keep
+    // fallback visible during a retry until a valid range reply is accepted.
+    readonly property bool fallbackToFooter: completed && active && backendReady &&
+        (fallbackLatched || currentBounds === null && invalidRetries >= 3 || failed)
     width: 0; height: 0; visible: false
 
     function compareIds(first, second) {
@@ -255,6 +261,7 @@ Item {
         windowCursors = [null]; windowIndex = 0;
         revision = ""; storeRevision = ""; staleRestarts = 0;
         failed = false; pagingAnchorIndex = -1; pagingBefore = false;
+        fallbackLatched = false;
         if (completed && active && backendReady) scanDebounce.restart();
     }
     function restartAfterStale() {
@@ -291,6 +298,7 @@ Item {
             if (invalidRetries < 3 && !invalidRetry.running) {
                 invalidRetries += 1; invalidRetry.restart();
             }
+            if (invalidRetries >= 3) fallbackLatched = true;
             return;
         }
         invalidRetry.stop(); invalidRetries = 0;
@@ -343,7 +351,7 @@ Item {
                 }
                 if (direction === "refresh" && revision === value.revision
                         && firstNextCursor === value.nextCursor && sameRows(firstPageRows, value.items)) {
-                    failed = false; return;
+                    failed = false; fallbackLatched = false; return;
                 }
                  if (storeRevision.length && storeRevision !== value.revision) {
                     cachedRows = []; rowsByIndex = ({}); rowsBeforeIndex = ({});
@@ -389,6 +397,7 @@ Item {
                         bounds.keys[0].key, bounds.keys[0].messageId) < 0;
                 pagingAnchorIndex = pagingBefore ? bounds.start : bounds.end;
                 failed = false;
+                fallbackLatched = false;
                 if (cursor === null) staleRestarts = 0;
              } catch (_) {
                  failed = true;
@@ -424,6 +433,7 @@ Item {
     onChatIdChanged: if (completed) resetScope()
     onViewChanged: if (completed) resetScope()
     onBackendReadyChanged: if (completed) resetScope()
+    onFailedChanged: if (failed) fallbackLatched = true
     onHasMoreBackwardChanged: scheduleScan()
     onHasMoreForwardChanged: scheduleScan()
     onActiveChanged: {

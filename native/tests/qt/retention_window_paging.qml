@@ -409,6 +409,30 @@ Window {
                                 "restart never resurrects other-account window or bubble");
                     proof.check(proof.countNamed(listView.itemAtIndex(1), "valmaxRetainedInlineBubble") === 1,
                                 "one actual in-chat bubble rendered after restart");
+                    const bounds = fresh.currentBounds;
+                    proof.check(bounds !== null && !fresh.fallbackToFooter,
+                                "valid original-order range keeps footer legacy-only");
+                    fresh.currentBounds = null; fresh.invalidRetries = 3;
+                    proof.check(fresh.fallbackToFooter,
+                                "invalid original-order range enables in-chat fallback");
+                    fresh.currentBounds = bounds; fresh.invalidRetries = 0;
+                    proof.check(!fresh.fallbackToFooter,
+                                "recovered original-order range disables fallback");
+                    fresh.failed = true;
+                    proof.check(fresh.fallbackToFooter,
+                                "range transport failure enables in-chat fallback");
+                    fresh.failed = false;
+                    fresh.scanVisible(true);
+                    proof.check(fresh.fallbackToFooter,
+                                "fallback stays visible while range retry is pending");
+                    proof.step = 93; return;
+                }
+                if (proof.step === 93) {
+                    const request = proof.nextRequest();
+                    if (!request) return;
+                    proof.respondPage(request);
+                    proof.check(!rangeLoader.item.fallbackToFooter,
+                                "accepted range reply restores original-order placement");
                     proof.finished = true; run.stop();
                 }
             } catch (error) {

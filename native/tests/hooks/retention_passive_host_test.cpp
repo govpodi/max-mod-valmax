@@ -270,24 +270,56 @@ int main() {
     CHECK(wait_for([&]{return status().worker.marked==203;}));
     CHECK(set_enabled(false,std::string(64,'b'),2));
     CHECK(status().infrastructure_ready() && !status().capture_enabled());
+    const auto disabled_skips=status().bounded_skips;
+    write(first.history,0x30,uintptr_t{0});
+    send(first,35,12,0,"disabled late");
+    write(first.history,0x30,reinterpret_cast<uintptr_t>(&first.pair[0]));
+    CHECK(status().bounded_skips==disabled_skips);
+    CHECK(status().error==HostError::None);
     send(first,33,12,0,"disabled");
     CHECK(status().worker.captured==203);
     CHECK(set_enabled(true,std::string(64,'c'),3));
-    const auto before_bad_scope=status().route_failures;
+    // A write already queued by a destroyed account may arrive while another
+    // account remains active. Do not borrow the remaining account's route or
+    // revoke its later captures; report the skipped callback as missed.
+    const auto before_late=status();
+    fake_owner_destroy(first.owner.data());
+    CHECK(status().owner_join && status().worker.ready);
+    send(first,6000,12,0,"late owner");
+    CHECK(status().bounded_skips==before_late.bounded_skips+1);
+    CHECK(status().route_failures==before_late.route_failures);
+    CHECK(status().error==HostError::None && status().worker.ready);
+    send(second,6001,11,0,"survivor");
+    CHECK(wait_for([&]{return status().worker.captured==204;}));
+    send(second,6001,11,2,"");
+    CHECK(wait_for([&]{return status().worker.marked==204;}));
+    {
+        std::lock_guard lock(backend.mutex);
+        CHECK(!backend.content.contains({11,-22,6000}));
+        CHECK(backend.content.at({12,-22,6001})=="survivor");
+        CHECK(backend.deleted.at({12,-22,6001}));
+    }
+    fake_owner_create(first.owner.data());
+    const auto before_bad_scope=status();
     write(first.history,0x30,uintptr_t{0});
     send(first,6000,12,0,"bad route");
-    CHECK(status().error==HostError::OwnerScope);
-    CHECK(status().route_failures==before_bad_scope+1);
-    CHECK(status().worker.error==pilot::AsyncError::InvalidRoute);
+    CHECK(status().bounded_skips==before_bad_scope.bounded_skips+1);
+    CHECK(status().route_failures==before_bad_scope.route_failures);
+    CHECK(status().error==HostError::None && status().worker.ready);
     write(first.history,0x30,reinterpret_cast<uintptr_t>(&first.pair[0]));
-    write(first.owner,0xd8,int64_t{0});
-    send(first,6001,12,0,"bad owner");
-    CHECK(status().route_failures==before_bad_scope+2);
+    // Two live account owners claiming the same exact storage route are an
+    // actual ambiguity. This remains terminal rather than guessing an owner.
+    write(first.factory,0x48,reinterpret_cast<uintptr_t>(&second.pair[0]));
+    write(first.factory,0x50,reinterpret_cast<uintptr_t>(&second.pair[1]));
+    send(second,6002,11,0,"ambiguous");
+    CHECK(status().error==HostError::OwnerScope);
+    CHECK(status().route_failures==before_bad_scope.route_failures+1);
+    CHECK(status().worker.error==pilot::AsyncError::InvalidRoute);
     fake_owner_destroy(first.owner.data());fake_owner_destroy(second.owner.data());
     CHECK(!status().owner_join && !status().infrastructure_ready());
     shutdown();
     CHECK(status().error==HostError::Shutdown && status().listeners==0);
     CHECK(profile_matches(L"E:\\ValMAXBuild\\retention-p11-sandbox\\synthetic-profile"));
     send(first,34,12,2,"");
-    CHECK(status().worker.marked==203);
+    CHECK(status().worker.marked==204);
 }

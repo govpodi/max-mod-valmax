@@ -23,6 +23,8 @@ Item {
     readonly property string longText: "<b>literal</b> " + "x".repeat(1500)
     property var retained: null
     property var footerRef: null
+    property bool orderedFallback: false
+    property var embeddedOrderedRows: []
 
     QtObject {
         id: appearance
@@ -58,9 +60,11 @@ Item {
                     proof.retained = item;
                     item.accountId = Qt.binding(function() { return proof.account; });
                     item.chatId = Qt.binding(function() { return proof.chat; });
-                    item.active = Qt.binding(function() { return proof.viewerActive; });
                     item.nativeRowCount = Qt.binding(function() { return listView.count; });
                     item.chatAppearance = Qt.binding(function() { return appearance; });
+                    item.orderedFallback = Qt.binding(function() { return proof.orderedFallback; });
+                    item.embeddedOrderedRows = Qt.binding(function() { return proof.embeddedOrderedRows; });
+                    item.active = Qt.binding(function() { return proof.viewerActive; });
                 }
             }
         }
@@ -100,6 +104,14 @@ Item {
             text: "synthetic page row " + number
         });
         return rows;
+    }
+    function mixedRows() {
+        return [{messageId: "25", orderKey: "1720000000025", sentAtMs: null,
+            receivedAtMs: 1720000000025, deletedAtMs: 1720000001025,
+            text: "ordered synthetic text"},
+            {messageId: "24", orderKey: null, sentAtMs: null,
+             receivedAtMs: 1720000000024, deletedAtMs: 1720000001024,
+             text: "legacy synthetic text"}];
     }
     Timer {
         id: run
@@ -269,6 +281,41 @@ Item {
                     proof.check(proof.retained.displayedCount === 1 && row.messageId === "24"
                                 && row.text === "new account synthetic text",
                                 "only new account bubble shown");
+                    proof.embeddedOrderedRows = [{messageId: "25"}];
+                    proof.orderedFallback = true;
+                    proof.check(proof.retained.displayedCount === 0,
+                                "fallback switch clears prior page");
+                    proof.step = 12; return;
+                }
+                if (proof.step === 12) {
+                    if (!proof.hasRequest(12)) return;
+                    proof.check(proof.request(11).value.value.legacyOnly === false,
+                                "fallback requests all retained rows");
+                    proof.success(11, proof.reply("99", "22", proof.mixedRows(), null, "e".repeat(64)));
+                    const row = proof.findNamed(proof.retained, "valmaxRetainedInlineBubbleRow");
+                    proof.check(proof.retained.displayedCount === 1 && row.messageId === "24",
+                                "already embedded ordered row has no footer duplicate");
+                    proof.embeddedOrderedRows = [];
+                    proof.step = 13; return;
+                }
+                if (proof.step === 13) {
+                    if (!proof.hasRequest(13)) return;
+                    proof.check(proof.request(12).value.value.legacyOnly === false,
+                                "fallback stays all-rows after range cache changes");
+                    proof.success(12, proof.reply("99", "22", proof.mixedRows(), null, "e".repeat(64)));
+                    proof.check(proof.retained.displayedCount === 2,
+                                "unplaced ordered row appears in chat footer");
+                    proof.orderedFallback = false;
+                    proof.step = 14; return;
+                }
+                if (proof.step === 14) {
+                    if (!proof.hasRequest(14)) return;
+                    proof.check(proof.request(13).value.value.legacyOnly === true,
+                                "recovered range returns footer to legacy only");
+                    proof.success(13, proof.reply("99", "22", [proof.mixedRows()[1]],
+                                                       null, "e".repeat(64)));
+                    proof.check(proof.retained.displayedCount === 1,
+                                "recovery hides ordered footer duplicate");
                     proof.finished = true; run.stop();
                 }
             } catch (error) {
