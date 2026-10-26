@@ -1017,19 +1017,33 @@ class NativePackaging(unittest.TestCase):
             "distributionMode": "local-preview", "releaseEligible": False,
             "manifestSha256": package.sha(installed_package), "payload": str(payload),
             "installer": str(setup), "installerSha256": package.sha(setup),
-            "packagedAt": (self.now - timedelta(minutes=12)).strftime("%Y-%m-%dT%H:%M:%SZ")}),
+            "packagedAt": (self.now - timedelta(minutes=60)).strftime("%Y-%m-%dT%H:%M:%SZ")}),
             encoding="utf8")
         return {"path": str(receipt), "sha256": package.sha(receipt)}
 
     def stable_idle_health_fixture(self):
         process = {"pid": 4242,
-                   "createdAt": (self.now - timedelta(minutes=11, seconds=30)).strftime("%Y-%m-%dT%H:%M:%SZ"),
+                   "createdAt": (self.now - timedelta(minutes=55)).strftime("%Y-%m-%dT%H:%M:%SZ"),
                    "path": str(self.root / "runtime/mod/max.exe")}
         expected = {"error": "ok", "ready": True, "captureActive": True,
                     "failures": 0, "process": process}
-        return {"startedAt": (self.now - timedelta(minutes=11)).strftime("%Y-%m-%dT%H:%M:%SZ"),
-                "checkedAt": (self.now - timedelta(seconds=30)).strftime("%Y-%m-%dT%H:%M:%SZ"),
+        return {"startedAt": (self.now - timedelta(minutes=50)).strftime("%Y-%m-%dT%H:%M:%SZ"),
+                "checkedAt": (self.now - timedelta(minutes=39)).strftime("%Y-%m-%dT%H:%M:%SZ"),
                 "start": expected, "end": {**expected, "process": dict(process)}}
+
+    def stable_final_health_fixture(self):
+        process = self.stable_idle_health_fixture()["start"]["process"]
+        status = {"error": "ok", "ready": True, "captureActive": True,
+                  "failures": 0, "queued": 0, "inFlight": 0, "pending": 0,
+                  "captured": 4, "marked": 0, "missing": 0, "missed": 1,
+                  "routeFailures": 0, "lastScopeFailureReason": 0,
+                  "lastInvalidSenderReason": 0, "boundedSkips": 1}
+        return {"startedAt": (self.now - timedelta(minutes=37)).strftime("%Y-%m-%dT%H:%M:%SZ"),
+                "trafficAt": (self.now - timedelta(minutes=36)).strftime("%Y-%m-%dT%H:%M:%SZ"),
+                "checkedAt": (self.now - timedelta(minutes=5)).strftime("%Y-%m-%dT%H:%M:%SZ"),
+                "before": {**status, "process": dict(process)},
+                "traffic": {**status, "captured": 6, "process": dict(process)},
+                "end": {**status, "captured": 6, "process": dict(process)}}
 
     def stable_core_fixture(self):
         self.now = datetime.now(timezone.utc).replace(microsecond=0)
@@ -1068,6 +1082,7 @@ class NativePackaging(unittest.TestCase):
             "candidatePackage": self.candidate_receipt_fixture(
                 installed_package, "8.9.0-native.preview.24"),
             "retentionIdleHealth": self.stable_idle_health_fixture(),
+            "retentionFinalHealth": self.stable_final_health_fixture(),
             "scenarios": dict.fromkeys(package.PUBLIC_STABLE_CORE_SCENARIOS, True),
             "unresolvedCritical": []}), encoding="utf8")
         return subject, smoke, proof_path, runtime
@@ -1106,6 +1121,38 @@ class NativePackaging(unittest.TestCase):
         package.require_distribution("public-stable-core", report, installer=True)
         with self.assertRaises(ValueError):
             package.require_distribution("user-release", report, installer=True)
+
+    def test_stable_core_rejects_old_p29_smoke_without_final_health(self):
+        subject, smoke, proof_path, _ = self.stable_core_fixture()
+        data = json.loads(smoke.read_text("utf8"))
+        data.pop("retentionFinalHealth")
+        smoke.write_text(json.dumps(data), encoding="utf8")
+        report = self.stable_core_report(subject, smoke, proof_path)
+        self.assertFalse(report["releaseEligible"])
+        self.assertIn("invalid_installed_smoke",
+                      {item["id"] for item in report["blockers"]})
+
+    def test_stable_core_rejects_post_smoke_route_failure_or_short_dwell(self):
+        subject, smoke, proof_path, _ = self.stable_core_fixture()
+        original = json.loads(smoke.read_text("utf8"))
+        incident = json.loads(json.dumps(original))
+        incident["retentionFinalHealth"]["end"].update({
+            "error": "route", "ready": False, "captureActive": False,
+            "failures": 1, "routeFailures": 1,
+            "lastScopeFailureReason": 8, "lastInvalidSenderReason": 2})
+        smoke.write_text(json.dumps(incident), encoding="utf8")
+        report = self.stable_core_report(subject, smoke, proof_path)
+        self.assertFalse(report["releaseEligible"])
+        self.assertIn("invalid_installed_smoke",
+                      {item["id"] for item in report["blockers"]})
+        short = json.loads(json.dumps(original))
+        short["retentionFinalHealth"]["checkedAt"] = (
+            self.now - timedelta(minutes=20)).strftime("%Y-%m-%dT%H:%M:%SZ")
+        smoke.write_text(json.dumps(short), encoding="utf8")
+        report = self.stable_core_report(subject, smoke, proof_path)
+        self.assertFalse(report["releaseEligible"])
+        self.assertIn("invalid_installed_smoke",
+                      {item["id"] for item in report["blockers"]})
 
     def test_stable_core_rejects_changed_installed_bytes_or_missing_scenario(self):
         subject, smoke, proof_path, runtime = self.stable_core_fixture()
@@ -1302,6 +1349,7 @@ class NativePackaging(unittest.TestCase):
             "candidatePackage": self.candidate_receipt_fixture(
                 installed_package, "8.9.0-native.preview.24"),
             "retentionIdleHealth": self.stable_idle_health_fixture(),
+            "retentionFinalHealth": self.stable_final_health_fixture(),
             "scenarios": dict.fromkeys(package.PUBLIC_STABLE_CORE_SCENARIOS, True),
             "unresolvedCritical": []}), encoding="utf8")
         output = self.root / "public-stable-core"
@@ -1361,7 +1409,7 @@ class NativePackaging(unittest.TestCase):
                           return_value={"path": str(self.root), "version": "8.9.0"}):
             with self.assertRaisesRegex(ValueError, "final installed smoke must postdate"):
                 stable_publication.verify(build_receipt, final_smoke, qml_proof)
-            receipt["packagedAt"] = (self.now - timedelta(minutes=12)).strftime("%Y-%m-%dT%H:%M:%SZ")
+            receipt["packagedAt"] = (self.now - timedelta(minutes=60)).strftime("%Y-%m-%dT%H:%M:%SZ")
             build_receipt.write_text(json.dumps(receipt), encoding="utf8")
             final_data["candidatePackage"]["sha256"] = package.sha(build_receipt)
             final_smoke.write_text(json.dumps(final_data), encoding="utf8")

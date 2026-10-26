@@ -284,6 +284,69 @@ def evidence_time(value, now):
     return tested
 
 
+RETENTION_COUNT_KEYS = frozenset({
+    "error", "ready", "captureActive", "failures", "queued", "inFlight",
+    "pending", "captured", "marked", "missing", "missed", "routeFailures",
+    "lastScopeFailureReason", "lastInvalidSenderReason", "boundedSkips",
+})
+
+
+def validate_retention_final_health(final, *, idle_checked, idle_process,
+                                    installed_runtime, candidate_packaged,
+                                    tested_at, now):
+    """Validate a count-only burst and a later healthy observation.
+
+    The three snapshots contain no account, chat, message, path other than the
+    installed process path, or text. A prior 10-minute idle check is not a
+    substitute for checking after the final test traffic.
+    """
+    require(isinstance(final, dict)
+            and set(final) == {"startedAt", "trafficAt", "checkedAt",
+                               "before", "traffic", "end"},
+            "exact final retention count-only window required")
+    started = evidence_time(final["startedAt"], now)
+    traffic = evidence_time(final["trafficAt"], now)
+    checked = evidence_time(final["checkedAt"], now)
+    require(idle_checked <= started < traffic <= checked <= tested_at <= now
+            and traffic - started <= timedelta(minutes=30)
+            and timedelta(minutes=30) <= checked - traffic <= timedelta(hours=2)
+            and tested_at - checked <= timedelta(minutes=20)
+            and now - checked <= timedelta(minutes=30),
+            "final retention traffic or 30-minute health observation is stale, short, or out of order")
+    snapshots = (final["before"], final["traffic"], final["end"])
+    healthy = {"error": "ok", "ready": True, "captureActive": True,
+               "failures": 0, "queued": 0, "inFlight": 0, "pending": 0,
+               "routeFailures": 0, "lastScopeFailureReason": 0,
+               "lastInvalidSenderReason": 0}
+    for snapshot in snapshots:
+        require(isinstance(snapshot, dict)
+                and set(snapshot) == RETENTION_COUNT_KEYS | {"process"}
+                and all(type(snapshot[key]) is type(value) and snapshot[key] == value
+                        for key, value in healthy.items())
+                and all(type(snapshot[key]) is int and 0 <= snapshot[key] <= 2**64 - 1
+                        for key in RETENTION_COUNT_KEYS - healthy.keys()),
+                "final retention count-only snapshot is unhealthy or malformed")
+        process = snapshot["process"]
+        require(isinstance(process, dict)
+                and set(process) == {"pid", "createdAt", "path"}
+                and type(process["pid"]) is int and process["pid"] > 0
+                and isinstance(process["path"], str)
+                and Path(process["path"]) == installed_runtime / "mod/max.exe"
+                and process == idle_process,
+                "final retention snapshots must use the same installed max.exe process")
+    process_created = evidence_time(idle_process["createdAt"], now)
+    require(candidate_packaged < process_created <= idle_checked <= started,
+            "final retention process predates candidate Setup or idle observation")
+    before, after, end = snapshots
+    require(after["captured"] >= before["captured"] + 2
+            and end["captured"] >= after["captured"]
+            and before["marked"] <= after["marked"] <= end["marked"],
+            "final retention traffic did not capture two events or counters regressed")
+    require(all(before[key] == after[key] == end[key]
+                for key in ("missing", "missed", "boundedSkips")),
+            "retention missed or skipped an event during the final traffic and idle window")
+
+
 def registered_installation():
     """Read the per-user Inno registration for the currently installed client."""
     import winreg
@@ -408,7 +471,8 @@ def public_beta_preflight(subject, evidence, now, artifact_identity, materials,
         required = {"schema", "kind", "status", "subject", "testedAt", "clientExecuted", "scope",
                     "installedLauncher", "launchMode", "scenarios", "unresolvedCritical"}
         if stable_core:
-            required.update(("installedPackage", "candidatePackage", "retentionIdleHealth"))
+            required.update(("installedPackage", "candidatePackage", "retentionIdleHealth",
+                             "retentionFinalHealth"))
         require(isinstance(smoke, dict) and set(smoke) == required,
                 "exact installed core smoke receipt required")
         require(type(smoke["schema"]) is int and smoke["schema"] == 1
@@ -510,8 +574,7 @@ def public_beta_preflight(subject, evidence, now, artifact_identity, materials,
             checked = evidence_time(idle["checkedAt"], now)
             tested_at = evidence_time(smoke["testedAt"], now)
             require(timedelta(minutes=10) <= checked - started <= timedelta(hours=2)
-                    and checked <= tested_at <= now
-                    and tested_at <= checked + timedelta(hours=1),
+                    and checked <= tested_at <= now,
                     "retention idle-health window is too short or detached from smoke")
             expected_health = {"error": "ok", "ready": True,
                                "captureActive": True, "failures": 0}
@@ -533,6 +596,10 @@ def public_beta_preflight(subject, evidence, now, artifact_identity, materials,
             process_created = evidence_time(processes[0]["createdAt"], now)
             require(candidate_packaged < process_created <= started,
                     "installed max.exe process must start after its candidate Setup")
+            validate_retention_final_health(
+                smoke["retentionFinalHealth"], idle_checked=checked,
+                idle_process=processes[0], installed_runtime=installed_runtime,
+                candidate_packaged=candidate_packaged, tested_at=tested_at, now=now)
         require(smoke["unresolvedCritical"] == [], "installed BETA smoke lists critical unresolved work")
         require(isinstance(smoke["scenarios"], dict) and set(smoke["scenarios"]) == set(scenarios)
                 and all(value is True for value in smoke["scenarios"].values()),

@@ -56,6 +56,8 @@ set_target_properties(valmax_retention_passive_host_test PROPERTIES MSVC_RUNTIME
 add_test(NAME retention_passive_host COMMAND valmax_retention_passive_host_test)
 add_test(NAME retention_passive_host_invalid_sender
     COMMAND valmax_retention_passive_host_test --invalid-sender)
+add_test(NAME retention_passive_host_invalid_sender_shape
+    COMMAND valmax_retention_passive_host_test --invalid-sender-shape)
 add_test(NAME retention_passive_host_duplicate_text_id
     COMMAND valmax_retention_passive_host_test --duplicate-text-id)
 add_test(NAME retention_passive_host_owner_capacity

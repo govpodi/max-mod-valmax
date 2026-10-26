@@ -56,8 +56,9 @@ bool unique_route(std::span<const OwnerScope> owners, uintptr_t database,
 // row carries no text; the caller determines whether it was deleted for all.
 bool decode(uintptr_t row, ReadMemory read, void *context, Snapshot &output) noexcept;
 
-// Finite result for a pre-read nonpositive sender. Only EmptyIgnore permits a
-// skip; all other nonzero values are terminal, count-only diagnostics.
+// Finite result for a pre-read nonpositive sender. EmptyIgnore and a
+// structurally valid ZeroSenderNonempty permit a bounded skip; neither row
+// supplies an attributable sender. Other nonzero values are terminal.
 enum class InvalidSenderReason : uint32_t {
     None = 0,
     NegativeSender = 1,

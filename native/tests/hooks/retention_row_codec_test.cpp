@@ -128,6 +128,15 @@ void invalid_sender_reason_checks() {
     CHECK(inspect(1,0) == InvalidSenderReason::EmptyIgnore);
     put<uint64_t>(memory,0x40,1);
     CHECK(inspect(1,0) == InvalidSenderReason::ZeroSenderNonempty);
+    put<int64_t>(memory,0x00,0);
+    CHECK(inspect(1,0) == InvalidSenderReason::InvalidId);
+    put<int64_t>(memory,0x00,41);
+    put<uint64_t>(memory,0x40,20); put<uint64_t>(memory,0x48,31);
+    CHECK(inspect(1,0) == InvalidSenderReason::InvalidTextShape);
+    put<uintptr_t>(memory,0x30,reinterpret_cast<uintptr_t>(memory.heap.data()));
+    memory.permit_heap = false;
+    CHECK(inspect(1,0) == InvalidSenderReason::ZeroSenderNonempty);
+    memory.permit_heap = true;
     put<uint64_t>(memory,0x40,0); put<uint64_t>(memory,0x48,0);
     CHECK(inspect(1,0) == InvalidSenderReason::InvalidTextShape);
     put<uint64_t>(memory,0x48,15); put<int64_t>(memory,0x80,-1);

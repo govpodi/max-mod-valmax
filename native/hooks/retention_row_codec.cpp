@@ -85,11 +85,20 @@ InvalidSenderReason inspect_invalid_sender(uintptr_t address, uint32_t expected_
     if (sender != expected_sender || status != expected_status)
         return InvalidSenderReason::HeaderMismatch;
     if (sender < 0) return InvalidSenderReason::NegativeSender;
+    if (field<int64_t>(row,kIdOffset) <= 0) return InvalidSenderReason::InvalidId;
     const auto size = field<uint64_t>(row,kTextLengthOffset);
     const auto capacity = field<uint64_t>(row,kTextCapacityOffset);
     if (!valid_text_shape(size,capacity)) return InvalidSenderReason::InvalidTextShape;
-    if (size != 0) return InvalidSenderReason::ZeroSenderNonempty;
-    if (field<int64_t>(row,kIdOffset) <= 0) return InvalidSenderReason::InvalidId;
+    if (size != 0) {
+        // Check pointer metadata without dereferencing heap text or retaining
+        // decoded content. A malformed heap string remains terminal.
+        if (capacity != kInlineCapacity) {
+            const auto text = field<uintptr_t>(row,kTextOffset);
+            if (text == 0 || text > UINTPTR_MAX-size)
+                return InvalidSenderReason::InvalidTextShape;
+        }
+        return InvalidSenderReason::ZeroSenderNonempty;
+    }
     return InvalidSenderReason::EmptyIgnore;
 }
 

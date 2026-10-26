@@ -170,15 +170,17 @@ void send_text_budget_overflow(OwnerFixture &owner) {
     Vector vector{begin,end,end};
     fake_rows(owner.history.data(),nullptr,&vector,nullptr,0);
 }
-void send_mixed_empty_sender(OwnerFixture &owner,int64_t own_sender,
-                             int64_t incoming_sender) {
-    std::array<TestRow,4> batch{};
-    for (size_t i=0;i<2;++i) {
+void send_mixed_zero_sender(OwnerFixture &owner,int64_t own_sender,
+                            int64_t incoming_sender) {
+    std::array<TestRow,6> batch{};
+    for (size_t i=0;i<4;++i) {
         auto &row=batch[i].bytes;
         write(row,0,int64_t{6100+static_cast<int64_t>(i)*3});
         write(row,0x80,int64_t{0});
-        write(row,0x128,static_cast<uint32_t>(i));
-        write(row,0x40,uint64_t{0});write(row,0x48,uint64_t{15});
+        write(row,0x128,static_cast<uint32_t>(i%2));
+        const uint64_t length=i>=2 ? 7 : 0;
+        write(row,0x40,length);write(row,0x48,uint64_t{15});
+        if (length) std::memcpy(row.data()+0x30,"unknown",length);
     }
     const auto set_text=[&](size_t index,int64_t id,int64_t sender,const char *content) {
         auto &row=batch[index].bytes;
@@ -188,11 +190,28 @@ void send_mixed_empty_sender(OwnerFixture &owner,int64_t own_sender,
         write(row,0x40,static_cast<uint64_t>(length));write(row,0x48,uint64_t{15});
         std::memcpy(row.data()+0x30,content,length);
     };
-    set_text(2,6101,own_sender,"own");
-    set_text(3,6102,incoming_sender,"incoming");
+    set_text(4,6101,own_sender,"own");
+    set_text(5,6102,incoming_sender,"incoming");
     const auto begin=reinterpret_cast<uintptr_t>(batch.data());
     const auto end=begin+batch.size()*rows::kMessageBytes;
     Vector vector{begin,end,end};
+    fake_rows(owner.history.data(),nullptr,&vector,nullptr,0);
+}
+void send_malformed_zero_sender(OwnerFixture &owner,bool malformed_shape) {
+    std::array<TestRow,2> batch{};
+    auto &valid=batch[0].bytes;
+    write(valid,0,int64_t{32});write(valid,0x80,int64_t{12});
+    write(valid,0x128,uint32_t{0});write(valid,0x18,int64_t{1700000000032});
+    write(valid,0x40,uint64_t{5});write(valid,0x48,uint64_t{15});
+    std::memcpy(valid.data()+0x30,"valid",5);
+    auto &malformed=batch[1].bytes;
+    write(malformed,0,malformed_shape ? int64_t{33} : int64_t{0});
+    write(malformed,0x80,int64_t{0});write(malformed,0x128,uint32_t{0});
+    write(malformed,0x40,malformed_shape ? uint64_t{16} : uint64_t{7});
+    write(malformed,0x48,uint64_t{15});
+    const auto begin=reinterpret_cast<uintptr_t>(batch.data());
+    Vector vector{begin,begin+batch.size()*rows::kMessageBytes,
+                  begin+batch.size()*rows::kMessageBytes};
     fake_rows(owner.history.data(),nullptr,&vector,nullptr,0);
 }
 bool wait_for(std::function<bool()> predicate) {
@@ -230,9 +249,10 @@ int main(int argc,char **argv) {
         reinterpret_cast<uintptr_t>(&chat_history_vtable)};
     if (argc==2) {
         const bool invalid_sender=std::strcmp(argv[1],"--invalid-sender")==0;
+        const bool invalid_sender_shape=std::strcmp(argv[1],"--invalid-sender-shape")==0;
         const bool duplicate_text_id=std::strcmp(argv[1],"--duplicate-text-id")==0;
         const bool owner_capacity=std::strcmp(argv[1],"--owner-capacity")==0;
-        CHECK(invalid_sender || duplicate_text_id || owner_capacity);
+        CHECK(invalid_sender || invalid_sender_shape || duplicate_text_id || owner_capacity);
         CHECK(install_synthetic(L"E:\\ValMAXBuild\\retention-p11-sandbox\\synthetic-profile",
             targets,{&backend,&Backend::capture,&Backend::mark}));
         if (owner_capacity) {
@@ -259,7 +279,7 @@ int main(int argc,char **argv) {
         OwnerFixture owner,second;
         owner.setup(targets,11,-22);
         fake_owner_create(owner.owner.data());
-        if (invalid_sender) {
+        if (invalid_sender || invalid_sender_shape) {
             second.setup(targets,12,-22);
             fake_owner_create(second.owner.data());
         }
@@ -268,20 +288,23 @@ int main(int argc,char **argv) {
         CHECK(set_enabled(true,std::string(64,'a'),1));
         CHECK(status().capture_enabled());
         CHECK(status().last_scope_failure_reason==ScopeFailureReason::None);
-        if (invalid_sender) send(owner,32,0,0,"bad sender");
+        if (invalid_sender || invalid_sender_shape)
+            send_malformed_zero_sender(owner,invalid_sender_shape);
         else send_many(owner,32,2,0,"duplicate",true);
         const auto failed=status();
         CHECK(failed.error==HostError::OwnerScope);
         CHECK(failed.route_failures==1);
-        CHECK(failed.last_scope_failure_reason==(invalid_sender
+        CHECK(failed.last_scope_failure_reason==(invalid_sender || invalid_sender_shape
             ? ScopeFailureReason::InvalidSender : ScopeFailureReason::DuplicateTextId));
         CHECK(failed.last_invalid_sender_reason==(invalid_sender
-            ? rows::InvalidSenderReason::ZeroSenderNonempty : rows::InvalidSenderReason::None));
-        CHECK(failed.active_owners==(invalid_sender ? 2u : 1u));
+            ? rows::InvalidSenderReason::InvalidId
+            : invalid_sender_shape ? rows::InvalidSenderReason::InvalidTextShape
+                                   : rows::InvalidSenderReason::None));
+        CHECK(failed.active_owners==(invalid_sender || invalid_sender_shape ? 2u : 1u));
         CHECK(failed.worker.error==pilot::AsyncError::InvalidRoute);
         CHECK(failed.bounded_skips==0);
         CHECK(!failed.capture_enabled() && failed.worker.captured==0);
-        if (invalid_sender) send(second,33,11,0,"other account");
+        if (invalid_sender || invalid_sender_shape) send(second,33,11,0,"other account");
         else send(owner,33,12,0,"after failure");
         CHECK(status().last_scope_failure_reason==failed.last_scope_failure_reason);
         CHECK(status().last_invalid_sender_reason==failed.last_invalid_sender_reason);
@@ -411,10 +434,10 @@ int main(int argc,char **argv) {
         CHECK(backend.deleted.at({12,-22,6001}));
     }
     fake_owner_create(first.owner.data());
-    const auto before_empty_sender=status();
-    send_mixed_empty_sender(first,11,12);
-    CHECK(status().bounded_skips==before_empty_sender.bounded_skips+1);
-    CHECK(status().route_failures==before_empty_sender.route_failures);
+    const auto before_zero_sender=status();
+    send_mixed_zero_sender(first,11,12);
+    CHECK(status().bounded_skips==before_zero_sender.bounded_skips+1);
+    CHECK(status().route_failures==before_zero_sender.route_failures);
     CHECK(status().last_scope_failure_reason==ScopeFailureReason::None);
     CHECK(status().capture_enabled() && status().worker.ready);
     CHECK(wait_for([&]{return status().worker.captured==205;}));
@@ -425,6 +448,8 @@ int main(int argc,char **argv) {
         CHECK(!backend.content.contains({11,-22,6100}));
         CHECK(!backend.content.contains({11,-22,6101}));
         CHECK(!backend.content.contains({11,-22,6103}));
+        CHECK(!backend.content.contains({11,-22,6106}));
+        CHECK(!backend.content.contains({11,-22,6109}));
         CHECK(backend.content.at({11,-22,6102})=="incoming");
         CHECK(backend.content.at({12,-22,6102})=="second account");
     }

@@ -305,7 +305,7 @@ void rows_enter(GumInvocationContext *context,gpointer raw) {
         captured.reserve(count);removed.reserve(count);
         std::set<int64_t> captured_ids,removed_ids;
         size_t copied_text_bytes=0;
-        bool empty_zero_sender_skipped=false;
+        bool zero_sender_skipped=false;
         for (size_t i=0;i<count;++i) {
             const auto row=begin+i*rows::kMessageBytes;
             uint32_t status_code=0;
@@ -315,15 +315,16 @@ void rows_enter(GumInvocationContext *context,gpointer raw) {
             }
             if (status_code<=1) {
                 if (sender<=0) {
-                    // Only the proven empty Ignore case may be skipped. The
-                    // finite reason for every other case is latched without
-                    // retaining row contents or identifiers.
+                    // A structurally valid sender-zero row has no attributable
+                    // owner. Skip it and count the callback as missed without
+                    // decoding or storing text; malformed rows remain terminal.
                     const auto sender_reason=rows::inspect_invalid_sender(
                         row,status_code,sender,read_row,nullptr);
-                    if (sender_reason==rows::InvalidSenderReason::EmptyIgnore) {
-                        if (!empty_zero_sender_skipped) {
+                    if (sender_reason==rows::InvalidSenderReason::EmptyIgnore
+                        || sender_reason==rows::InvalidSenderReason::ZeroSenderNonempty) {
+                        if (!zero_sender_skipped) {
                             note_bounded_skip(r);
-                            empty_zero_sender_skipped=true;
+                            zero_sender_skipped=true;
                         }
                         continue;
                     }
