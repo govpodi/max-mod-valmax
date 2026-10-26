@@ -56,10 +56,9 @@ h1 { max-width: 710px; margin-bottom: 24px; font-size: clamp(2.35rem, 4vw, 3.9re
 .button-secondary:hover { border-color: #786899; background: rgba(172, 145, 255, .08); color: var(--text); }
 .download-hint { max-width: 500px; margin: 18px 0 0; color: #a49bb5; font-size: .83rem; }
 .hero-preview { min-width: 0; margin: 0; }
-.preview-window { position: relative; overflow: hidden; aspect-ratio: 1.23; border: 1px solid #4c3e69; border-radius: 20px; background: #13111a; box-shadow: 0 20px 80px rgba(0, 0, 0, .42), 0 0 70px rgba(123, 84, 226, .13); }
-.preview-window::after { position: absolute; inset: auto 0 0; height: 35%; background: linear-gradient(0deg, rgba(12, 10, 19, .72), transparent); content: ""; pointer-events: none; }
-.preview-window img { display: block; width: 100%; height: 100%; object-fit: cover; object-position: left top; }
-.preview-caption { position: absolute; z-index: 1; top: 18px; left: 18px; padding: 5px 11px; border: 1px solid rgba(255, 255, 255, .12); border-radius: 7px; background: rgba(18, 15, 27, .8); color: #e8e1f3; font-size: .77rem; backdrop-filter: blur(8px); }
+.preview-window { display: block; overflow: hidden; border: 1px solid #4c3e69; border-radius: 20px; background: #13111a; box-shadow: 0 20px 80px rgba(0, 0, 0, .42), 0 0 70px rgba(123, 84, 226, .13); }
+.preview-window img { display: block; width: 100%; height: auto; }
+.preview-window:hover { border-color: var(--accent); }
 .hero-preview figcaption { padding-top: 12px; color: #9f96b2; font-size: .8rem; text-align: right; }
 
 .section { padding-block: 95px; }
@@ -75,6 +74,16 @@ h2 { margin-bottom: 15px; font-size: clamp(2rem, 3.2vw, 3rem); letter-spacing: -
 .beta { display: inline-block; vertical-align: middle; margin-left: 3px; padding: 3px 6px; border: 1px solid #5e4966; border-radius: 5px; color: #e9b7dc; font-size: .58rem; letter-spacing: .07em; }
 .feature-more { margin: 26px 0 0; color: var(--muted); font-size: .95rem; }
 .feature-more a, .text-link, .limits-link a { color: #c4afff; font-weight: 700; text-underline-offset: 3px; }
+
+.screenshots-section { border-top: 1px solid rgba(171, 151, 214, .11); }
+.screenshot-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 24px; }
+.screenshot-card { display: block; overflow: hidden; border: 1px solid var(--border); border-radius: 18px; background: var(--surface); text-decoration: none; }
+.screenshot-card:hover { border-color: var(--accent); color: var(--text); }
+.screenshot-card img { display: block; width: 100%; height: auto; border-bottom: 1px solid var(--border); }
+.screenshot-caption { display: grid; grid-template-columns: 1fr auto; align-items: start; column-gap: 12px; padding: 17px 20px 19px; }
+.screenshot-caption strong { grid-column: 1; font-size: 1.06rem; line-height: 1.35; }
+.screenshot-caption > span:nth-child(2) { grid-column: 1; margin-top: 3px; color: var(--muted); font-size: .88rem; }
+.screenshot-open { grid-column: 2; grid-row: 1 / span 2; color: #c4afff; font-size: .85rem; font-weight: 700; white-space: nowrap; }
 
 .install-layout { display: grid; grid-template-columns: minmax(0, .8fr) minmax(0, 1.2fr); gap: clamp(32px, 7vw, 95px); }
 .steps { display: grid; gap: 16px; margin: 0; padding: 0; list-style: none; }
@@ -118,7 +127,6 @@ code { padding: 1px 5px; border-radius: 4px; background: #272234; color: #ede3ff
   .hero { grid-template-columns: 1fr; padding-block: 72px; }
   .hero-copy { max-width: 700px; }
   .hero-preview { max-width: 730px; }
-  .preview-window { aspect-ratio: 1.8; }
   .feature-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .install-layout, .important-layout, .faq-layout { grid-template-columns: 1fr; }
   .important-layout .section-intro, .faq-layout .section-intro { margin-bottom: 10px; }
@@ -135,9 +143,9 @@ code { padding: 1px 5px; border-radius: 4px; background: #272234; color: #ede3ff
   h1 { font-size: clamp(2.2rem, 10vw, 3.1rem); }
   .hero-actions { flex-direction: column; align-items: stretch; }
   .hero-actions .button { width: 100%; }
-  .preview-window { aspect-ratio: 1.25; }
   .section { padding-block: 70px; }
   .feature-grid { grid-template-columns: 1fr; }
+  .screenshot-grid { grid-template-columns: 1fr; }
   .feature-card { min-height: auto; padding: 24px; }
   .feature-number { margin-bottom: 15px; }
   .closing { flex-direction: column; align-items: stretch; margin-bottom: 70px; padding: 30px 24px; }
