@@ -6,7 +6,10 @@ An unofficial MAX modification for Windows x64, with added features for conversa
 
 **[Download ValMAX 8.9.0](https://github.com/govpodi/max-mod-valmax/releases/tag/v8.9.0)** · [Source for this release](https://github.com/govpodi/max-mod-valmax/tree/v8.9.0) · [Development and builds](docs/DEVELOPMENT.md) · [Русский](README.md)
 
+[![Release](https://img.shields.io/github/v/release/govpodi/max-mod-valmax?label=release)](https://github.com/govpodi/max-mod-valmax/releases/latest)
 [![Source checks](https://github.com/govpodi/max-mod-valmax/actions/workflows/source-check.yml/badge.svg?branch=main)](https://github.com/govpodi/max-mod-valmax/actions/workflows/source-check.yml)
+[![Windows x64](https://img.shields.io/badge/Windows-x64-0078D4)](https://github.com/govpodi/max-mod-valmax/releases/latest)
+[![MIT license](https://img.shields.io/github/license/govpodi/max-mod-valmax)](LICENSE)
 
 <p align="center"><img src="docs/assets/settings-ru.png" alt="ValMAX settings with personal details redacted" width="1200"></p>
 <p align="center"><small>ValMAX settings. Name, phone number and profile photos are redacted.</small></p>

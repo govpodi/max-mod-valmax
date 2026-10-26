@@ -6,7 +6,10 @@
 
 **[Скачать ValMAX 8.9.0](https://github.com/govpodi/max-mod-valmax/releases/tag/v8.9.0)** · [Исходники выпущенной версии](https://github.com/govpodi/max-mod-valmax/tree/v8.9.0) · [Разработка и сборка](docs/DEVELOPMENT.md) · [English](README.en.md)
 
+[![Релиз](https://img.shields.io/github/v/release/govpodi/max-mod-valmax?label=release)](https://github.com/govpodi/max-mod-valmax/releases/latest)
 [![Проверка исходников](https://github.com/govpodi/max-mod-valmax/actions/workflows/source-check.yml/badge.svg?branch=main)](https://github.com/govpodi/max-mod-valmax/actions/workflows/source-check.yml)
+[![Windows x64](https://img.shields.io/badge/Windows-x64-0078D4)](https://github.com/govpodi/max-mod-valmax/releases/latest)
+[![Лицензия MIT](https://img.shields.io/github/license/govpodi/max-mod-valmax)](LICENSE)
 
 <p align="center"><img src="docs/assets/settings-ru.png" alt="Настройки ValMAX; личные данные скрыты" width="1200"></p>
 <p align="center"><small>Настройки ValMAX. Имя, номер телефона и фотографии скрыты.</small></p>
