@@ -2,6 +2,7 @@
 #include "list_work_queue.h"
 #include "history_model_cursor.h"
 #include "transfer_launch.h"
+#include "window_activation.h"
 #include "../media/engine_context.h"
 #include "../media/composer_adapter.h"
 #if VALMAX_HAS_MEDIA_RUNTIME
@@ -10,6 +11,7 @@
 #include <QQmlEngine>
 #include <QQmlExtensionPlugin>
 #include <QJSEngine>
+#include <memory>
 #if VALMAX_HAS_RETENTION
 #include "retention_passive_host.h"
 #include <QCoreApplication>
@@ -24,6 +26,10 @@ class ValMAXNativePlugin final : public QQmlExtensionPlugin {
 public:
     void initializeEngine(QQmlEngine *engine, const char *) override
     {
+        // The ordinary launcher asks this process to restore its own QWindow.
+        // Win32 ShowWindowAsync leaves Qt's logical visible state stale after
+        // the tray hides the window, disabling chat-row admission.
+        if (!activationReceiver_) activationReceiver_ = std::make_unique<valmax::WindowActivationReceiver>();
 #if VALMAX_HAS_RETENTION
         // MAX account owners are constructed after the QML plugin loads. Pin
         // the passive listeners here, before any engine-owned Bridge exists.
@@ -72,6 +78,8 @@ public:
                 return new valmax::NativeBridge(engine);
             });
     }
+private:
+    std::unique_ptr<valmax::WindowActivationReceiver> activationReceiver_;
 };
 
 #include "plugin.moc"

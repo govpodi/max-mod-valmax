@@ -5,7 +5,9 @@
 #include <algorithm>
 
 namespace {
-bool owned(std::string value){std::replace(value.begin(),value.end(),'\\','/');return value.starts_with("D:/ValMAXBuild/fixtures/native-launcher/");}
+bool owned(std::string value){std::replace(value.begin(),value.end(),'\\','/');
+    return value.starts_with("D:/ValMAXBuild/fixtures/native-launcher/")
+        || value.starts_with("E:/ValMAXBuild/fixtures/native-launcher/");}
 std::string field(std::string_view input,std::string_view key){
     const std::string prefix="\""+std::string(key)+"\":\"";auto at=input.find(prefix);if(at==input.npos)return {};at+=prefix.size();
     std::string value;while(at<input.size()) {char c=input[at++];if(c=='"')return value;if(c=='\\'){if(at==input.size())return {};c=input[at++];if(c!='\\'&&c!='"')return {};}value.push_back(c);}return {};

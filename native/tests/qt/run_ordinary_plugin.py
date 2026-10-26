@@ -34,10 +34,16 @@ def main():
     parser.add_argument("--generator-proof",type=Path,required=True)
     parser.add_argument("--tls-build",type=Path,required=True)
     parser.add_argument("--report",type=Path,required=True)
+    parser.add_argument("--qt-runtime",type=Path,default=QT,
+                        help="Existing copied Qt runtime; defaults to the original owned probe runtime")
     parser.add_argument("--fixture-root",type=Path,default=Path("D:/ValMAXBuild/build"),
                         help="Existing owned C:/ValMAXBuild/build, D:/ValMAXBuild/build or E:/ValMAXBuild/build; default preserves the D fixture location")
     args=parser.parse_args()
     fixture_root=owned_fixture_root(args.fixture_root)
+    qt_runtime=args.qt_runtime
+    require(qt_runtime.is_absolute() and qt_runtime.is_dir()
+            and all((qt_runtime/name).is_dir() for name in ("plugins","qml"))
+            and (qt_runtime/"qt.conf").is_file(),"existing copied Qt runtime required")
     require(args.report.parent.resolve()==(ROOT/"analysis/native-migration-v1").resolve() and not args.report.exists(),"new proof required")
     build=json.loads(args.build_proof.read_text("utf8")); directory=Path(build["qtBuild"]); hooks=Path(build["hookBuild"])
     require(build.get("compiled") is True and build.get("exportHistoryHookBuilt") is False
@@ -56,11 +62,11 @@ def main():
     declaration=(ROOT/"native/qt/InlineMediaComposer.qml").read_text("utf8").replace("\r\n","\n")
     require(generated.read_text("utf8").count(declaration)==1,"generated composer declaration differs")
     fixture=fixture_root/("qt-ordinary-plugin-"+uuid.uuid4().hex); fixture.mkdir()
-    for source in QT.glob("*.dll"):
+    for source in qt_runtime.glob("*.dll"):
         if source.name.lower().startswith(("qt6","msvcp","vcruntime","concrt","api-ms-","ucrt")): shutil.copy2(source,fixture/source.name)
     for name in ("plugins","qml"):
-        shutil.copytree(QT/name,fixture/name,copy_function=shutil.copy2,ignore=lambda path,names:[name for name in names if name=="ValMAX"])
-    shutil.copy2(QT/"qt.conf",fixture/"qt.conf")
+        shutil.copytree(qt_runtime/name,fixture/name,copy_function=shutil.copy2,ignore=lambda path,names:[name for name in names if name=="ValMAX"])
+    shutil.copy2(qt_runtime/"qt.conf",fixture/"qt.conf")
     module=fixture/"qml/ValMAX/Native"
     shutil.copytree(directory/"qml/ValMAX/Native",module,copy_function=shutil.copy2)
     core=Path(build["coreInputs"])/"valmax_core.dll";shutil.copy2(core,fixture/core.name)
@@ -103,7 +109,7 @@ Item {
     tls=host.run(fixture,fixture/"valmax_tls_probe.exe",[],env,"tls")
     tls_path=fixture/"plugins/tls/qschannelbackend.dll"
     require(tls_path.is_file() and Path(tls["result"]["loadedSchannel"]).resolve()==tls_path.resolve(),"TLS backend outside bundled fixture")
-    require(sha(tls_path)==sha(QT/"plugins/tls/qschannelbackend.dll"),"TLS backend differs from copied runtime")
+    require(sha(tls_path)==sha(qt_runtime/"plugins/tls/qschannelbackend.dll"),"TLS backend differs from copied runtime")
     for name in executables[2:]:
         arguments=[fixture/(name+"-synthetic")] if name in ("valmax_ghost_host_test","valmax_notification_host_test") else []
         checks[name]=host.run(fixture,fixture/(name+".exe"),arguments,env,name)

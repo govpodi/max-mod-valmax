@@ -4,6 +4,21 @@
 #include <string>
 #include <string_view>
 #include <cstdint>
+#include "../../common/window_activation.h"
+
+LRESULT CALLBACK activation_window_proc(HWND window,UINT message,WPARAM wparam,LPARAM lparam){
+    static const UINT activation_message=RegisterWindowMessageW(valmax::activation::kMessageName);
+    if(activation_message && message==activation_message){
+        if(wparam==valmax::activation::kActivate){
+            ShowWindow(window,SW_SHOW);
+            return static_cast<LRESULT>(valmax::activation::kAck);
+        }
+        if(wparam==valmax::activation::kQueryVisible)
+            return IsWindowVisible(window)?static_cast<LRESULT>(valmax::activation::kAck):0;
+        return 0;
+    }
+    return DefWindowProcW(window,message,wparam,lparam);
+}
 
 std::wstring env(const wchar_t* key){
     std::array<wchar_t,32768> value{};const auto n=GetEnvironmentVariableW(key,value.data(),static_cast<DWORD>(value.size()));
@@ -17,7 +32,8 @@ std::wstring json_string(std::wstring_view value){
 int WINAPI wWinMain(HINSTANCE,HINSTANCE,PWSTR,int){
     SetErrorMode(0x8003);
     const auto report=env(L"VALMAX_LAUNCH_TEST_REPORT"),stop=env(L"VALMAX_LAUNCH_TEST_STOP");
-    if(!report.starts_with(L"D:\\ValMAXBuild\\fixtures\\native-launcher\\")||stop.empty())return 2;
+    if(!(report.starts_with(L"D:\\ValMAXBuild\\fixtures\\native-launcher\\")||
+         report.starts_with(L"E:\\ValMAXBuild\\fixtures\\native-launcher\\"))||stop.empty())return 2;
     const auto config=env(L"VALMAX_NATIVE_RUNTIME_CONFIG");
     const bool helper=std::wstring(GetCommandLineW()).find(L"valmax-transfer.exe")!=std::wstring::npos;
     const bool recovery=std::wstring(GetCommandLineW()).find(L"--recover")!=std::wstring::npos;
@@ -33,7 +49,7 @@ int WINAPI wWinMain(HINSTANCE,HINSTANCE,PWSTR,int){
     const bool cwd_ok=c&&m&&c<cwd.size()&&m<module.size()
         &&std::filesystem::path(std::wstring(module.data(),m)).parent_path()==std::filesystem::path(std::wstring(cwd.data(),c));
     const auto instance=GetModuleHandleW(nullptr);
-    WNDCLASSW wc{};wc.hInstance=instance;wc.lpszClassName=L"Qt6QWindowIcon";wc.lpfnWndProc=DefWindowProcW;
+    WNDCLASSW wc{};wc.hInstance=instance;wc.lpszClassName=L"Qt6QWindowIcon";wc.lpfnWndProc=activation_window_proc;
     if(!RegisterClassW(&wc))return 7;
     // A deliberately hidden own window exercises the tray-restoration path.
     const auto window=CreateWindowExW(0,wc.lpszClassName,L"ValMAX owned launcher fixture",WS_OVERLAPPEDWINDOW,

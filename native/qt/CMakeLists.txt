@@ -18,7 +18,8 @@ include("${CMAKE_CURRENT_SOURCE_DIR}/../media/composer_frontend.cmake")
 include("${CMAKE_CURRENT_SOURCE_DIR}/../media/composer_binding.cmake")
 include("${CMAKE_CURRENT_SOURCE_DIR}/../media/composer_adapter.cmake")
 
-add_library(valmaxnativeplugin MODULE native_bridge.cpp native_bridge.h list_work_queue.cpp list_work_queue.h plugin.cpp)
+add_library(valmaxnativeplugin MODULE native_bridge.cpp native_bridge.h list_work_queue.cpp list_work_queue.h
+    window_activation.cpp window_activation.h plugin.cpp)
 target_sources(valmaxnativeplugin PRIVATE history_model_cursor.cpp history_model_cursor.h)
 include(export_downloader.cmake)
 target_sources(valmaxnativeplugin PRIVATE transfer_launch.cpp transfer_launch.h)

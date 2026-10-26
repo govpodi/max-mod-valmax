@@ -1,4 +1,5 @@
 #include "activation.h"
+#include "../common/window_activation.h"
 #include <windows.h>
 #include <algorithm>
 #include <array>
@@ -80,24 +81,26 @@ ActivationOutcome scan(std::wstring_view expected,WindowApi &api,uint64_t deadli
     WindowInfo info;
     if(api.now_ms()>=deadline) return ActivationOutcome::Deadline;
     if(!checked(api,process,window,pid,expected,info)) return ActivationOutcome::ChangedIdentity;
-    if(info.iconic || !info.visible) {
-        if(!api.show(window,info.iconic?SW_RESTORE:SW_SHOW)) return ActivationOutcome::ShowFailed;
-        const auto now=api.now_ms();
-        const auto show_deadline=std::min(deadline,now>UINT64_MAX-kShowMs?UINT64_MAX:now+kShowMs);
-        bool shown=false;
-        for(uint32_t attempt=0;attempt<kShowAttempts;++attempt) {
-            if(!checked(api,process,window,pid,expected,info)) return ActivationOutcome::ChangedIdentity;
-            if(info.visible && !info.iconic) {shown=true;break;}
-            const auto at=api.now_ms();
-            if(at>=show_deadline) return ActivationOutcome::Deadline;
-            api.sleep_ms(static_cast<uint32_t>(std::min<uint64_t>(kRetryMs,show_deadline-at)));
-        }
-        if(!shown) return ActivationOutcome::Deadline;
+    // An earlier launcher may have made HWND visible while QWindow remained
+    // logically hidden. Always ask the in-process Qt window to activate, even
+    // when Win32 already reports a visible HWND.
+    if(!api.show(window,info.iconic?SW_RESTORE:SW_SHOW)) return ActivationOutcome::ShowFailed;
+    const auto now=api.now_ms();
+    const auto show_deadline=std::min(deadline,now>UINT64_MAX-kShowMs?UINT64_MAX:now+kShowMs);
+    bool shown=false;
+    for(uint32_t attempt=0;attempt<kShowAttempts;++attempt) {
+        if(!checked(api,process,window,pid,expected,info)) return ActivationOutcome::ChangedIdentity;
+        if(info.visible && !info.iconic && api.logical_visible(window)) {shown=true;break;}
+        const auto at=api.now_ms();
+        if(at>=show_deadline) return ActivationOutcome::Deadline;
+        api.sleep_ms(static_cast<uint32_t>(std::min<uint64_t>(kRetryMs,show_deadline-at)));
     }
+    if(!shown) return ActivationOutcome::Deadline;
     // Recheck immediately before foreground too: HWND/PID may have changed
     // during asynchronous restoration. There is no AttachThreadInput bypass.
     if(api.now_ms()>=deadline) return ActivationOutcome::Deadline;
-    if(!checked(api,process,window,pid,expected,info) || !info.visible || info.iconic)
+    if(!checked(api,process,window,pid,expected,info) || !info.visible || info.iconic
+        || !api.logical_visible(window))
         return ActivationOutcome::ChangedIdentity;
     result.foreground=api.foreground(window);
     result.shown=true;
@@ -195,7 +198,20 @@ bool Win32WindowApi::image(Process process,std::wstring &output) {
 }
 bool Win32WindowApi::alive(Process process) {return WaitForSingleObject(reinterpret_cast<HANDLE>(process),0)==WAIT_TIMEOUT;}
 void Win32WindowApi::close(Process process) noexcept {if(process) CloseHandle(reinterpret_cast<HANDLE>(process));}
-bool Win32WindowApi::show(Window window,int command) {return ShowWindowAsync(reinterpret_cast<HWND>(window),command)!=FALSE;}
+bool Win32WindowApi::show(Window window,int) {
+    static const UINT message=RegisterWindowMessageW(valmax::activation::kMessageName);
+    if(!message)return false;
+    DWORD_PTR response=0;
+    return SendMessageTimeoutW(reinterpret_cast<HWND>(window),message,valmax::activation::kActivate,0,
+        SMTO_ABORTIFHUNG|SMTO_BLOCK,250,&response)!=0 && response==valmax::activation::kAck;
+}
+bool Win32WindowApi::logical_visible(Window window) {
+    static const UINT message=RegisterWindowMessageW(valmax::activation::kMessageName);
+    if(!message)return false;
+    DWORD_PTR response=0;
+    return SendMessageTimeoutW(reinterpret_cast<HWND>(window),message,valmax::activation::kQueryVisible,0,
+        SMTO_ABORTIFHUNG|SMTO_BLOCK,100,&response)!=0 && response==valmax::activation::kAck;
+}
 bool Win32WindowApi::foreground(Window window) {return SetForegroundWindow(reinterpret_cast<HWND>(window))!=FALSE;}
 uint64_t Win32WindowApi::now_ms() {return GetTickCount64();}
 void Win32WindowApi::sleep_ms(uint32_t milliseconds) {Sleep(milliseconds);}

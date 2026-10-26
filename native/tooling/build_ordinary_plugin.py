@@ -65,7 +65,8 @@ def main():
              if path.is_file() and path.suffix in (".cpp",".h",".qml",".cmake")
              and not path.name.startswith("export_history")}
     sources.update(ROOT/name for name in ("native/qt/CMakeLists.txt","native/media/CMakeLists.txt","native/qt/export_history.cmake",
-                                        "native/qt/qmldir","native/core/valmax_core.h"))
+                                        "native/qt/qmldir","native/core/valmax_core.h",
+                                        "native/common/window_activation.h"))
     sources.update(ROOT/"native/tests/qt"/(name+".cpp") for name in
                    ("bridge_harness","all_features_harness","privacy_host_test","privacy_delivery_test","protection_delivery_test","ghost_host_test","notification_host_test"))
     sources.add(ROOT/"native/tests/qt/export_selection_host_test.cpp")

@@ -71,7 +71,9 @@ bool junction(const fs::path& link,const fs::path& target){
 int wmain(int argc,wchar_t** argv){
     try{
         check(argc==4||argc==5);const bool real_core=argc==5;const fs::path root(argv[1]),child(argv[2]),core(argv[3]);
-        check(root.is_absolute()&&root.lexically_normal()==root&&root.wstring().starts_with(L"D:\\ValMAXBuild\\fixtures\\native-launcher\\"));
+        check(root.is_absolute()&&root.lexically_normal()==root&&
+            (root.wstring().starts_with(L"D:\\ValMAXBuild\\fixtures\\native-launcher\\")||
+             root.wstring().starts_with(L"E:\\ValMAXBuild\\fixtures\\native-launcher\\")));
         check(!fs::exists(root));check(fs::create_directories(root));
         for(auto p=root;!p.empty();p=p.parent_path()){
             const auto attributes=GetFileAttributesW(p.c_str());check(attributes!=INVALID_FILE_ATTRIBUTES&&!(attributes&FILE_ATTRIBUTE_REPARSE_POINT));if(p==p.root_path())break;
@@ -82,7 +84,8 @@ int wmain(int argc,wchar_t** argv){
         if(real_core){
             const fs::path dependency(argv[4]);
             check(dependency.is_absolute()&&dependency.filename()==L"vcruntime140.dll"
-                &&dependency.wstring().starts_with(L"D:\\ValMAXBuild\\build\\"));
+                &&(dependency.wstring().starts_with(L"D:\\ValMAXBuild\\build\\")||
+                   dependency.wstring().starts_with(L"E:\\ValMAXBuild\\build\\")));
             fs::copy_file(dependency,mod/L"vcruntime140.dll");
         }
         const auto service_directory=mod/L"max-service";

@@ -26,7 +26,9 @@ public:
     virtual bool image(Process,std::wstring &)=0;
     virtual bool alive(Process)=0;
     virtual void close(Process) noexcept=0;
+    // The matching Qt process must restore its own logical QWindow state.
     virtual bool show(Window,int command)=0;
+    virtual bool logical_visible(Window)=0;
     virtual bool foreground(Window)=0;
     virtual uint64_t now_ms()=0;
     virtual void sleep_ms(uint32_t)=0;
@@ -40,6 +42,7 @@ public:
     bool alive(Process) override;
     void close(Process) noexcept override;
     bool show(Window,int) override;
+    bool logical_visible(Window) override;
     bool foreground(Window) override;
     uint64_t now_ms() override;
     void sleep_ms(uint32_t) override;

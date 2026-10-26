@@ -66,7 +66,8 @@ def main():
     sources.update(ROOT / name for name in ("native/core/valmax_core.h", "native/tooling/msvc_env.ps1",
         "native/transfer/closed_clients.cpp", "native/transfer/closed_clients.h",
         "native/transfer/closed_clients.cmake", "native/common/startup_context.cpp",
-        "native/common/startup_context.h", "native/common/startup_context.cmake"))
+        "native/common/startup_context.h", "native/common/startup_context.cmake",
+        "native/common/window_activation.h"))
     sources.add(Path(__file__).resolve())
     hashes = {path.relative_to(ROOT).as_posix(): sha(path) for path in sorted(sources)}
     commands = {

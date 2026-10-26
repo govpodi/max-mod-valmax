@@ -1,0 +1,8 @@
+cmake_minimum_required(VERSION 3.28)
+project(ValMAXRelaunchProbe LANGUAGES CXX)
+set(CMAKE_CXX_STANDARD 20)
+find_package(Qt6 6.11.2 EXACT REQUIRED COMPONENTS Core Gui Qml Quick)
+add_executable(valmax_relaunch_probe main.cpp ../../../qt/window_activation.cpp)
+target_link_libraries(valmax_relaunch_probe PRIVATE Qt6::Core Qt6::Gui Qt6::Qml Qt6::Quick user32)
+target_compile_definitions(valmax_relaunch_probe PRIVATE WIN32_LEAN_AND_MEAN NOMINMAX)
+target_compile_options(valmax_relaunch_probe PRIVATE /W4 /WX /permissive- /utf-8)

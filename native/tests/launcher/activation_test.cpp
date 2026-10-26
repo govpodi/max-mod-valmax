@@ -21,7 +21,8 @@ public:
     std::vector<Process> closed;
     std::vector<std::pair<Window,int>> shown;
     std::vector<Window> focused;
-    bool enum_ok=true,show_ok=true,apply_show=true,focus_ok=true,throw_image=false;
+    bool enum_ok=true,show_ok=true,apply_show=true,apply_logical=true,logical=true,
+        focus_ok=true,throw_image=false;
     unsigned info_calls=0,image_calls=0,alive_calls=0,enumerations=0;
     uint64_t time=0;
     std::function<void()> on_sleep;
@@ -43,8 +44,12 @@ public:
     bool alive(Process p) override {++alive_calls;if(on_alive)on_alive(alive_calls,p);return !dead.contains(static_cast<uint32_t>(p-10000));}
     void close(Process p) noexcept override {closed.push_back(p);}
     bool show(Window w,int command) override {
-        shown.emplace_back(w,command);if(show_ok && apply_show){items[w].visible=true;items[w].iconic=false;}return show_ok;
+        shown.emplace_back(w,command);
+        if(show_ok && apply_show){items[w].visible=true;items[w].iconic=false;}
+        if(show_ok && apply_logical)logical=true;
+        return show_ok;
     }
+    bool logical_visible(Window) override {return logical;}
     bool foreground(Window w) override {focused.push_back(w);return focus_ok;}
     uint64_t now_ms() override {return time;}
     void sleep_ms(uint32_t ms) override {time+=ms;if(on_sleep)on_sleep();}
@@ -80,7 +85,11 @@ void show_paths() {
     Fake hidden;hidden.items[101].visible=false;const auto h=activate_existing(expected,hidden);
     check(h.shown && h.foreground && hidden.shown==std::vector<std::pair<Window,int>>{{101,5}} && hidden.closed==std::vector<Process>{10071},"tray hidden shown and handle closed");
     Fake iconic;iconic.items[101].iconic=true;check(activate_existing(expected,iconic).shown && iconic.shown[0].second==9,"iconic restores");
-    Fake visible;check(activate_existing(expected,visible).shown && visible.shown.empty() && visible.focused.size()==1,"visible geometry untouched");
+    Fake visible;check(activate_existing(expected,visible).shown && visible.shown.size()==1 && visible.focused.size()==1,
+        "visible window also receives Qt activation");
+    Fake stale;stale.logical=false;
+    check(activate_existing(expected,stale).shown && stale.logical && stale.shown.size()==1,
+        "Win32-visible Qt-hidden window is recovered");
     Fake denied;denied.items[101].visible=false;denied.focus_ok=false;
     const auto d=activate_existing(expected,denied);check(d.shown && !d.foreground,"OS foreground refusal best effort");
     Fake mixed;mixed.items[101]=window(72);mixed.items[102]=window(71);mixed.items[102].visible=false;mixed.images[72]=L"C:/Official/max.exe";
@@ -115,6 +124,9 @@ void races_and_timeouts() {
     check(!activate_existing(expected,changed).shown && changed.focused.empty(),"ownership rechecked immediately before focus");
     Fake hung;hung.items[101].visible=false;hung.apply_show=false;
     check(!activate_existing(expected,hung).shown && hung.time<=2500 && hung.focused.empty() && hung.closed.size()==hung.opened.size(),"hung async restore bounded and handles closed");
+    Fake stale_hung;stale_hung.logical=false;stale_hung.apply_logical=false;
+    check(!activate_existing(expected,stale_hung).shown && stale_hung.focused.empty(),
+        "Win32 visibility alone cannot claim Qt restoration");
     Fake show_failure;show_failure.items[101].visible=false;show_failure.show_ok=false;
     check(!activate_existing(expected,show_failure).shown && show_failure.focused.empty(),"failed ShowWindowAsync never success");
     Fake delayed;delayed.items.clear();delayed.on_sleep=[&]{delayed.items[101]=window();delayed.items[101].visible=false;};
@@ -122,6 +134,10 @@ void races_and_timeouts() {
     Fake asynchronous;asynchronous.items[101].visible=false;asynchronous.apply_show=false;
     asynchronous.on_sleep=[&]{asynchronous.items[101].visible=true;};
     check(activate_existing(expected,asynchronous).shown && asynchronous.time==50,"asynchronous show confirmation polled");
+    Fake delayed_qt;delayed_qt.logical=false;delayed_qt.apply_logical=false;
+    delayed_qt.on_sleep=[&]{delayed_qt.logical=true;};
+    check(activate_existing(expected,delayed_qt).shown && delayed_qt.time==50,
+        "Qt logical visibility confirmation polled");
     Fake fixed;fixed.items.clear();fixed.on_sleep=[&]{fixed.time=0;};
     check(!activate_existing(expected,fixed).shown && fixed.enumerations==51,"scan attempts bound broken/frozen clock");
     Fake clock_wrap;clock_wrap.time=UINT64_MAX-100;
