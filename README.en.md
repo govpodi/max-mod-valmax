@@ -4,7 +4,7 @@
 
 ValMAX is an unofficial mod for MAX on Windows x64. Use multiple accounts, reply with saved messages, and open the business dashboard in one app. You can save available conversations together with photos, videos, and voice messages.
 
-**[Download ValMAX 8.9.0 for Windows](https://github.com/govpodi/max-mod-valmax/releases/tag/v8.9.0)** · [How to install](#installation) · [Features](#features) · [Help](#help) · [Русский](README.md)
+**[Download ValMAX 8.9.0 for Windows](https://github.com/govpodi/max-mod-valmax/releases/tag/v8.9.0)** · [ValMAX website](https://govpodi.github.io/max-mod-valmax/) · [How to install](#installation) · [Help](#help) · [Русский](README.md)
 
 [![Release](https://img.shields.io/github/v/release/govpodi/max-mod-valmax?label=release)](https://github.com/govpodi/max-mod-valmax/releases/latest)
 [![Windows x64](https://img.shields.io/badge/Windows-x64-0078D4)](https://github.com/govpodi/max-mod-valmax/releases/latest)

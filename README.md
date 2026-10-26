@@ -4,7 +4,7 @@
 
 ValMAX — неофициальный мод MAX (МАКС) для Windows x64. Пользуйтесь несколькими аккаунтами, отвечайте готовыми сообщениями и открывайте бизнес-кабинет в одной программе. Доступную переписку можно сохранить вместе с фото, видео и голосовыми сообщениями.
 
-**[Скачать ValMAX 8.9.0 для Windows](https://github.com/govpodi/max-mod-valmax/releases/tag/v8.9.0)** · [Как установить](#установка) · [Что умеет](#возможности) · [Помощь](#помощь) · [English](README.en.md)
+**[Скачать ValMAX 8.9.0 для Windows](https://github.com/govpodi/max-mod-valmax/releases/tag/v8.9.0)** · [Сайт ValMAX](https://govpodi.github.io/max-mod-valmax/) · [Как установить](#установка) · [Помощь](#помощь) · [English](README.en.md)
 
 [![Релиз](https://img.shields.io/github/v/release/govpodi/max-mod-valmax?label=release)](https://github.com/govpodi/max-mod-valmax/releases/latest)
 [![Windows x64](https://img.shields.io/badge/Windows-x64-0078D4)](https://github.com/govpodi/max-mod-valmax/releases/latest)
