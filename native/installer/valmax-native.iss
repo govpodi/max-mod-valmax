@@ -73,13 +73,27 @@
           #error Public stable core information must be pinned
         #endif
         #ifndef NativeStableCoreTested
-          #error Public stable core installed smoke must be pinned
+          #error Public stable core installed smoke status must be pinned
+        #endif
+        #ifndef NativeOwnerAccepted
+          #error Public stable core owner-acceptance status must be pinned
         #endif
         #ifndef NativeBetaUiChannelVerified
           #error Advanced-feature BETA UI channel must be pinned
         #endif
-        #if (NativeReleaseEligible != 1) || (NativeReleaseBlockerCount != 0) || (NativeStableCoreTested != 1) || (NativeBetaUiChannelVerified != 1)
-          #error A blocked, untested or BETA-label-free stable core cannot become a user installer
+        #if (NativeReleaseEligible != 1) || (NativeReleaseBlockerCount != 0) || (NativeBetaUiChannelVerified != 1)
+          #error A blocked or BETA-label-free stable core cannot become a user installer
+        #endif
+        #if ((NativeStableCoreTested != 0) && (NativeStableCoreTested != 1)) || ((NativeOwnerAccepted != 0) && (NativeOwnerAccepted != 1)) || (NativeStableCoreTested == NativeOwnerAccepted)
+          #error Stable core requires exactly one evidence basis: installed smoke or owner acceptance
+        #endif
+        #if NativeOwnerAccepted == 1
+          #ifndef NativeOwnerAcceptanceSha256
+            #error Owner-accepted stable core receipt must be pinned
+          #endif
+          #if NativeOwnerAcceptanceSha256 == ""
+            #error Owner-accepted stable core receipt hash cannot be empty
+          #endif
         #endif
         #if (NativeStableCoreVersion != ProductVersion) || (Pos("-", ProductVersion) != 0)
           #error The stable core product version must be plain x.y.z

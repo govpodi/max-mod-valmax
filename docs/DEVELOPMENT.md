@@ -1,6 +1,6 @@
-# Разработка ValMAX 8.9.0
+# Разработка ValMAX 8.9.1
 
-В `main` находятся исходники ValMAX 8.9.0. Готовый Windows x64 клиент распространяется через [GitHub Releases](https://github.com/govpodi/max-mod-valmax/releases/tag/v8.9.0): основной клиент выпущен как stable, а экспорт, удержание удалений и другие отдельно отмеченные возможности остаются BETA. Установленная программа работает на C++/Qt и Rust без отдельного Python и локального HTTP-сервера. Python остаётся в генераторах, упаковке и синтетических тестах; это инструменты разработки, а не часть установленного runtime.
+В `main` находятся исходники ValMAX 8.9.1. Готовый Windows x64 клиент распространяется через [GitHub Releases](https://github.com/govpodi/max-mod-valmax/releases/tag/v8.9.1): основной клиент выпущен как stable, а экспорт, удержание удалений и другие отдельно отмеченные возможности остаются BETA. Владелец проверил исправление повторного открытия на установленной preview.31 и принял 8.9.1; независимый полный прогон финального Setup 8.9.1 не повторялся. Установленная программа работает на C++/Qt и Rust без отдельного Python и локального HTTP-сервера. Python остаётся в генераторах, упаковке и синтетических тестах; это инструменты разработки, а не часть установленного runtime.
 
 ## Где находится текущий код
 
@@ -11,13 +11,13 @@
 | [`native/launcher/`](../native/launcher/) и [`native/transfer/`](../native/transfer/) | Нативный запуск и перенос собственных сессий. |
 | [`native/installer/`](../native/installer/) | Inno Setup и контракт управляемого обновления. |
 | [`native/tooling/`](../native/tooling/) и [`native/tests/`](../native/tests/) | Подготовка сборки и проверки; здесь допустим Python. |
-| [`modkit/`](../modkit/) | Исходные QML/трансформаторы, синтетические тесты и исторический Python-путь. `modkit/` не является entrypoint установленной 8.9.0. |
+| [`modkit/`](../modkit/) | Исходные QML/трансформаторы, синтетические тесты и исторический Python-путь. `modkit/` не является entrypoint установленной 8.9.1. |
 
 Диаграмма языков GitHub выделяет нативный клиент: Python-файлы прежней реализации, сборки и тестов исключены из неё через [`.gitattributes`](../.gitattributes), но остаются в репозитории и доступны для проверки. Некоторые инструменты в `modkit/` нужны нативной сборке.
 
 Пользовательская страница находится в [`site/`](../site/) и публикуется из `main` через [workflow GitHub Pages](../.github/workflows/pages.yml). При новом выпуске обновите номер версии и ссылки на Setup в странице, метаданных и README; проверьте опубликованный адрес и [`sitemap.xml`](../site/sitemap.xml). Страница не загружает внешние скрипты и не собирает аналитику.
 
-Текущий публичный пакет собирается в режиме `public-stable-core`; отдельные BETA-возможности и пределы проверки перечислены в [заметках 8.9.0](releases/v8.9.0.md). Режим полного `user-release` имеет более широкий набор требований. Сборка точного Setup из чистого checkout без закреплённого baseline MAX, Qt/MSVC/Rust, Inno Setup, материалов компонентов и установленного QA не воспроизводится одной командой.
+Текущий публичный пакет собирается в режиме `public-stable-core`; отдельные BETA-возможности и пределы проверки перечислены в [заметках 8.9.1](releases/v8.9.1.md). Режим полного `user-release` имеет более широкий набор требований. Сборка точного Setup из чистого checkout без закреплённого baseline MAX, Qt/MSVC/Rust, Inno Setup, материалов компонентов и квитанции принятия не воспроизводится одной командой.
 
 ## Проверки из чистого checkout
 
@@ -122,4 +122,4 @@ Source default manifest в `helper_command.py` привязан к `D:/CodexLabs
 
 ## English
 
-ValMAX 8.9.0 ships a stable native C++/Qt and Rust core; advanced features are marked BETA where their limits remain. Python is used for generators, packaging and synthetic tests, not the installed runtime. Source CI uses Python 3.13 and the pinned Rust toolchain on Windows; a separate job runs isolated MData tests. The collapsed `modkit/` commands above document the historical PyInstaller route. Rebuilding the exact native release requires a pinned MAX baseline, prepared toolchains, installed-client evidence and distribution materials; a clean checkout alone is not a release environment.
+ValMAX 8.9.1 ships a stable native C++/Qt and Rust core; advanced features are marked BETA where their limits remain. The owner tested the installed preview.31 and accepted the 8.9.1 fix; an independent full regression of the final 8.9.1 Setup was not repeated. Python is used for generators, packaging and synthetic tests, not the installed runtime. Source CI uses Python 3.13 and the pinned Rust toolchain on Windows; a separate job runs isolated MData tests. The collapsed `modkit/` commands above document the historical PyInstaller route. Rebuilding the exact native release requires a pinned MAX baseline, prepared toolchains, installed-client evidence and distribution materials; a clean checkout alone is not a release environment.
