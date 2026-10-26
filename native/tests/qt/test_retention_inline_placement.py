@@ -214,9 +214,14 @@ def check_generated(proof_path: Path) -> dict[str, str]:
         'objectName: "valmaxRetentionRangePreviousBefore"',
         'objectName: "valmaxRetentionRangePreviousAfter"',
         "onClicked: valmaxRetentionRange.scanVisible(true)",
+        'objectName: "valmaxRetentionApproximateBubbles"',
+        'objectName: "valmaxRetentionEmptyChatBubbles"',
+        'active: valmaxHistoryRow.index === listView.count - 1 &&',
     )
     if any(part not in source for part in required):
         raise AssertionError("generated inline wrapper structure changed")
+    if 'valmaxRetentionInlineFooter' in source or 'Сохранённые удаления ·' in source:
+        raise AssertionError("separate saved-deletions section remained")
     if source.count("HistoryMessageDelegate {") != 1 or "delegate: HistoryMessageDelegate {" in source:
         raise AssertionError("stock HistoryMessageDelegate ownership changed")
     return {"generatedHistoryListViewSha256": digest(history),

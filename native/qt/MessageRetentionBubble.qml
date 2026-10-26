@@ -16,6 +16,7 @@ Item {
     property bool afterEnd: false
     property bool beforeStart: false
     property bool tieUnknown: false
+    property bool approximatePlacement: false
     property bool expanded: false
 
     width: parent ? parent.width : 0
@@ -31,8 +32,11 @@ Item {
             objectName: "valmaxRetainedInlinePlacementLabel"
             x: 16
             width: Math.max(0, layout.width - 32)
-            visible: retained.beforeStart || retained.crossDay || retained.dayUnknown || retained.afterEnd
-            text: retained.beforeStart ? "До первого доступного сообщения" + (retained.dayUnknown ? " · дата не подтверждена" : "")
+            visible: retained.approximatePlacement || retained.beforeStart || retained.crossDay || retained.dayUnknown || retained.afterEnd
+            text: retained.approximatePlacement
+                 ? "Положение в истории приблизительное" +
+                   (retained.messageTimeMs < 0 ? " · дата сообщения не подтверждена" : "")
+                 : retained.beforeStart ? "До первого доступного сообщения" + (retained.dayUnknown ? " · дата не подтверждена" : "")
                  : retained.crossDay ? "Между датами"
                  : retained.afterEnd ? "После последнего доступного сообщения" + (retained.dayUnknown ? " · дата не подтверждена" : "")
                  : "Дата сообщения не подтверждена"

@@ -1,9 +1,9 @@
-// Selected-chat retained text in the native history ListView footer.
+// Approximate retained bubbles inside the selected chat's native history row.
 // This component never changes the client's history model or its indices.
 import QtQuick
 import QtQuick.Controls
-import UiKitModule as UiKit
 import ValMAX.Native 1.0 as Native
+import "." as ValMAX
 
 Item {
     id: inline
@@ -30,10 +30,17 @@ Item {
     property bool failed: false
 
     width: parent ? parent.width : 0
-    implicitHeight: content.visible ? content.implicitHeight + 10 : 0
+    implicitHeight: content.visible ? content.implicitHeight : 0
     height: implicitHeight
-    SystemPalette { id: colors }
     ListModel { id: savedRows }
+
+    function verifiedMessageTimeMs(key) {
+        if (typeof key !== "string" || !/^[1-9][0-9]*$/.test(key)) return -1;
+        const millis = Number(key);
+        if (!Number.isSafeInteger(millis) || millis < 946684800000
+                || millis >= 4102444800000) return -1;
+        return new Date(millis).getTime() === millis ? millis : -1;
+    }
 
     function validReply(value, requestedAccount, requestedChat) {
         if (!value || typeof value !== "object" || Array.isArray(value)
@@ -64,7 +71,8 @@ Item {
             const old = savedRows.get(index), row = items[index];
             if (old.messageId !== row.messageId || old.text !== row.text
                     || old.receivedAtMs !== row.receivedAtMs
-                    || old.deletedAtMs !== row.deletedAtMs) return false;
+                    || old.deletedAtMs !== row.deletedAtMs
+                    || old.messageTimeMs !== verifiedMessageTimeMs(row.orderKey)) return false;
         }
         return true;
     }
@@ -128,7 +136,7 @@ Item {
                     for (const row of embeddedOrderedRows)
                         if (row && typeof row.messageId === "string")
                             embeddedIds[row.messageId] = true;
-                const footerRows = value.items.filter(function(row) {
+                const approximateRows = value.items.filter(function(row) {
                     return !embeddedIds[row.messageId];
                 });
                 if (cursor !== null && revision.length && revision !== value.revision) {
@@ -138,7 +146,7 @@ Item {
                 // that would collapse expanded text and move the user's scroll.
                 if ((direction === "refresh" || direction === "resume")
                         && currentCursor === cursor
-                        && nextCursor === value.nextCursor && sameRows(footerRows)) {
+                        && nextCursor === value.nextCursor && sameRows(approximateRows)) {
                     revision = value.revision; failed = false; staleRestarts = 0;
                     return;
                 }
@@ -151,9 +159,10 @@ Item {
                 }
                 revision = value.revision; nextCursor = value.nextCursor;
                 savedRows.clear();
-                for (const row of footerRows) savedRows.append({
+                for (const row of approximateRows) savedRows.append({
                     messageId: row.messageId, text: row.text,
-                    receivedAtMs: row.receivedAtMs, deletedAtMs: row.deletedAtMs
+                    receivedAtMs: row.receivedAtMs, deletedAtMs: row.deletedAtMs,
+                    messageTimeMs: verifiedMessageTimeMs(row.orderKey)
                 });
                 failed = false;
                 if (cursor === null) staleRestarts = 0;
@@ -198,7 +207,11 @@ Item {
         id: refreshTimer
         interval: 5000; repeat: true
         running: inline.completed && inline.active && inline.backendReady
-        onTriggered: if (inline.currentCursor === null && !inline.pendingRequest) inline.requestPage(null, "refresh")
+        onTriggered: {
+            if (inline.pendingRequest) return;
+            if (inline.failed) inline.refresh();
+            else if (inline.currentCursor === null) inline.requestPage(null, "refresh");
+        }
     }
     Timer {
         id: requestWatchdog
@@ -213,149 +226,41 @@ Item {
         id: content
         objectName: "valmaxRetentionInlineContent"
         width: inline.width
-        spacing: 8
-        // An empty page may still have a cursor when marker-only rows are skipped.
+        spacing: 4
+        // Marker-only pages can still expose the next local page.
         visible: savedRows.count > 0 || inline.nextCursor !== null
-                 || inline.previousCursors.length > 0 || inline.failed
+                 || inline.previousCursors.length > 0
 
-        Text {
-            objectName: "valmaxRetentionInlineCaption"
-            x: 16; width: Math.max(0, content.width - 32)
-            text: "Сохранённые удаления · положение в истории приблизительное"
-            color: colors.windowText
-            font.pixelSize: 12
-            wrapMode: Text.WrapAtWordBoundaryOrAnywhere
-            textFormat: Text.PlainText
-        }
         Repeater {
             model: savedRows
-            delegate: Item {
-                id: retainedRow
-                objectName: "valmaxRetainedInlineBubbleRow"
-                required property string messageId
-                required property string text
-                required property double receivedAtMs
-                required property double deletedAtMs
-                property bool expanded: false
+            delegate: ValMAX.MessageRetentionBubble {
+                required property var model
                 width: content.width
-                height: bubble.height
-
-                Rectangle {
-                    id: bubble
-                    objectName: "valmaxRetainedInlineBubble"
-                    x: 16
-                    width: Math.max(0, Math.min(480, retainedRow.width - 32))
-                    height: bubbleContent.implicitHeight + 16
-                    radius: 14
-                    color: inline.chatAppearance
-                        ? inline.chatAppearance.colorBubblesIncomingBackgroundSurfaceSecondary : colors.base
-                    border.color: inline.chatAppearance
-                        ? inline.chatAppearance.colorBubblesIncomingStrokeNeutralSecondary : colors.mid
-                    Column {
-                        id: bubbleContent
-                        x: 10; y: 8
-                        width: Math.max(0, bubble.width - 20)
-                        spacing: 5
-                        Row {
-                            width: bubbleContent.width
-                            height: 20; spacing: 5
-                            Rectangle {
-                                width: 20; height: 20; radius: 10
-                                color: inline.chatAppearance
-                                    ? inline.chatAppearance.colorBubblesIncomingBackgroundSurfaceSecondary : colors.base
-                                UiKit.SvgIcon {
-                                    objectName: "valmaxRetainedInlineTrashIcon"
-                                    anchors.centerIn: parent
-                                    width: 12; height: 12
-                                    enabled: false
-                                    imageWidth: 12; imageHeight: 12
-                                    source: "qrc:/icon_pack/delete_fill.svg"
-                                    fillColor: inline.chatAppearance
-                                        ? inline.chatAppearance.colorBubblesIncomingTextBodySecondary : colors.windowText
-                                }
-                            }
-                            Text {
-                                objectName: "valmaxRetainedInlineDeletedAt"
-                                anchors.verticalCenter: parent.verticalCenter
-                                width: Math.max(0, parent.width - 25)
-                                text: "Удалено " + new Date(retainedRow.deletedAtMs).toLocaleString()
-                                color: inline.chatAppearance
-                                    ? inline.chatAppearance.colorBubblesIncomingTextBodySecondary : colors.windowText
-                                font.pixelSize: 11
-                                elide: Text.ElideRight
-                                wrapMode: Text.NoWrap
-                                textFormat: Text.PlainText
-                            }
-                        }
-                        Flickable {
-                            id: bodyScroll
-                            objectName: "valmaxRetainedInlineBodyScroll"
-                            width: bubbleContent.width
-                            height: Math.min(420, bodyText.implicitHeight)
-                            contentWidth: width
-                            contentHeight: bodyText.implicitHeight
-                            flickableDirection: Flickable.VerticalFlick
-                            boundsBehavior: Flickable.StopAtBounds
-                            interactive: contentHeight > height
-                            clip: true
-                            Text {
-                                id: bodyText
-                                objectName: "valmaxRetainedInlineText"
-                                width: bodyScroll.width
-                                text: retainedRow.expanded || retainedRow.text.length <= 700
-                                    ? retainedRow.text : retainedRow.text.slice(0, 700) + "…"
-                                color: inline.chatAppearance
-                                    ? inline.chatAppearance.colorBubblesIncomingTextBody : colors.windowText
-                                font.pixelSize: 14
-                                wrapMode: Text.WrapAtWordBoundaryOrAnywhere
-                                textFormat: Text.PlainText
-                            }
-                        }
-                        Button {
-                            visible: retainedRow.text.length > 700
-                            text: retainedRow.expanded ? "Свернуть" : "Показать полностью"
-                            onClicked: retainedRow.expanded = !retainedRow.expanded
-                        }
-                    }
-                }
+                messageId: model.messageId
+                messageText: model.text
+                deletedAtMs: model.deletedAtMs
+                messageTimeMs: model.messageTimeMs
+                approximatePlacement: true
+                chatAppearance: inline.chatAppearance
             }
         }
-        Text {
-            x: 16; width: Math.max(0, content.width - 32)
-            visible: savedRows.count === 0 && !inline.failed
-            text: "На этой странице нет доступных записей. Нажми «Ещё»."
-            color: colors.windowText
-            wrapMode: Text.WrapAtWordBoundaryOrAnywhere
-            textFormat: Text.PlainText
-        }
-        Text {
-            x: 16; width: Math.max(0, content.width - 32)
-            visible: inline.failed
-            text: "Не удалось прочитать локальные удаления. Нажми «Обновить»."
-            color: colors.windowText
-            wrapMode: Text.WrapAtWordBoundaryOrAnywhere
-            textFormat: Text.PlainText
-        }
+        // Pagination stays in the chat flow and only appears when needed.
         Row {
             x: 16; spacing: 8
-            visible: inline.previousCursors.length > 0 || inline.nextCursor !== null || inline.failed
+            visible: inline.previousCursors.length > 0 || inline.nextCursor !== null
             Button {
                 objectName: "valmaxRetentionInlinePrevious"
+                visible: inline.previousCursors.length > 0
                 text: "Назад"
-                enabled: !inline.pendingRequest && inline.previousCursors.length > 0
+                enabled: !inline.pendingRequest
                 onClicked: inline.previousPage()
             }
             Button {
                 objectName: "valmaxRetentionInlineNext"
-                text: "Ещё"
-                enabled: !inline.pendingRequest && inline.nextCursor !== null
-                onClicked: inline.nextPage()
-            }
-            Button {
-                objectName: "valmaxRetentionInlineRefresh"
-                text: "Обновить"
+                visible: inline.nextCursor !== null
+                text: "Показать ещё"
                 enabled: !inline.pendingRequest
-                onClicked: inline.refresh()
+                onClicked: inline.nextPage()
             }
         }
     }

@@ -505,19 +505,20 @@ def native_retention_history(source: str) -> str:
 '''
     if source.count(footer_anchor) != 1 or 'valmaxRetentionInlineLoader' in source:
         raise ValueError("Native retention history footer anchor changed")
-    footer = '''            // Retained text stays in this ListView's own scroll and leaves its
-            // model/delegate indices untouched. The original bottom spacer remains.
+    footer = '''            // A chat with no native rows still shows its retained bubbles in
+            // the history ListView. Other approximate bubbles attach to the
+            // last native history delegate instead of a separate section.
             footer: Item {
-                objectName: "valmaxRetentionInlineFooter"
                 width: listView.width
-                height: valmaxRetentionInlineLoader.height +
+                height: valmaxRetentionEmptyLoader.height +
                         (bottomLoader.visible ? bottomLoader.height : root.chatBottomPadding)
                 Loader {
-                    id: valmaxRetentionInlineLoader
-                    objectName: "valmaxRetentionInlineLoader"
+                    id: valmaxRetentionEmptyLoader
+                    objectName: "valmaxRetentionEmptyChatBubbles"
                     width: parent.width
                     height: item ? item.implicitHeight : 0
-                    active: valmaxRetentionLoader.item !== null &&
+                    active: listView.count === 0 &&
+                            valmaxRetentionLoader.item !== null &&
                             valmaxRetentionLoader.item.nativeLookupAvailable
                     source: "qrc:/valmax/MessageRetentionInline.qml"
                     onLoaded: {
@@ -747,6 +748,36 @@ def native_retention_ghost_columns() -> str:
                         text: "Повторить чтение сохранённых сообщений"
                         onClicked: valmaxRetentionRange.scanVisible(true)
                         onVisibleChanged: valmaxGhostAfter.forceLayout()
+                    }
+                    Loader {
+                        id: valmaxRetentionTailLoader
+                        objectName: "valmaxRetentionApproximateBubbles"
+                        width: valmaxGhostAfter.width
+                        height: item ? item.implicitHeight : 0
+                        active: valmaxHistoryRow.index === listView.count - 1 &&
+                                valmaxRetentionLoader.item !== null &&
+                                valmaxRetentionLoader.item.nativeLookupAvailable
+                        source: "qrc:/valmax/MessageRetentionInline.qml"
+                        onLoaded: {
+                            item.accountId = Qt.binding(function() {
+                                return valmaxRetentionLoader.item ? valmaxRetentionLoader.item.accountId : "";
+                            });
+                            item.chatId = Qt.binding(function() {
+                                return valmaxRetentionLoader.item ? valmaxRetentionLoader.item.chatId : "";
+                            });
+                            item.chatAppearance = Qt.binding(function() { return root.chatAppearance; });
+                            item.nativeRowCount = Qt.binding(function() { return listView.count; });
+                            item.orderedFallback = Qt.binding(function() {
+                                return valmaxRetentionRange.fallbackToFooter;
+                            });
+                            item.embeddedOrderedRows = Qt.binding(function() {
+                                return valmaxRetentionRange.cachedRows;
+                            });
+                            item.active = Qt.binding(function() {
+                                return valmaxRetentionLoader.item ? valmaxRetentionLoader.item.active : false;
+                            });
+                        }
+                        onHeightChanged: valmaxGhostAfter.forceLayout()
                     }
                     Component.onCompleted: forceLayout()
                 }

@@ -1,7 +1,7 @@
-"""Render the inline retention component in an owned synthetic Qt ListView.
+"""Render approximate retained bubbles in an owned synthetic Qt ListView.
 
 The fixture uses the real QML transport with a fake Bridge. It never starts
-MAX, reads a user profile, or treats its footer as an original message place.
+MAX, reads a user profile, or claims an unverified original message place.
 """
 from __future__ import annotations
 
@@ -24,6 +24,7 @@ from PySide6.QtQml import QQmlComponent, QQmlEngine
 ROOT = Path(__file__).resolve().parents[3]
 HARNESS = ROOT / "native/tests/qt/retention_inline.qml"
 INLINE = ROOT / "native/qt/MessageRetentionInline.qml"
+BUBBLE = ROOT / "native/qt/MessageRetentionBubble.qml"
 TRANSPORT = ROOT / "native/qt/RetentionTransport.qml"
 
 FAKE_BRIDGE = """pragma Singleton
@@ -72,6 +73,7 @@ def main() -> None:
         fixture = Path(folder)
         shutil.copy2(HARNESS, fixture / HARNESS.name)
         shutil.copy2(INLINE, fixture / INLINE.name)
+        shutil.copy2(BUBBLE, fixture / BUBBLE.name)
         module = fixture / "qml/ValMAX/Native"
         module.mkdir(parents=True)
         (module / "qmldir").write_text(
@@ -125,12 +127,13 @@ def main() -> None:
     result = {
         "schema": 1, "verified": True, "checks": checks,
         "sourceHashes": {str(path.relative_to(ROOT)): digest(path)
-                         for path in (HARNESS, INLINE, TRANSPORT)},
+                         for path in (HARNESS, INLINE, BUBBLE, TRANSPORT)},
         "syntheticOnly": True, "realClientStarted": False,
         "realProfilesRead": False, "networkUsed": False,
-        "footerIsApproximateSection": True,
+        "approximateBubblesInNativeHistory": True,
+        "separateSavedDeletionsSection": False,
         "originalMessagePositionProven": False,
-        "scope": "Real inline QML and transport in one offscreen ListView with fake Bridge and fake SvgIcon stub; bounded layout, plain text, paging, scope abort, unchanged refresh, ordered fallback, duplicate suppression and recovery",
+        "scope": "Real inline QML and shared trash bubble in one offscreen ListView with fake Bridge and fake SvgIcon stub; bounded layout, plain text, paging beyond 20 rows, scope abort, unchanged refresh, ordered fallback, duplicate suppression and recovery",
     }
     args.report.parent.mkdir(parents=True, exist_ok=True)
     args.report.write_text(json.dumps(result, ensure_ascii=False, indent=2) + "\n", "utf8")

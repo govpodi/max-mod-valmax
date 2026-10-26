@@ -47,9 +47,9 @@ Item {
     property int pagingAnchorIndex: -1
     property bool pagingBefore: false
     property bool fallbackLatched: false
-    // If original-order placement cannot be read, the chat footer can still
-    // reach every retained row through the same bounded local page API. Keep
-    // fallback visible during a retry until a valid range reply is accepted.
+    // If original-order placement cannot be read, approximate chat bubbles
+    // can still reach retained rows through the same bounded local page API.
+    // Keep that path active during a retry until a valid range reply is accepted.
     readonly property bool fallbackToFooter: completed && active && backendReady &&
         (fallbackLatched || currentBounds === null && invalidRetries >= 3 || failed)
     width: 0; height: 0; visible: false

@@ -135,8 +135,9 @@ def main():
     assert inline_resource in native["extraResourceHashes"]
     inline = (scratch / "native/icons/inputs/valmax/MessageRetentionInline.qml").read_text(encoding="utf8")
     assert 'RetentionTransport.createRequest("inline")' in inline
-    assert 'textFormat: Text.PlainText' in inline
-    assert 'source: "qrc:/icon_pack/delete_fill.svg"' in inline
+    assert 'delegate: ValMAX.MessageRetentionBubble {' in inline
+    assert 'approximatePlacement: true' in inline
+    assert 'valmaxRetentionInlineCaption' not in inline
     for resource in (build_native_qml.RETENTION_RANGE_RESOURCE,
                      build_native_qml.RETENTION_BUBBLE_RESOURCE):
         assert resource not in legacy["extraResourceHashes"]
@@ -153,9 +154,15 @@ def main():
     assert native_sources[":/qt/qml/OneMeUi/HistoryListView.qml"].decode().count(
         'messageTimeMs: modelData.messageTimeMs') == 2
     assert 'textFormat: Text.PlainText' in bubble_qml
+    assert 'source: "qrc:/icon_pack/delete_fill.svg"' in bubble_qml
+    assert 'property bool approximatePlacement: false' in bubble_qml
     history = native_sources[":/qt/qml/OneMeUi/HistoryListView.qml"].decode()
-    assert 'objectName: "valmaxRetentionInlineFooter"' in history
-    assert 'source: "qrc:/valmax/MessageRetentionInline.qml"' in history
+    assert 'objectName: "valmaxRetentionInlineFooter"' not in history
+    assert 'objectName: "valmaxRetentionApproximateBubbles"' in history
+    assert 'objectName: "valmaxRetentionEmptyChatBubbles"' in history
+    assert history.count('source: "qrc:/valmax/MessageRetentionInline.qml"') == 2
+    assert 'active: valmaxHistoryRow.index === listView.count - 1 &&' in history
+    assert 'active: listView.count === 0 &&' in history
     assert "return valmaxRetentionRange.fallbackToFooter;" in history
     assert "return valmaxRetentionRange.cachedRows;" in history
     assert 'objectName: "valmaxRetentionHistoryRow"' in history
@@ -171,7 +178,7 @@ def main():
         assert 'objectName: "valmaxRetentionRange' + name + '"' in history
     assert 'property real valmaxLargestDelegate: 500' in history
     assert 'DelegateModelGroup' not in history
-    assert 'height: valmaxRetentionInlineLoader.height +' in history
+    assert 'height: valmaxRetentionEmptyLoader.height +' in history
     assert '(bottomLoader.visible ? bottomLoader.height : root.chatBottomPadding)' in history
     assert "valmaxRetentionArchive" not in history
     assert "Открыть архив сохранённых сообщений" not in history

@@ -22,7 +22,7 @@ Item {
     property real originalHeight: 0
     readonly property string longText: "<b>literal</b> " + "x".repeat(1500)
     property var retained: null
-    property var footerRef: null
+    property var hostRef: null
     property bool orderedFallback: false
     property var embeddedOrderedRows: []
 
@@ -38,23 +38,21 @@ Item {
         objectName: "retentionInlineTestHistoryListView"
         width: proof.width; height: proof.height
         model: ListModel { ListElement { title: "ordinary row" } }
-        delegate: Rectangle {
+        delegate: Item {
+            id: nativeRow
             objectName: "retentionInlineTestOrdinaryRow"
-            width: listView.width; height: 40
-            color: "#fff"
-        }
-        footer: Item {
-            id: footer
-            objectName: "retentionInlineTestFooter"
+            required property int index
             width: listView.width
-            height: retainedLoader.height + 24
-            Component.onCompleted: proof.footerRef = footer
+            height: 40 + retainedLoader.height
+            Component.onCompleted: proof.hostRef = nativeRow
+            Rectangle { width: parent.width; height: 40; color: "#fff" }
             Loader {
                 id: retainedLoader
                 objectName: "retentionInlineTestLoader"
+                y: 40
                 width: parent.width
                 height: item ? item.implicitHeight : 0
-                active: listView.count === 1
+                active: nativeRow.index === listView.count - 1
                 source: "MessageRetentionInline.qml"
                 onLoaded: {
                     proof.retained = item;
@@ -68,6 +66,7 @@ Item {
                 }
             }
         }
+        footer: Item { height: 24 }
     }
     function check(value, label) {
         checks += 1;
@@ -136,8 +135,8 @@ Item {
                                 && first.value.cursor === null && first.value.limit === 20
                                 && first.value.legacyOnly === true,
                                 "selected legacy-only scope and page limit");
-                    proof.check(listView.count === 1 && proof.footerRef.parent !== null,
-                                "stock list model and footer retained");
+                    proof.check(listView.count === 1 && proof.hostRef.parent !== null,
+                                "stock list model and native row retained");
                     proof.success(0, proof.originalPage());
                     proof.step = 1; return;
                 }
@@ -149,9 +148,14 @@ Item {
                     const text = proof.findNamed(proof.retained, "valmaxRetainedInlineText");
                     const body = proof.findNamed(proof.retained, "valmaxRetainedInlineBodyScroll");
                     const stamp = proof.findNamed(proof.retained, "valmaxRetainedInlineDeletedAt");
-                    proof.check(row && bubble && icon && text && body && stamp,
+                    const placement = proof.findNamed(proof.retained, "valmaxRetainedInlinePlacementLabel");
+                    proof.check(row && bubble && icon && text && body && stamp && placement,
                                 "rendered bubble and trash icon objects");
                     proof.check(row.messageId === "9223372036854775807", "64-bit ID remains a string");
+                    proof.check(row.approximatePlacement && placement.visible
+                                && placement.text.indexOf("Положение в истории приблизительное") === 0
+                                && placement.text.indexOf("дата сообщения не подтверждена") > 0,
+                                "unplaced bubble states approximate position and unverified date");
                     proof.check(icon.source.toString() === "qrc:/icon_pack/delete_fill.svg",
                                 "client trash icon URL");
                     proof.check(text.textFormat === Text.PlainText && text.text.indexOf("<b>literal</b>") === 0,
@@ -163,12 +167,12 @@ Item {
                     proof.check(body.height <= 420 && bubble.height < 560
                                 && stamp.width <= bubble.width - 20,
                                 "long body and deletion time fit the bubble");
-                    proof.check(proof.footerRef.height === proof.retained.implicitHeight + 24
-                                && listView.contentHeight >= proof.footerRef.height,
-                                "bubble is part of the same ListView scroll");
+                    proof.check(proof.hostRef.height === 40 + proof.retained.implicitHeight
+                                && listView.contentHeight >= proof.hostRef.height,
+                                "bubble is inside the native history row");
                     row.expanded = true;
                     proof.originalRow = row;
-                    proof.originalHeight = proof.footerRef.height;
+                    proof.originalHeight = proof.hostRef.height;
                     proof.retained.requestPage(null, "refresh");
                     proof.step = 2; return;
                 }
@@ -176,10 +180,10 @@ Item {
                     if (!proof.hasRequest(2)) return;
                     proof.success(1, proof.originalPage());
                     proof.check(proof.findNamed(proof.retained, "valmaxRetainedInlineBubbleRow") === proof.originalRow
-                                && proof.originalRow.expanded && proof.footerRef.height === proof.originalHeight,
+                                && proof.originalRow.expanded && proof.hostRef.height === proof.originalHeight,
                                 "unchanged refresh preserves row and height");
                     proof.viewerActive = false;
-                    proof.check(proof.retained.displayedCount === 1 && proof.footerRef.height === proof.originalHeight,
+                    proof.check(proof.retained.displayedCount === 1 && proof.hostRef.height === proof.originalHeight,
                                 "inactive window keeps inline scroll geometry");
                     proof.viewerActive = true;
                     proof.step = 3; return;
@@ -188,7 +192,7 @@ Item {
                     if (!proof.hasRequest(3)) return;
                     proof.success(2, proof.originalPage());
                     proof.check(proof.findNamed(proof.retained, "valmaxRetainedInlineBubbleRow") === proof.originalRow
-                                && proof.originalRow.expanded && proof.footerRef.height === proof.originalHeight,
+                                && proof.originalRow.expanded && proof.hostRef.height === proof.originalHeight,
                                 "restore with same data preserves expanded bubble");
                     proof.retained.requestPage(null, "refresh");
                     proof.step = 4; return;
@@ -198,6 +202,8 @@ Item {
                     proof.chat = "22";
                     proof.check(proof.retained.displayedCount === 0 && proof.retained.implicitHeight === 0,
                                 "chat switch clears previous text immediately");
+                    proof.check(proof.findNamed(proof.retained, "valmaxRetainedInlineBubbleRow") === null,
+                                "old-chat bubble removed from native row");
                     proof.success(3, proof.originalPage());
                     proof.check(proof.retained.displayedCount === 0,
                                 "late prior-chat reply is discarded");
@@ -209,7 +215,8 @@ Item {
                     proof.check(scoped.value.accountId === "11" && scoped.value.chatId === "22",
                                 "next request uses selected chat");
                     proof.success(4, proof.reply("11", "22", [], "skip", "b".repeat(64)));
-                    proof.check(proof.retained.displayedCount === 0 && proof.retained.implicitHeight > 0,
+                    proof.check(proof.retained.displayedCount === 0
+                                && proof.retained.nextCursor === "skip",
                                 "empty marker-only page still exposes next cursor");
                     proof.retained.nextPage();
                     proof.step = 6; return;
@@ -258,6 +265,8 @@ Item {
                     proof.account = "99";
                     proof.check(proof.retained.displayedCount === 0 && proof.retained.implicitHeight === 0,
                                 "account switch clears old account bubble immediately");
+                    proof.check(proof.findNamed(proof.retained, "valmaxRetainedInlineBubbleRow") === null,
+                                "old-account bubble removed from native row");
                     proof.success(9, proof.reply("11", "22", [{
                         messageId: "23", orderKey: null, sentAtMs: null,
                         receivedAtMs: 1720000000023, deletedAtMs: 1720000001023,
@@ -279,7 +288,7 @@ Item {
                     }], null, "d".repeat(64)));
                     const row = proof.findNamed(proof.retained, "valmaxRetainedInlineBubbleRow");
                     proof.check(proof.retained.displayedCount === 1 && row.messageId === "24"
-                                && row.text === "new account synthetic text",
+                                && row.messageText === "new account synthetic text",
                                 "only new account bubble shown");
                     proof.embeddedOrderedRows = [{messageId: "25"}];
                     proof.orderedFallback = true;
@@ -294,7 +303,7 @@ Item {
                     proof.success(11, proof.reply("99", "22", proof.mixedRows(), null, "e".repeat(64)));
                     const row = proof.findNamed(proof.retained, "valmaxRetainedInlineBubbleRow");
                     proof.check(proof.retained.displayedCount === 1 && row.messageId === "24",
-                                "already embedded ordered row has no footer duplicate");
+                                "already embedded ordered row has no duplicate");
                     proof.embeddedOrderedRows = [];
                     proof.step = 13; return;
                 }
@@ -304,18 +313,54 @@ Item {
                                 "fallback stays all-rows after range cache changes");
                     proof.success(12, proof.reply("99", "22", proof.mixedRows(), null, "e".repeat(64)));
                     proof.check(proof.retained.displayedCount === 2,
-                                "unplaced ordered row appears in chat footer");
+                                "unplaced ordered row appears as an approximate chat bubble");
                     proof.orderedFallback = false;
                     proof.step = 14; return;
                 }
                 if (proof.step === 14) {
                     if (!proof.hasRequest(14)) return;
                     proof.check(proof.request(13).value.value.legacyOnly === true,
-                                "recovered range returns footer to legacy only");
+                                "recovered range returns approximate bubbles to legacy only");
                     proof.success(13, proof.reply("99", "22", [proof.mixedRows()[1]],
                                                        null, "e".repeat(64)));
                     proof.check(proof.retained.displayedCount === 1,
-                                "recovery hides ordered footer duplicate");
+                                "recovery hides approximate ordered duplicate");
+                    proof.retained.refresh();
+                    proof.step = 15; return;
+                }
+                if (proof.step === 15) {
+                    if (!proof.hasRequest(15)) return;
+                    proof.success(14, proof.reply("99", "22", proof.twentyRows(),
+                                                       "page21", "f".repeat(64)));
+                    proof.check(proof.retained.displayedCount === 20,
+                                "first 20 fallback bubbles remain bounded");
+                    proof.retained.nextPage();
+                    proof.step = 16; return;
+                }
+                if (proof.step === 16) {
+                    if (!proof.hasRequest(16)) return;
+                    proof.check(proof.request(15).value.value.cursor === "page21",
+                                "21st bubble uses a local page cursor");
+                    proof.success(15, proof.reply("99", "22", [{
+                        messageId: "22", orderKey: null, sentAtMs: null,
+                        receivedAtMs: 1720000000022, deletedAtMs: 1720000001022,
+                        text: "synthetic row beyond first page"
+                    }], null, "f".repeat(64)));
+                    const row = proof.findNamed(proof.retained, "valmaxRetainedInlineBubbleRow");
+                    proof.check(proof.retained.displayedCount === 1 && row.messageId === "22"
+                                && row.approximatePlacement,
+                                "21st retained message is still an inline trash bubble");
+                    proof.retained.previousPage();
+                    proof.step = 17; return;
+                }
+                if (proof.step === 17) {
+                    if (!proof.hasRequest(17)) return;
+                    proof.check(proof.request(16).value.value.cursor === null,
+                                "previous page returns to first 20 bubbles");
+                    proof.success(16, proof.reply("99", "22", proof.twentyRows(),
+                                                       "page21", "f".repeat(64)));
+                    proof.check(proof.retained.displayedCount === 20,
+                                "first 20 bubbles restored without stock model changes");
                     proof.finished = true; run.stop();
                 }
             } catch (error) {
