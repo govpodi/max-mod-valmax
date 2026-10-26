@@ -407,7 +407,7 @@ class ChatExportTransformTests(unittest.TestCase):
     @unittest.skipUnless(importlib.util.find_spec("PySide6"), "Qt synthetic runtime unavailable")
     def test_qml_compile_and_stable_host_lifetime(self):
         import sys
-        root = Path('D:/ValMAX/analysis/chat-export-v1')
+        root = Path('E:/ValMAXBuild/tmp')
         root.mkdir(parents=True, exist_ok=True)
         with tempfile.TemporaryDirectory(prefix='synthetic-test-', dir=root) as temporary:
             result = subprocess.run([sys.executable, str(PANEL.with_name('chat_export_qa.py')), '--output', str(Path(temporary)/'proof')], capture_output=True, text=True, timeout=20)

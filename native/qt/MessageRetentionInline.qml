@@ -98,6 +98,7 @@ Item {
                 || !Native.RetentionTransport.validId(accountId, true)
                 || !Native.RetentionTransport.validId(chatId, false)) return;
         const requestedAccount = accountId, requestedChat = chatId, requestGeneration = generation;
+        const legacyOnly = nativeRowCount > 0;
         const oldCursor = currentCursor, oldPrevious = previousCursors;
         let request;
         try { request = Native.RetentionTransport.createRequest("inline"); request.open("POST"); }
@@ -118,9 +119,9 @@ Item {
                         || request.responseText.length > maximumResponseCharacters) throw new Error("response");
                 const value = JSON.parse(request.responseText);
                 if (!validReply(value, requestedAccount, requestedChat)) throw new Error("schema");
-                const footerRows = value.items.filter(function(row) {
-                    return row.orderKey === null || nativeRowCount === 0;
-                });
+                if (legacyOnly && value.items.some(function(row) { return row.orderKey !== null; }))
+                    throw new Error("ordered_row_in_legacy_page");
+                const footerRows = value.items;
                 if (cursor !== null && revision.length && revision !== value.revision) {
                     restartAfterStale(); return;
                 }
@@ -153,7 +154,7 @@ Item {
         };
         try {
             request.send(JSON.stringify({schema: 1, accountId: requestedAccount,
-                chatId: requestedChat, cursor: cursor, limit: pageSize}));
+                chatId: requestedChat, cursor: cursor, limit: pageSize, legacyOnly: legacyOnly}));
         } catch (_) { abortPending(); savedRows.clear(); nextCursor = null; failed = true; }
     }
     function nextPage() {

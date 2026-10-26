@@ -332,7 +332,10 @@ pub struct DeletedText {
 pub struct DeletedTextPage {
     pub items: Vec<DeletedText>, pub next_cursor: Option<String>, pub revision: String,
 }
-struct DeletedCursor { owner: i64, chat: i64, revision: String, deleted_at_ms: i64, id: i64 }
+struct DeletedCursor {
+    owner: i64, chat: i64, revision: String, deleted_at_ms: i64, id: i64,
+    legacy_only: bool,
+}
 struct RangeCursor {
     owner: i64, chat: i64, revision: String,
     from_order_key: i64, to_order_key: i64, order_key: i64, id: i64,
@@ -341,7 +344,8 @@ fn combine_visibility_revision(content: &str, marker: &str) -> String {
     sha256(format!("valmax-retention-visible-v1:{content}:{marker}").as_bytes())
 }
 fn deleted_cursor_encode(cursor: &DeletedCursor) -> String {
-    URL_SAFE_NO_PAD.encode(format!("v1:{}:{}:{}:{}:{}", cursor.owner, cursor.chat,
+    let version = if cursor.legacy_only { "l1" } else { "v1" };
+    URL_SAFE_NO_PAD.encode(format!("{version}:{}:{}:{}:{}:{}", cursor.owner, cursor.chat,
         cursor.revision, cursor.deleted_at_ms, cursor.id))
 }
 fn deleted_cursor_decode(value: &str) -> Result<DeletedCursor> {
@@ -349,7 +353,7 @@ fn deleted_cursor_decode(value: &str) -> Result<DeletedCursor> {
     let plain = URL_SAFE_NO_PAD.decode(value).map_err(|_| Error::InvalidRequest)?;
     let plain = std::str::from_utf8(&plain).map_err(|_| Error::InvalidRequest)?;
     let fields = plain.split(':').collect::<Vec<_>>();
-    if fields.len() != 6 || fields[0] != "v1"
+    if fields.len() != 6 || !matches!(fields[0], "v1" | "l1")
         || fields[3].len() != 64 || !fields[3].bytes().all(|c| c.is_ascii_hexdigit() && !c.is_ascii_uppercase()) {
         return Err(Error::InvalidRequest);
     }
@@ -360,7 +364,8 @@ fn deleted_cursor_decode(value: &str) -> Result<DeletedCursor> {
     };
     let (owner,chat,deleted_at_ms,id) = (parse(fields[1])?,parse(fields[2])?,parse(fields[4])?,parse(fields[5])?);
     if owner <= 0 || chat == 0 || deleted_at_ms < 0 || id <= 0 { return Err(Error::InvalidRequest); }
-    Ok(DeletedCursor { owner, chat, revision: fields[3].to_owned(), deleted_at_ms, id })
+    Ok(DeletedCursor { owner, chat, revision: fields[3].to_owned(), deleted_at_ms, id,
+        legacy_only: fields[0] == "l1" })
 }
 fn range_cursor_encode(cursor: &RangeCursor) -> String {
     URL_SAFE_NO_PAD.encode(format!("r1:{}:{}:{}:{}:{}:{}:{}", cursor.owner,
@@ -587,11 +592,22 @@ impl RetentionStore {
     /// Filtering is by the exact selected account and chat; no global list.
     pub fn list_deleted_text(&self, owner: i64, chat: i64,
         cursor: Option<&str>, limit: usize) -> Result<DeletedTextPage> {
+        self.list_deleted_text_filtered(owner, chat, cursor, limit, false)
+    }
+    /// Old captures without an original order key remain discoverable in the
+    /// selected chat even when newer ordered captures fill the first pages.
+    pub fn list_deleted_text_legacy(&self, owner: i64, chat: i64,
+        cursor: Option<&str>, limit: usize) -> Result<DeletedTextPage> {
+        self.list_deleted_text_filtered(owner, chat, cursor, limit, true)
+    }
+    fn list_deleted_text_filtered(&self, owner: i64, chat: i64,
+        cursor: Option<&str>, limit: usize, legacy_only: bool) -> Result<DeletedTextPage> {
         if owner <= 0 || chat == 0 || !(1..=100).contains(&limit) {
             return Err(Error::InvalidRequest);
         }
         let cursor = cursor.map(deleted_cursor_decode).transpose()?;
-        if cursor.as_ref().is_some_and(|value| value.owner != owner || value.chat != chat) {
+        if cursor.as_ref().is_some_and(|value| value.owner != owner || value.chat != chat
+            || value.legacy_only != legacy_only) {
             return Err(Error::InvalidRequest);
         }
         struct Candidate { id: i64, order_key: Option<i64>, received_at_ms: i64, deleted_at_ms: i64,
@@ -602,10 +618,11 @@ impl RetentionStore {
                 let Some(connection) = connection else { return Ok((Vec::new(), content_revision)); };
                 let version: i64 = connection.query_row("PRAGMA user_version", [], |row| row.get(0)).map_err(sql_error)?;
                 let order_projection = if version == 1 { "NULL" } else { "order_key" };
+                let legacy_filter = if legacy_only && version != 1 { " AND order_key IS NULL" } else { "" };
                 let sql = format!(
                     "SELECT message_id,received_at_ms,deleted_at_ms,protected_text,{order_projection} FROM retained_content \
                      WHERE account_id=?1 AND chat_id=?2 AND deleted_at_ms IS NOT NULL \
-                     AND (?3=0 OR deleted_at_ms<?4 OR (deleted_at_ms=?4 AND CAST(message_id AS INTEGER)<?5)) \
+                     {legacy_filter} AND (?3=0 OR deleted_at_ms<?4 OR (deleted_at_ms=?4 AND CAST(message_id AS INTEGER)<?5)) \
                      ORDER BY deleted_at_ms DESC,CAST(message_id AS INTEGER) DESC LIMIT ?6"
                 );
                 let mut query = connection.prepare(&sql).map_err(sql_error)?;
@@ -670,7 +687,8 @@ impl RetentionStore {
                 deleted_at_ms:candidate.deleted_at_ms, text:value });
         }
         let next_cursor = if count_more || size_more { last_processed.map(|(deleted_at_ms,id)|
-            deleted_cursor_encode(&DeletedCursor { owner, chat, revision:revision.clone(), deleted_at_ms, id }))
+            deleted_cursor_encode(&DeletedCursor { owner, chat, revision:revision.clone(),
+                deleted_at_ms, id, legacy_only }))
         } else { None };
         Ok(DeletedTextPage { items, next_cursor, revision })
     }

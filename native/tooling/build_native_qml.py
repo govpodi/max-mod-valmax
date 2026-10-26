@@ -1002,7 +1002,7 @@ def prepare(binary: bytes, output: Path, *, native_runtime: bool, rcc: Path,
         raise ValueError("Stable candidate labels require the native runtime")
     output.mkdir(parents=True, exist_ok=False)
     resources = transform_extra_resources({
-        ":/valmax/ChatExportPanel.qml": beta_export_panel(transform_export_panel((PROJECT / "modkit/chat_export_panel.qml").read_text(encoding="utf8"))).encode(),
+        ":/valmax/ChatExportPanel.qml": beta_export_panel(transform_export_panel((PROJECT / "modkit/chat_export_panel.qml").read_text(encoding="utf8")), release_channel=ui_release_channel).encode(),
         CONTROLLER_RESOURCE: controller_source().encode(), LOCK_RESOURCE: lock_source().encode(),
         ROW_RESOURCE: row_source().encode(), QUEUE_RESOURCE: queue_source().encode(), WHEEL_RESOURCE: wheel_source().encode(),
     })

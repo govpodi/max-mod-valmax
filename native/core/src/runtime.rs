@@ -45,8 +45,13 @@ fn retention_selected_ids(value: &Value) -> Result<(i64, i64, Vec<i64>)> {
     Ok((owner, chat, ids))
 }
 
-fn retention_selected_list(value: &Value) -> Result<(i64, i64, Option<&str>, usize)> {
-    if !exact(value, &["schema", "accountId", "chatId", "cursor", "limit"])
+fn retention_selected_list(value: &Value, inline: bool) -> Result<(i64, i64, Option<&str>, usize, bool)> {
+    let keys: &[&str] = if inline {
+        &["schema", "accountId", "chatId", "cursor", "limit", "legacyOnly"]
+    } else {
+        &["schema", "accountId", "chatId", "cursor", "limit"]
+    };
+    if !exact(value, keys)
         || value["schema"].as_u64() != Some(1) { return Err("invalid_request"); }
     let owner = retention_id(&value["accountId"], true)?;
     let chat = retention_id(&value["chatId"], false)?;
@@ -56,7 +61,9 @@ fn retention_selected_list(value: &Value) -> Result<(i64, i64, Option<&str>, usi
     };
     let limit = value["limit"].as_u64().filter(|limit| (1..=100).contains(limit))
         .ok_or("invalid_request")? as usize;
-    Ok((owner, chat, cursor, limit))
+    let legacy_only = if inline { value["legacyOnly"].as_bool().ok_or("invalid_request")? }
+        else { false };
+    Ok((owner, chat, cursor, limit, legacy_only))
 }
 
 fn retention_selected_range(value: &Value) -> Result<(i64, i64, i64, i64, Option<&str>, usize)> {
@@ -207,7 +214,7 @@ impl Runtime {
     }
 
     fn retention_list(&self, value: &Value) -> Result<Value> {
-        let (owner, chat, cursor, limit) = retention_selected_list(value)?;
+        let (owner, chat, cursor, limit, _) = retention_selected_list(value, false)?;
         let store = crate::retention_store::RetentionStore::new(&self.profile)
             .map_err(|error| error.code())?;
         let page = store.list_deleted_text(owner, chat, cursor, limit)
@@ -222,10 +229,14 @@ impl Runtime {
     }
 
     fn retention_inline(&self, value: &Value) -> Result<Value> {
-        let (owner, chat, cursor, limit) = retention_selected_list(value)?;
+        let (owner, chat, cursor, limit, legacy_only) = retention_selected_list(value, true)?;
         let store = crate::retention_store::RetentionStore::new(&self.profile)
             .map_err(|error| error.code())?;
-        let page = store.list_deleted_text(owner, chat, cursor, limit)
+        let page = if legacy_only {
+            store.list_deleted_text_legacy(owner, chat, cursor, limit)
+        } else {
+            store.list_deleted_text(owner, chat, cursor, limit)
+        }
             .map_err(|error| error.code())?;
         let items = page.items.into_iter().map(|row| json!({
             "messageId": row.id.to_string(),

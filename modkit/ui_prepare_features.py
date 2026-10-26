@@ -124,7 +124,7 @@ def main():
     from optimization_gates import transform_extra_resources
     from optimization_ui import transform_export_panel as beta_export_panel
     icon_bundle, icon_evidence = prepare_icons(binary, args.output / "icons",
-        extra_resources=transform_extra_resources({":/valmax/ChatExportPanel.qml": beta_export_panel(transform_export_panel(Path(__file__).with_name("chat_export_panel.qml").read_text(encoding="utf8"))).encode("utf8"),
+        extra_resources=transform_extra_resources({":/valmax/ChatExportPanel.qml": beta_export_panel(transform_export_panel(Path(__file__).with_name("chat_export_panel.qml").read_text(encoding="utf8")), release_channel=args.ui_release_channel).encode("utf8"),
                          CONTROLLER_RESOURCE: controller_source().encode("utf8"),
                          LOCK_RESOURCE: lock_source().encode("utf8"),
                          ROW_RESOURCE: row_source().encode("utf8"),

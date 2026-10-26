@@ -76,9 +76,13 @@ QtObject {
                             }
                             payload = {operation: "retention.lookup", value: value};
                         } else if (kind === "list" || kind === "inline") {
-                            if (Object.keys(value).sort().join("|") !== "accountId|chatId|cursor|limit|schema"
+                            const expectedKeys = kind === "inline"
+                                ? "accountId|chatId|cursor|legacyOnly|limit|schema"
+                                : "accountId|chatId|cursor|limit|schema";
+                            if (Object.keys(value).sort().join("|") !== expectedKeys
                                     || !transport.validId(value.accountId, true) || !transport.validId(value.chatId, false)
                                     || !(value.cursor === null || typeof value.cursor === "string" && value.cursor.length <= 256)
+                                    || kind === "inline" && typeof value.legacyOnly !== "boolean"
                                     || !Number.isSafeInteger(value.limit) || value.limit < 1 || value.limit > 100)
                                 throw new Error("invalid_body");
                             payload = {operation: kind === "inline" ? "retention.inline" : "retention.list", value: value};

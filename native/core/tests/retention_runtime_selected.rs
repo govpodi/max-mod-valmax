@@ -1,16 +1,49 @@
-use std::{fs, path::{Path, PathBuf}};
+use std::{fs, os::windows::fs::MetadataExt, ops::Deref, path::{Path, PathBuf}};
 use serde_json::{Value, json};
 use valmax_core::{retention_store::{IncomingText, RetentionStore}, runtime::Runtime};
 use rusqlite::Connection;
 
-fn fixture_root() -> PathBuf {
-    let base = Path::new("E:/ValMAXBuild/fixtures/synthetic/retention-runtime-p11");
+const FIXTURE_BASE: &str = "E:/ValMAXBuild/fixtures/synthetic/retention-runtime-p11";
+struct Fixture(PathBuf);
+impl Deref for Fixture {
+    type Target = Path;
+    fn deref(&self) -> &Path { &self.0 }
+}
+impl Drop for Fixture {
+    fn drop(&mut self) {
+        let base = Path::new(FIXTURE_BASE);
+        let ordinary_base = base.ancestors().take_while(|path| path.parent().is_some())
+            .all(|path| fs::symlink_metadata(path).is_ok_and(|metadata|
+                metadata.is_dir() && metadata.file_attributes() & 0x400 == 0));
+        let resolved_inside_base = fs::canonicalize(base).ok().zip(fs::canonicalize(&self.0).ok())
+            .is_some_and(|(resolved_base, resolved_child)|
+                resolved_child.parent() == Some(resolved_base.as_path()));
+        let safe = ordinary_base && resolved_inside_base
+            && self.0.parent() == Some(base)
+            && self.0.file_name().and_then(|value| value.to_str())
+                .is_some_and(|value| value.len() == 32 && value.bytes().all(|byte| byte.is_ascii_hexdigit()))
+            && fs::symlink_metadata(&self.0).is_ok_and(|metadata|
+                metadata.is_dir() && metadata.file_attributes() & 0x400 == 0);
+        if !safe {
+            if !std::thread::panicking() { panic!("unsafe synthetic fixture path"); }
+            eprintln!("synthetic fixture cleanup skipped: unsafe path");
+            return;
+        }
+        if let Err(error) = fs::remove_dir_all(&self.0) {
+            if !std::thread::panicking() { panic!("synthetic fixture cleanup failed: {error}"); }
+            eprintln!("synthetic fixture cleanup failed: {error}");
+        }
+    }
+}
+fn fixture_root() -> Fixture {
+    let base = Path::new(FIXTURE_BASE);
     fs::create_dir_all(base).unwrap();
     let mut random = [0_u8; 16];
     getrandom::getrandom(&mut random).unwrap();
     let child = random.iter().map(|part| format!("{part:02x}")).collect::<String>();
-    let root = base.join(child);
-    fs::create_dir(&root).unwrap();
+    let path = base.join(child);
+    fs::create_dir(&path).unwrap();
+    let root = Fixture(path);
     fs::create_dir(root.join("profile")).unwrap();
     fs::create_dir(root.join("runtime")).unwrap();
     root
@@ -29,8 +62,13 @@ fn list(rt: &Runtime, owner: &str, chat: &str, cursor: Option<&str>, limit: u64)
         "schema":1,"accountId":owner,"chatId":chat,"cursor":cursor,"limit":limit}})).unwrap()
 }
 fn inline(rt: &Runtime, owner: &str, chat: &str, cursor: Option<&str>, limit: u64) -> Value {
+    inline_mode(rt, owner, chat, cursor, limit, false)
+}
+fn inline_mode(rt: &Runtime, owner: &str, chat: &str, cursor: Option<&str>, limit: u64,
+    legacy_only: bool) -> Value {
     rt.call(&json!({"operation":"retention.inline","value":{
-        "schema":1,"accountId":owner,"chatId":chat,"cursor":cursor,"limit":limit}})).unwrap()
+        "schema":1,"accountId":owner,"chatId":chat,"cursor":cursor,"limit":limit,
+        "legacyOnly":legacy_only}})).unwrap()
 }
 fn range(rt: &Runtime, owner: &str, chat: &str, from: &str, to: &str,
     cursor: Option<&str>, limit: u64) -> Value {
@@ -66,7 +104,8 @@ fn selected_chat_lookup_and_local_list_survive_restart_without_cross_account_row
     let inline_cursor = first_inline["nextCursor"].as_str().unwrap();
     assert_eq!(inline(&rt, "11", "22", Some(inline_cursor), 1)["items"][0]["messageId"], "33");
     assert_eq!(rt.call(&json!({"operation":"retention.inline","value":{
-        "schema":1,"accountId":"55","chatId":"22","cursor":inline_cursor,"limit":1}})),
+        "schema":1,"accountId":"55","chatId":"22","cursor":inline_cursor,"limit":1,
+        "legacyOnly":false}})),
         Err("invalid_request"));
     let cursor = first["nextCursor"].as_str().unwrap();
     let second = list(&rt, "11", "22", Some(cursor), 1);
@@ -110,7 +149,8 @@ fn revision_invalidates_cached_badges_and_stale_pages_without_fabricating_empty_
         "schema":1,"accountId":"11","chatId":"22","cursor":cursor,"limit":1}}));
     assert_eq!(stale, Err("stale_cursor"));
     let stale_inline = rt.call(&json!({"operation":"retention.inline","value":{
-        "schema":1,"accountId":"11","chatId":"22","cursor":cursor,"limit":1}}));
+        "schema":1,"accountId":"11","chatId":"22","cursor":cursor,"limit":1,
+        "legacyOnly":false}}));
     assert_eq!(stale_inline, Err("stale_cursor"));
     for bad in [
         json!({"schema":1,"accountId":"011","chatId":"22","messageIds":["33"]}),
@@ -135,14 +175,77 @@ fn inline_ids_remain_decimal_strings_and_input_is_exactly_scoped() {
     assert_eq!(page["items"][0]["sentAtMs"], Value::Null);
     assert_eq!(page["items"][0].as_object().unwrap().len(), 6);
     for value in [
-        json!({"schema":1,"accountId":"011","chatId":"22","cursor":null,"limit":1}),
-        json!({"schema":1,"accountId":"11","chatId":"22","cursor":null,"limit":101}),
-        json!({"schema":1,"accountId":"11","chatId":"22","cursor":null,"limit":1,"extra":true}),
-        json!({"schema":1,"accountId":"11","chatId":"22","cursor":42,"limit":1}),
+        json!({"schema":1,"accountId":"011","chatId":"22","cursor":null,"limit":1,"legacyOnly":false}),
+        json!({"schema":1,"accountId":"11","chatId":"22","cursor":null,"limit":101,"legacyOnly":false}),
+        json!({"schema":1,"accountId":"11","chatId":"22","cursor":null,"limit":1,"legacyOnly":false,"extra":true}),
+        json!({"schema":1,"accountId":"11","chatId":"22","cursor":42,"limit":1,"legacyOnly":false}),
+        json!({"schema":1,"accountId":"11","chatId":"22","cursor":null,"limit":1}),
+        json!({"schema":1,"accountId":"11","chatId":"22","cursor":null,"limit":1,"legacyOnly":1}),
     ] {
         assert_eq!(rt.call(&json!({"operation":"retention.inline","value":value})),
             Err("invalid_request"));
     }
+}
+
+#[test]
+fn legacy_inline_pages_skip_newer_ordered_rows_without_losing_old_captures() {
+    let root = fixture_root();
+    let store = RetentionStore::new(root.join("profile")).unwrap();
+    let keyed_ids = (100_i64..125).collect::<Vec<_>>();
+    let keyed = keyed_ids.iter().map(|id| IncomingText {
+        id: *id, received_at_ms: 1_700_000_000_000 + id,
+        order_key: Some(1_700_000_000_000 + id), text: "synthetic ordered capture",
+    }).collect::<Vec<_>>();
+    store.capture_text_batch(11, 22, &keyed).unwrap();
+    assert!(store.mark_received_delete(11, 22, &keyed_ids, 2_000).unwrap()
+        .into_iter().all(|value| value));
+    let legacy_ids = (200_i64..222).collect::<Vec<_>>();
+    let legacy = legacy_ids.iter().map(|id| IncomingText {
+        id: *id, received_at_ms: 100 + id, order_key: None,
+        text: "synthetic old capture",
+    }).collect::<Vec<_>>();
+    store.capture_text_batch(11, 22, &legacy).unwrap();
+    assert!(store.mark_received_delete(11, 22, &legacy_ids, 1_000).unwrap()
+        .into_iter().all(|value| value));
+    store.capture_text(55, 22, 200, 300, "synthetic other-account capture").unwrap();
+    assert_eq!(store.mark_received_delete(55, 22, &[200], 1_000).unwrap(), [true]);
+
+    let rt = runtime(&root);
+    let mixed_page = inline(&rt, "11", "22", None, 20);
+    assert_eq!(mixed_page["items"].as_array().unwrap().len(), 20);
+    assert!(mixed_page["items"].as_array().unwrap().iter()
+        .all(|row| !row["orderKey"].is_null()));
+    let mixed_cursor = mixed_page["nextCursor"].as_str().unwrap();
+    let first = inline_mode(&rt, "11", "22", None, 20, true);
+    assert_eq!(first["items"].as_array().unwrap().len(), 20);
+    assert_eq!(first["items"][0]["messageId"], "221");
+    assert!(first["items"].as_array().unwrap().iter()
+        .all(|row| row["orderKey"].is_null() && row["text"] == "synthetic old capture"));
+    let legacy_cursor = first["nextCursor"].as_str().unwrap().to_owned();
+    let second = inline_mode(&rt, "11", "22", Some(&legacy_cursor), 20, true);
+    assert_eq!(second["items"].as_array().unwrap().len(), 2);
+    assert_eq!(second["items"][0]["messageId"], "201");
+    assert_eq!(second["items"][1]["messageId"], "200");
+    assert_eq!(second["nextCursor"], Value::Null);
+    assert_eq!(inline_mode(&rt, "55", "22", None, 20, true)["items"][0]["text"],
+        "synthetic other-account capture");
+    assert_eq!(rt.call(&json!({"operation":"retention.inline","value":{
+        "schema":1,"accountId":"11","chatId":"22","cursor":mixed_cursor,
+        "limit":20,"legacyOnly":true}})), Err("invalid_request"));
+    assert_eq!(rt.call(&json!({"operation":"retention.inline","value":{
+        "schema":1,"accountId":"11","chatId":"22","cursor":legacy_cursor,
+        "limit":20,"legacyOnly":false}})), Err("invalid_request"));
+    assert_eq!(rt.call(&json!({"operation":"retention.inline","value":{
+        "schema":1,"accountId":"55","chatId":"22","cursor":legacy_cursor,
+        "limit":20,"legacyOnly":true}})), Err("invalid_request"));
+    drop(rt);
+    drop(store);
+    let reopened = runtime(&root);
+    assert_eq!(inline_mode(&reopened, "11", "22", None, 20, true)["items"][0]["messageId"],
+        "221");
+    assert_eq!(inline_mode(&reopened, "55", "22", None, 20, true)["items"][0]["text"],
+        "synthetic other-account capture");
+    drop(reopened);
 }
 
 #[test]

@@ -226,7 +226,11 @@ fn real_runtime_ffi_get_disable_restart_and_selected_lookup() {
         assert_eq!(selected["result"]["deletedIds"], json!([]));
         assert_eq!(selected["result"]["accountId"], "11");
         assert_eq!(selected["result"]["chatId"], "-22");
-        assert!(!root.join("profile").exists() && !root.join("runtime").exists());
+        assert!(!root.join("profile").exists());
+        let runtime = root.join("runtime");
+        assert_eq!(fs::read(runtime.join(crate::optimization_store::ACTIVE_FILENAME)).unwrap(),
+            crate::optimization_store::Settings::default().canonical());
+        assert_eq!(fs::read_dir(runtime).unwrap().count(), 1);
         assert_eq!(context.call(json!({"operation":"retention.set","revision":revision(false),"enabled":false}))["result"], expected_runtime(false));
     }
     let context = NativeContext::open(&root);
@@ -267,5 +271,9 @@ fn real_runtime_ffi_rejects_extra_keys_types_and_duplicate_operations() {
     assert_eq!(context.call(json!({"operation":"retention.set","revision":0,"enabled":false}))["error"], "invalid_revision");
     assert_eq!(context.call(json!({"operation":"retention.set","revision":revision(false),"enabled":0}))["error"], "invalid_settings");
     assert_eq!(context.raw(br#"{"operation":"retention.get","operation":"retention.get"}"#)["error"], "invalid_request");
-    assert!(!root.join("profile").exists() && !root.join("runtime").exists());
+    assert!(!root.join("profile").exists());
+    let runtime = root.join("runtime");
+    assert_eq!(fs::read(runtime.join(crate::optimization_store::ACTIVE_FILENAME)).unwrap(),
+        crate::optimization_store::Settings::default().canonical());
+    assert_eq!(fs::read_dir(runtime).unwrap().count(), 1);
 }

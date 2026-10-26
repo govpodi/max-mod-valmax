@@ -4,6 +4,8 @@ import importlib.util
 import json
 import os
 from pathlib import Path
+import shutil
+import stat
 import tempfile
 import unittest
 import sys
@@ -19,11 +21,41 @@ class AssemblyTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
         cls.root = Path(tempfile.mkdtemp(prefix="native-staging-unit-", dir="E:/ValMAXBuild/build"))
+        cls.addClassCleanup(cls.cleanup_owned_synthetic_root)
+
+    @classmethod
+    def cleanup_owned_synthetic_root(cls):
+        build = Path("E:/ValMAXBuild/build")
+        root = cls.root
+        if (root.parent != build or not root.name.startswith("native-staging-unit-")
+                or root.resolve(strict=True).parent != build.resolve(strict=True)):
+            raise RuntimeError("synthetic fixture escaped the owned build root")
+        for item in (root, *root.rglob("*")):
+            if (item.is_symlink() or item.is_junction()
+                    or item.lstat().st_file_attributes & stat.FILE_ATTRIBUTE_REPARSE_POINT):
+                raise RuntimeError("synthetic fixture contains a reparse point")
+        shutil.rmtree(root)
 
     def fresh(self, name):
         value = self.root / (self._testMethodName + "-" + name)
         value.mkdir()
         return value
+
+    def test_compiled_core_snapshot_allows_only_complete_reviewed_external_inputs(self):
+        snapshot = {f"native/core/src/fixture_{index}.rs": "0" * 64
+                    for index in range(50)}
+        snapshot.update({name: "0" * 64 for name in (
+            "native/Cargo.lock", "native/Cargo.toml", "native/core/Cargo.toml")})
+        assembly.require_compiled_core_snapshot(snapshot)
+        complete = {**snapshot, "native/rust-toolchain.toml": "0" * 64,
+                    "modkit/config.defaults.json": "0" * 64}
+        assembly.require_compiled_core_snapshot(complete)
+        with self.assertRaisesRegex(ValueError, "compiled-core source snapshot inventory differs"):
+            assembly.require_compiled_core_snapshot({**snapshot,
+                "modkit/config.defaults.json": "0" * 64})
+        with self.assertRaisesRegex(ValueError, "compiled-core source snapshot inventory differs"):
+            assembly.require_compiled_core_snapshot({**complete,
+                "modkit/unreviewed.json": "0" * 64})
 
     def test_relative_rejects_windows_alias_and_private_paths(self):
         for name in ("", "../escape", "a/../b", "/root", "a\\b", "a//b", "a/./b", "C:/file", "a:ads", "a./b",

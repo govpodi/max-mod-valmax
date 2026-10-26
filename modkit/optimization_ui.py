@@ -10,10 +10,14 @@ MARKER = "// VALMAX_OPTIMIZATION_SETTINGS"
 BETA_MARKER = "// VALMAX_BETA_SETTINGS_CELL"
 MENU_MARKER = "// VALMAX_EXPORT_BETA"
 PANEL_MARKER = "// VALMAX_EXPORT_PANEL_BETA"
+STABLE_MENU_MARKER = "// VALMAX_EXPORT_STABLE_CANDIDATE"
+STABLE_PANEL_MARKER = "// VALMAX_EXPORT_PANEL_STABLE_CANDIDATE"
 RESOURCE_NAMES = ("LeadingSettingsBar.qml", "ContactMoreMenu.qml")
 CONFIG_IMPORT = 'import "qrc:/valmax/optimization" as ValMAXOptimization\n'
 FLAG_NAMES = ("enabled", "smoothWheel", "listScheduling", "listPrefetch", "readyCache", "historyCache", "historyBookkeeping", "photoDecodeResize", "windowPosition", "hiddenPageWork", "profileRows")
 RELEASE_CHANNELS = ("beta", "stable-candidate")
+RETENTION_BETA_NOTICE = 'text: "Бета: входящий текст сохраняется при включённой функции и работающем обработчике. Удаления, которые обработчик не увидел, не восстанавливаются; ранее сохранённые сообщения остаются.";'
+RETENTION_STABLE_NOTICE = RETENTION_BETA_NOTICE.replace("Бета: ", "", 1)
 
 
 def once(source, anchor, replacement):
@@ -82,6 +86,8 @@ def transform_leading(source, directory=None, *, release_channel="beta"):
     if type(source) is not str or MARKER in source or BETA_MARKER in source:
         raise ValueError("Optimization settings require untouched feature output")
     source = source.replace("\r\n", "\n")
+    if release_channel == "stable-candidate":
+        source = once(source, RETENTION_BETA_NOTICE, RETENTION_STABLE_NOTICE)
     if CONFIG_IMPORT not in source:
         # LeadingSettingsBar also contains a separately scoped inline QtQuick
         # component. Add the import to the document header, not that component.
@@ -90,6 +96,10 @@ def transform_leading(source, directory=None, *, release_channel="beta"):
         source = "import QtQuick\n" + CONFIG_IMPORT + source[len("import QtQuick\n"):]
     directory = Path(directory) if directory is not None else Path(__file__).parent
     panel = (directory / "optimization_panel.qml").read_text(encoding="utf8").replace("\r\n", "\n")
+    if release_channel == "stable-candidate":
+        panel = once(panel,
+            '                    UiKit.MeHighlightedText { objectName: "optimizationBeta"; text: "BETA"; highlightedTrailing: true; textColor: optimizationPage.maxwellColorTokens.colorTextThemed; backgroundColor: optimizationPage.maxwellColorTokens.colorStatesBackgroundHighlighted; Accessible.name: "BETA · функция тестируется" }\n',
+            "")
     badge_cell = BETA_CELL if release_channel == "beta" else ""
     source = once(source, "    Component {\n        id: settingsDev\n",
                   "    " + MARKER + "\n" + badge_cell + panel.rstrip() + "\n\n    Component {\n        id: settingsDev\n")
@@ -108,16 +118,20 @@ def transform_leading(source, directory=None, *, release_channel="beta"):
     return once(source, anchor, entry + anchor)
 
 
-def transform_menu(source):
-    if type(source) is not str or MENU_MARKER in source:
+def transform_menu(source, *, release_channel="beta"):
+    if release_channel not in RELEASE_CHANNELS:
+        raise ValueError("Unknown UI release channel")
+    if type(source) is not str or MENU_MARKER in source or STABLE_MENU_MARKER in source:
         raise ValueError("Export BETA requires untouched export-menu output")
     source = source.replace("\r\n", "\n")
-    if "import QtQuick.Layouts\n" not in source:
-        source = once(source, "import QtQuick\n", "import QtQuick\nimport QtQuick.Layouts\n")
     anchor = '''    // VALMAX_CHAT_EXPORT
     UiKit.ActionMenuItem {
         text: "Скачать чат"
 '''
+    if release_channel == "stable-candidate":
+        return once(source, anchor, "    " + STABLE_MENU_MARKER + "\n" + anchor)
+    if "import QtQuick.Layouts\n" not in source:
+        source = once(source, "import QtQuick\n", "import QtQuick\nimport QtQuick.Layouts\n")
     item = '''    // VALMAX_CHAT_EXPORT
     UiKit.ActionMenuItem {
         id: valmaxExportBetaItem
@@ -137,9 +151,11 @@ def transform_menu(source):
     return once(source, anchor, item)
 
 
-def transform_export_panel(source):
-    """Replace the plain beta warning with the native SDK pill and same warning."""
-    if type(source) is not str or PANEL_MARKER in source:
+def transform_export_panel(source, *, release_channel="beta"):
+    """Keep archive limitations visible with labels appropriate to the channel."""
+    if release_channel not in RELEASE_CHANNELS:
+        raise ValueError("Unknown UI release channel")
+    if type(source) is not str or PANEL_MARKER in source or STABLE_PANEL_MARKER in source:
         raise ValueError("Export panel BETA requires untouched export panel")
     source = source.replace("\r\n", "\n")
     warning = '''            UiKit.MeText { objectName: "valmaxExportBetaWarning"; Layout.fillWidth: true; text: exportDialog.nativeApi2ExportAvailable && exportDialog.exportMode === "api2-text"
@@ -150,6 +166,23 @@ def transform_export_panel(source):
     anchor = '''        dialogContentItem: ColumnLayout {
             spacing: 8
 '''
+    if release_channel == "stable-candidate":
+        source = once(source, 'text: "История и медиа · Бета" +',
+                      'text: "История и медиа" +')
+        source = once(source, 'statusText = "Подготовка бета-экспорта…";',
+                      'statusText = "Подготовка архива…";')
+        return once(source, anchor, anchor + '''            // VALMAX_EXPORT_PANEL_STABLE_CANDIDATE
+            UiKit.MeText {
+                objectName: "valmaxExportLimitations"
+                Layout.fillWidth: true
+                text: exportDialog.nativeApi2ExportAvailable && exportDialog.exportMode === "api2-text"
+                    ? "Архив чата может быть неполным. Фото, видео и голосовые сохраняются, когда доступны (до 4 ГиБ на файл). Отдельный раздел содержит только входящие сообщения, полученные и локально сохранённые после включения функции; прежние и недоступные удаления не восстановятся. Возможны повторы и пропуски."
+                    : "Архив чата может быть неполным. В режиме «История из клиента» сохраняются показанные клиентом сообщения и доступные вложения. Локально сохранённые удаления в этот архив не входят; возможны пропуски."
+                wrapMode: Text.WordWrap
+                typography: ExportTypography.FontUtil.Styles.Description
+                color: exportDialog.colors.colorTextSecondary
+            }
+''')
     return once(source, anchor, anchor + '''            // VALMAX_EXPORT_PANEL_BETA
             RowLayout {
                 Layout.fillWidth: true
@@ -184,5 +217,6 @@ def transform_sources(sources, directory=None, *, release_channel="beta"):
     result = dict(sources)
     result["LeadingSettingsBar.qml"] = transform_leading(sources["LeadingSettingsBar.qml"], directory,
                                                            release_channel=release_channel)
-    result["ContactMoreMenu.qml"] = transform_menu(sources["ContactMoreMenu.qml"])
+    result["ContactMoreMenu.qml"] = transform_menu(sources["ContactMoreMenu.qml"],
+                                                    release_channel=release_channel)
     return result

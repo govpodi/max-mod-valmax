@@ -40,13 +40,24 @@ def main():
         baseline, scratch / "stable-candidate", native_runtime=True,
         rcc=Path("C:/ValMAXBuild/Qt/bin/rcc.exe"), ui_release_channel="stable-candidate")
     settings_key = ":/qt/qml/OneMeUi/LeadingSettingsBar.qml"
+    menu_key = ":/qt/qml/OneMeUi/ContactMoreMenu.qml"
+    export_panel_key = ":/valmax/ChatExportPanel.qml"
     assert native["uiReleaseChannel"] == native["resourceEvidence"]["uiReleaseChannel"] == "beta"
     assert stable["uiReleaseChannel"] == stable["resourceEvidence"]["uiReleaseChannel"] == "stable-candidate"
-    assert {key for key in native_sources if native_sources[key] != stable_sources[key]} == {settings_key}
+    assert {key for key in native_sources if native_sources[key] != stable_sources[key]} == {settings_key, menu_key}
     assert "ValMAXBetaSettingsCellImpl" in native_sources[settings_key].decode("utf8")
     assert "ValMAXBetaSettingsCellImpl" not in stable_sources[settings_key].decode("utf8")
-    assert native["extraResourceHashes"] == stable["extraResourceHashes"]
+    from optimization_ui import RETENTION_BETA_NOTICE, RETENTION_STABLE_NOTICE
+    assert RETENTION_BETA_NOTICE in native_sources[settings_key].decode("utf8")
+    assert RETENTION_BETA_NOTICE not in stable_sources[settings_key].decode("utf8")
+    assert RETENTION_STABLE_NOTICE in stable_sources[settings_key].decode("utf8")
+    assert 'objectName: "optimizationBeta"' not in stable_sources[settings_key].decode("utf8")
+    assert 'objectName: "valmaxChatExportBeta"' in native_sources[menu_key].decode("utf8")
+    assert 'objectName: "valmaxChatExportBeta"' not in stable_sources[menu_key].decode("utf8")
+    assert {key for key in native["extraResourceHashes"]
+            if native["extraResourceHashes"][key] != stable["extraResourceHashes"][key]} == {export_panel_key}
     assert native["sourceHashes"][settings_key] != stable["sourceHashes"][settings_key]
+    assert native["sourceHashes"][menu_key] != stable["sourceHashes"][menu_key]
     assert set(native_sources) - set(legacy_sources) == set(RECORDING_RESOURCES)
     for key in RECORDING_RESOURCES:
         recorder = native_sources[key].decode("utf8")

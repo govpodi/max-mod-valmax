@@ -37,13 +37,21 @@ class OptimizationUiTests(unittest.TestCase):
         self.assertEqual(1, result.count(target.CONFIG_IMPORT))
         with self.assertRaises(ValueError): target.transform_leading(result)
 
-    def test_stable_candidate_removes_only_generic_settings_badges(self):
+    def test_stable_candidate_removes_settings_and_optimization_badges(self):
         source = leading_fixture()
         beta = target.transform_leading(source)
         self.assertEqual(beta, target.transform_leading(source, release_channel="beta"))
         stable = target.transform_leading(source, release_channel="stable-candidate")
+        self.assertIn(target.RETENTION_BETA_NOTICE, beta)
+        self.assertNotIn(target.RETENTION_BETA_NOTICE, stable)
+        self.assertIn(target.RETENTION_STABLE_NOTICE, stable)
+        self.assertEqual(beta.count('visible: !retentionPage.runtimeTrusted || !retentionPage.runtime || !retentionPage.runtime.historySyncVerified'),
+                         stable.count('visible: !retentionPage.runtimeTrusted || !retentionPage.runtime || !retentionPage.runtime.historySyncVerified'))
         self.assertNotIn(target.BETA_MARKER, stable)
         self.assertNotIn("ValMAXBetaSettingsCellImpl", stable)
+        self.assertNotIn('objectName: "optimizationBeta"', stable)
+        self.assertNotIn('Accessible.name: "BETA · функция тестируется"', stable)
+        self.assertIn('objectName: "optimizationBeta"', beta)
         for title in ("MData", "Аккаунты ValMAX", "Удалённые сообщения", "Оптимизация"):
             self.assertIn('OpenPageSettingsCellImpl {\n                    title: "' + title + '"', stable)
             self.assertIn('ValMAXBetaSettingsCellImpl {\n                    title: "' + title + '"', beta)
@@ -54,22 +62,42 @@ class OptimizationUiTests(unittest.TestCase):
         self.assertEqual(beta.count(target.CONFIG_IMPORT), stable.count(target.CONFIG_IMPORT))
         with self.assertRaises(ValueError): target.transform_leading(stable)
         with self.assertRaises(ValueError): target.transform_leading(source, release_channel="stable")
+        with self.assertRaises(ValueError): target.transform_leading(source.replace(target.RETENTION_BETA_NOTICE, target.RETENTION_STABLE_NOTICE), release_channel="stable-candidate")
 
-    def test_stable_candidate_keeps_export_beta_and_partial_history_warning(self):
+    def test_stable_candidate_hides_export_badges_but_keeps_partial_history_warning(self):
         from chat_export_ui import transform
         from chat_lock_ui import transform_export_panel
         sources = {'LeadingSettingsBar.qml': leading_fixture(),
                    'ContactMoreMenu.qml': transform((NATIVE / 'ContactMoreMenu.qml').read_text('utf8'))}
         beta = target.transform_sources(sources)
         stable = target.transform_sources(sources, release_channel="stable-candidate")
-        self.assertEqual(beta['ContactMoreMenu.qml'], stable['ContactMoreMenu.qml'])
-        self.assertIn('objectName: "valmaxChatExportBeta"', stable['ContactMoreMenu.qml'])
-        self.assertIn('Accessible.name: "BETA · функция тестируется"', stable['ContactMoreMenu.qml'])
+        self.assertIn('objectName: "valmaxChatExportBeta"', beta['ContactMoreMenu.qml'])
+        self.assertIn(target.STABLE_MENU_MARKER, stable['ContactMoreMenu.qml'])
+        self.assertNotIn('objectName: "valmaxChatExportBeta"', stable['ContactMoreMenu.qml'])
+        self.assertNotIn('Accessible.name: "BETA · функция тестируется"', stable['ContactMoreMenu.qml'])
+        self.assertEqual(beta['ContactMoreMenu.qml'].count('text: "Скачать чат"'),
+                         stable['ContactMoreMenu.qml'].count('text: "Скачать чат"'))
         panel_source = transform_export_panel((HERE / 'chat_export_panel.qml').read_text('utf8'))
-        stable_panel = target.transform_export_panel(panel_source)
+        beta_panel = target.transform_export_panel(panel_source)
+        stable_panel = target.transform_export_panel(panel_source, release_channel="stable-candidate")
+        self.assertIn('objectName: "valmaxChatExportPanelBeta"', beta_panel)
+        self.assertIn(target.STABLE_PANEL_MARKER, stable_panel)
         self.assertIn('Архив чата может быть неполным.', stable_panel)
-        self.assertIn('objectName: "valmaxChatExportPanelBeta"', stable_panel)
+        self.assertIn('Фото, видео и голосовые сохраняются, когда доступны', stable_panel)
+        self.assertIn('Отдельный раздел содержит только входящие сообщения', stable_panel)
+        self.assertIn('Локально сохранённые удаления в этот архив не входят', stable_panel)
+        self.assertIn('objectName: "valmaxExportLimitations"', stable_panel)
+        self.assertNotIn('objectName: "valmaxChatExportPanelBeta"', stable_panel)
+        self.assertNotIn('Accessible.name: "BETA · функция тестируется"', stable_panel)
+        self.assertNotIn('Бета', stable_panel)
+        self.assertNotIn('бета-', stable_panel)
+        self.assertIn('text: "История и медиа" +', stable_panel)
+        self.assertEqual(panel_source.count('function '), stable_panel.count('function '))
+        with self.assertRaises(ValueError): target.transform_export_panel(stable_panel, release_channel="stable-candidate")
+        with self.assertRaises(ValueError): target.transform_menu(stable['ContactMoreMenu.qml'], release_channel="stable-candidate")
         with self.assertRaises(ValueError): target.transform_sources(sources, release_channel="stable")
+        with self.assertRaises(ValueError): target.transform_menu(sources['ContactMoreMenu.qml'], release_channel="stable")
+        with self.assertRaises(ValueError): target.transform_export_panel(panel_source, release_channel="stable")
 
     def test_badge_menu_preserves_native_actions_and_content_layout(self):
         from chat_export_ui import transform

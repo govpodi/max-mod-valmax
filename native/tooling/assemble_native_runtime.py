@@ -796,6 +796,17 @@ def add_gum_notice(plan, audit_path):
             "wholeClientMaterialsComplete": False}
 
 
+def require_compiled_core_snapshot(snapshot):
+    """Accept legacy core proofs and the two reviewed external p22 Rust inputs."""
+    manifest_names = {"native/Cargo.lock", "native/Cargo.toml", "native/core/Cargo.toml"}
+    external_names = {"native/rust-toolchain.toml", "modkit/config.defaults.json"}
+    require(isinstance(snapshot, dict) and len(snapshot) >= 50
+            and all(name in manifest_names or name in external_names
+                    or name.startswith("native/core/") for name in snapshot)
+            and (external_names.isdisjoint(snapshot) or external_names <= snapshot.keys()),
+            "compiled-core source snapshot inventory differs")
+
+
 def add_native_rust_materials(plan, sbom_path, core_proof_path, core_sha):
     """Bind Windows crate sources and notices to this compiled native core."""
     sbom = read_json(sbom_path)
@@ -814,10 +825,7 @@ def add_native_rust_materials(plan, sbom_path, core_proof_path, core_sha):
         "coreCargoTomlSha256": "native/core/Cargo.toml",
     }
     snapshot = core["sourceSnapshotAtReportTime"]
-    require(isinstance(snapshot, dict) and len(snapshot) >= 50
-            and all(name in source_paths.values() or name.startswith("native/core/")
-                    for name in snapshot),
-            "compiled-core source snapshot inventory differs")
+    require_compiled_core_snapshot(snapshot)
     for name, digest in snapshot.items():
         require(sha(ROOT / relative(name)) == digest,
                 "compiled-core source changed after proof: " + name)

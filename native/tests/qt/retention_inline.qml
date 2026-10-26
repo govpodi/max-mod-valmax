@@ -121,8 +121,9 @@ Item {
                     const first = proof.request(0).value;
                     proof.check(first.operation === "retention.inline", "real transport operation");
                     proof.check(first.value.accountId === "11" && first.value.chatId === "21"
-                                && first.value.cursor === null && first.value.limit === 20,
-                                "selected scope and page limit");
+                                && first.value.cursor === null && first.value.limit === 20
+                                && first.value.legacyOnly === true,
+                                "selected legacy-only scope and page limit");
                     proof.check(listView.count === 1 && proof.footerRef.parent !== null,
                                 "stock list model and footer retained");
                     proof.success(0, proof.originalPage());

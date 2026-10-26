@@ -341,6 +341,7 @@ class SlimPackaging(unittest.TestCase):
                 '#define NativePreviewVersion "8.9.0-native.preview.99"\n'
                 '#define NativePreviewInfoSha256 "' + digest(preview.read_bytes()) + '"\n'
                 '#define NativeQtSourceMode "separate-asset"\n'
+                '#define NativeFFmpegSourceMode "inline"\n'
                 '#define NativeQtSourceAssetSha256 "' + (asset_pin or asset_hash) + '"\n'
                 '#define NativeQtSourceInfoSha256 "' + (notice_pin or notice_hash) + '"\n'
                 '#define NativeWebView2BootstrapperSha256 "' +
