@@ -5,6 +5,7 @@
 
 #include <QMetaType>
 #include <QCoreApplication>
+#include <QElapsedTimer>
 #include <QEvent>
 #include <QPointer>
 #include <QSet>
@@ -142,41 +143,71 @@ NativeBridge::NativeBridge(QObject *parent) : QObject(parent)
         runtime_ = std::make_shared<RuntimeState>();
         runtimeState_ = QStringLiteral("opening");
         const auto context = runtime_;
-        workers_.start(QRunnable::create([this, config, context]() {
+        QElapsedTimer openingClock;
+        openingClock.start();
+        workers_.start(QRunnable::create([this, config, context, openingClock]() {
+            const qint64 workerQueueMs = openingClock.elapsed();
             ValmaxCoreBuffer result{nullptr, 0, 0};
             const int code = valmax_runtime_open(reinterpret_cast<const uint8_t *>(config.constData()),
                                                  size_t(config.size()), &context->handle, &result);
             const bool opened = code == 0 && context->handle != nullptr;
             valmax_core_buffer_free(&result);
+            const qint64 rustOpenMs = openingClock.elapsed() - workerQueueMs;
             QString ghostState = QStringLiteral("unavailable");
             QString notificationState = QStringLiteral("unavailable");
+            qint64 notificationRefreshMs = -1;
+            qint64 ghostRefreshMs = -1;
+            qint64 retentionInitMs = -1;
 #if VALMAX_HAS_NOTIFICATIONS
             if (opened) {
+                const qint64 started = openingClock.elapsed();
                 context->notifications = std::make_unique<NotificationHost>(context->handle);
                 notificationState = context->notifications->refresh();
+                notificationRefreshMs = openingClock.elapsed() - started;
             }
 #endif
 #if VALMAX_HAS_GHOST
             if (opened) {
+                const qint64 started = openingClock.elapsed();
                 context->ghost = std::make_unique<GhostHost>(context->handle);
                 ghostState = context->ghost->refresh();
+                ghostRefreshMs = openingClock.elapsed() - started;
             }
 #endif
 #if VALMAX_HAS_RETENTION
             if (opened) {
+                const qint64 started = openingClock.elapsed();
                 const QString profile = QJsonDocument::fromJson(config).object()
                     .value(QStringLiteral("profileDirectory")).toString();
                 context->retention = std::make_unique<RetentionHostBridge>(context->handle, profile);
                 context->retention->initialize();
+                retentionInitMs = openingClock.elapsed() - started;
             }
 #endif
-            QMetaObject::invokeMethod(this, [this, opened, ghostState, notificationState]() {
+            const qint64 workerMs = openingClock.elapsed() - workerQueueMs;
+            QMetaObject::invokeMethod(this, [this, opened, ghostState, notificationState,
+                                             openingClock, workerQueueMs, rustOpenMs,
+                                             notificationRefreshMs, ghostRefreshMs, retentionInitMs,
+                                             workerMs]() {
 #if VALMAX_HAS_EXPORT_DOWNLOAD
                 if (opened) static_cast<ExportDownloader*>(exportDownloader_)->setRuntime(runtime_->handle, runtime_);
 #endif
 #if VALMAX_HAS_EXPORT_HISTORY || VALMAX_HAS_EXPORT_SELECTION
                 if (opened) runtime_->history = std::make_unique<ExportBoundHost>(runtime_->handle);
 #endif
+                const auto measured = [](qint64 ms) -> QVariant {
+                    return ms < 0 ? QVariant() : QVariant::fromValue(ms);
+                };
+                startupTimings_ = {
+                    {QStringLiteral("schema"), 1},
+                    {QStringLiteral("workerQueueMs"), workerQueueMs},
+                    {QStringLiteral("rustOpenMs"), rustOpenMs},
+                    {QStringLiteral("notificationRefreshMs"), measured(notificationRefreshMs)},
+                    {QStringLiteral("ghostRefreshMs"), measured(ghostRefreshMs)},
+                    {QStringLiteral("retentionInitMs"), measured(retentionInitMs)},
+                    {QStringLiteral("workerMs"), workerMs},
+                    {QStringLiteral("totalMs"), openingClock.elapsed()},
+                };
                 runtimeState_ = opened ? QStringLiteral("ready") : QStringLiteral("error");
                 ghostRuntimeState_ = ghostState;
                 notificationRuntimeState_ = notificationState;
@@ -186,6 +217,8 @@ NativeBridge::NativeBridge(QObject *parent) : QObject(parent)
                 emit ghostRuntimeStateChanged();
                 if (!alive) return;
                 emit notificationRuntimeStateChanged();
+                if (!alive) return;
+                emit startupTimingsChanged();
                 if (!alive) return;
 #if VALMAX_HAS_NOTIFICATIONS
                 if (opened) notificationTimer_.start();

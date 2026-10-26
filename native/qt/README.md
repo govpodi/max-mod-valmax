@@ -15,6 +15,12 @@ an opaque Rust Runtime asynchronously. Configuration contains only
 QML cannot configure these paths. Without that variable, no store is opened
 and no profile is discovered. `runtimeState` reports `unconfigured`, `opening`,
 `ready`, or `error`; `runtimeAvailable` is true only in the ready state.
+`startupTimings` is empty until that opening worker reports back. It then
+contains monotonic millisecond durations for worker queueing, Rust open,
+notification refresh, Ghost refresh, retention initialization, worker work,
+and total time to the GUI ready/error update. A disabled or skipped phase is
+`null`. The native support page shows these values for the current launch;
+they are not written to the saved support report or a startup log.
 The Runtime handles `optimization.get/set`, `ghost.get/set`,
 `accounts.get/set`, and configuration-only `retention.get/set` alongside stateless operations. The context is closed only
 after all workers finish. The singleton also exposes

@@ -26,6 +26,7 @@ class NativeBridge final : public QObject {
     Q_PROPERTY(QString runtimeState READ runtimeState NOTIFY runtimeStateChanged)
     Q_PROPERTY(QString ghostRuntimeState READ ghostRuntimeState NOTIFY ghostRuntimeStateChanged)
     Q_PROPERTY(QString notificationRuntimeState READ notificationRuntimeState NOTIFY notificationRuntimeStateChanged)
+    Q_PROPERTY(QVariantMap startupTimings READ startupTimings NOTIFY startupTimingsChanged)
     Q_PROPERTY(QVariantMap privacyReport READ privacyReport NOTIFY privacyReportChanged)
     Q_PROPERTY(QObject* exportDownloader READ exportDownloader CONSTANT)
 public:
@@ -45,6 +46,7 @@ public:
     QString runtimeState() const { return runtimeState_; }
     QString ghostRuntimeState() const { return ghostRuntimeState_; }
     QString notificationRuntimeState() const { return notificationRuntimeState_; }
+    QVariantMap startupTimings() const { return startupTimings_; }
     QVariantMap privacyReport() const { return privacyReport_; }
     QObject* exportDownloader() const { return exportDownloader_; }
     Q_INVOKABLE QVariantMap invoke(const QString &requestJson);
@@ -63,6 +65,7 @@ signals:
     void runtimeStateChanged();
     void ghostRuntimeStateChanged();
     void notificationRuntimeStateChanged();
+    void startupTimingsChanged();
     void privacyReportChanged();
 
 private:
@@ -92,6 +95,7 @@ private:
     void refreshGhost();
     QTimer notificationTimer_;
     QString notificationRuntimeState_ = QStringLiteral("unavailable");
+    QVariantMap startupTimings_;
     void refreshNotifications();
 #if VALMAX_HAS_RETENTION
     QTimer retentionTimer_;

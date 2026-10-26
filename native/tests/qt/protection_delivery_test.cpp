@@ -15,6 +15,7 @@
 
 namespace {
 std::atomic<unsigned> ghostCalls{0}, notificationCalls{0};
+std::atomic<unsigned> startupOpenDelayMs{0}, startupGhostDelayMs{0}, startupNotificationDelayMs{0};
 std::atomic<unsigned> dispatchCalls{0};
 std::atomic<bool> ghostReady{true}, notificationReady{true};
 std::atomic<unsigned> openEntered{0}, openActive{0}, runtimeDispatchEntered{0};
@@ -39,10 +40,18 @@ void boundedGate(const std::atomic<bool> &flag, bool waitWhile) {
 namespace valmax {
 GhostHost::GhostHost(ValmaxRuntime *runtime):runtime_(runtime) {}
 GhostHost::~GhostHost() = default;
-QString GhostHost::refresh() {++ghostCalls; return ghostReady ? QStringLiteral("ready") : QStringLiteral("unavailable");}
+QString GhostHost::refresh() {
+    ++ghostCalls;
+    if (const unsigned delay = startupGhostDelayMs.exchange(0); delay) QThread::msleep(delay);
+    return ghostReady ? QStringLiteral("ready") : QStringLiteral("unavailable");
+}
 NotificationHost::NotificationHost(ValmaxRuntime *runtime):runtime_(runtime) {}
 NotificationHost::~NotificationHost() = default;
-QString NotificationHost::refresh() {++notificationCalls; return notificationReady ? QStringLiteral("ready") : QStringLiteral("unavailable");}
+QString NotificationHost::refresh() {
+    ++notificationCalls;
+    if (const unsigned delay = startupNotificationDelayMs.exchange(0); delay) QThread::msleep(delay);
+    return notificationReady ? QStringLiteral("ready") : QStringLiteral("unavailable");
+}
 class NativeBridgeDeliveryTest {
 public:
     static void ghost(NativeBridge &bridge) {bridge.refreshGhost();}
@@ -58,6 +67,7 @@ extern "C" void valmax_core_buffer_free(ValmaxCoreBuffer *out) {*out={};}
 extern "C" int32_t valmax_runtime_open(const uint8_t *,size_t,ValmaxRuntime **runtime,ValmaxCoreBuffer *out) {
     ++openActive;++openEntered;
     if(holdOpen.load())boundedGate(holdOpen,true);
+    if (const unsigned delay = startupOpenDelayMs.exchange(0); delay) QThread::msleep(delay);
     *runtime=reinterpret_cast<ValmaxRuntime *>(uintptr_t(1));*out={};
     --openActive;return 0;
 }
@@ -218,10 +228,28 @@ int lifetimeChecks() {
 int main(int argc,char **argv) {
     QCoreApplication app(argc,argv);
     qputenv("VALMAX_NATIVE_RUNTIME_CONFIG",QByteArrayLiteral("{}"));
+    startupOpenDelayMs = 20;
+    startupNotificationDelayMs = 30;
+    startupGhostDelayMs = 40;
     valmax::NativeBridge bridge;
-    CHECK(waitFor(ghostCalls,1));CHECK(waitFor(notificationCalls,1));QThread::msleep(30);
+    int timingSignals = 0;
+    QObject::connect(&bridge, &valmax::NativeBridge::startupTimingsChanged, [&] { ++timingSignals; });
+    CHECK(waitFor(ghostCalls,1));CHECK(waitFor(notificationCalls,1));
+    valmax::NativeBridgeDeliveryTest::waitWorkers(bridge);
     QCoreApplication::processEvents();
     CHECK(bridge.runtimeAvailable());
+    const QVariantMap timing = bridge.startupTimings();
+    CHECK(timingSignals == 1 && timing.size() == 8 && timing.value(QStringLiteral("schema")).toInt() == 1);
+    const qint64 rustMs = timing.value(QStringLiteral("rustOpenMs")).toLongLong();
+    const qint64 notificationMs = timing.value(QStringLiteral("notificationRefreshMs")).toLongLong();
+    const qint64 ghostMs = timing.value(QStringLiteral("ghostRefreshMs")).toLongLong();
+    const qint64 queueMs = timing.value(QStringLiteral("workerQueueMs")).toLongLong();
+    const qint64 workerMs = timing.value(QStringLiteral("workerMs")).toLongLong();
+    const qint64 totalMs = timing.value(QStringLiteral("totalMs")).toLongLong();
+    CHECK(rustMs >= 15 && notificationMs >= 25 && ghostMs >= 35);
+    CHECK(timing.contains(QStringLiteral("retentionInitMs")) && timing.value(QStringLiteral("retentionInitMs")).isNull());
+    CHECK(workerMs >= rustMs + notificationMs + ghostMs);
+    CHECK(totalMs >= queueMs + workerMs);
     valmax::NativeBridgeDeliveryTest::stopTimers(bridge);
     for (int kind=0;kind<2;++kind) {
         auto &calls=kind==0?ghostCalls:notificationCalls;

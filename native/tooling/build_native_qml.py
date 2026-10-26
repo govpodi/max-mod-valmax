@@ -181,6 +181,29 @@ def native_support_panel(panel: str) -> str:
         if panel.count(old) != 1:
             raise ValueError("Native support transport anchor changed")
         panel = panel.replace(old, new, 1)
+    heading = '                SupportText { Layout.fillWidth: true; text: "Локальный отчёт"; typography: Typography.FontUtil.Styles.BodyStrong }\n'
+    if panel.count(heading) != 1:
+        raise ValueError("Native support timing anchor changed")
+    timing = '''                SupportText {
+                    objectName: "nativeStartupTimings"
+                    Layout.fillWidth: true
+                    visible: text.length > 0
+                    color: supportPage.maxwellColorTokens.colorTextSecondary
+                    typography: Typography.FontUtil.Styles.Description
+                    text: {
+                        const timing = ValMAXNative.Bridge.startupTimings;
+                        if (!timing || timing.schema !== 1) return "";
+                        function ms(value) { return typeof value === "number" && isFinite(value) && value >= 0 ? Math.round(value) + " мс" : "—"; }
+                        return "Время запуска модулей (этот запуск): до готовности " + ms(timing.totalMs)
+                            + "; ожидание потока " + ms(timing.workerQueueMs)
+                            + "; Rust " + ms(timing.rustOpenMs)
+                            + "; уведомления " + ms(timing.notificationRefreshMs)
+                            + "; призрак " + ms(timing.ghostRefreshMs)
+                            + "; удалённые сообщения " + ms(timing.retentionInitMs) + ".";
+                    }
+                }
+'''
+    panel = panel.replace(heading, heading + timing, 1)
     return panel
 
 
