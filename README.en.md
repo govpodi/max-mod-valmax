@@ -1,11 +1,15 @@
 <p align="center"><strong>Your conversations. Your rules.</strong></p>
 
-<p align="center"><img src="docs/assets/settings-ru.png" alt="ValMAX settings with personal details redacted" width="1704" height="923"></p>
-<p align="center"><small>ValMAX settings. Name, phone number and profile photos are redacted.</small></p>
-
 # ValMAX — a MAX mod for Windows
 
-An unofficial MAX modification for Windows x64, with added features for conversations and work. This checkout contains the **ValMAX 8.9.0 source**, based on **MAX 26.35.1.80662**.
+An unofficial MAX modification for Windows x64, with added features for conversations and work. **The installed client runs on C++/Qt and Rust.** This checkout contains ValMAX 8.9.0 source, based on MAX 26.35.1.80662.
+
+**[Download ValMAX 8.9.0](https://github.com/govpodi/max-mod-valmax/releases/tag/v8.9.0)** · [Source for this release](https://github.com/govpodi/max-mod-valmax/tree/v8.9.0) · [Development and builds](docs/DEVELOPMENT.md) · [Русский](README.md)
+
+[![Source checks](https://github.com/govpodi/max-mod-valmax/actions/workflows/source-check.yml/badge.svg?branch=main)](https://github.com/govpodi/max-mod-valmax/actions/workflows/source-check.yml)
+
+<p align="center"><img src="docs/assets/settings-ru.png" alt="ValMAX settings with personal details redacted" width="1200"></p>
+<p align="center"><small>ValMAX settings. Name, phone number and profile photos are redacted.</small></p>
 
 Chat export saves available history and media, but the server has not confirmed that all older messages can be retrieved. Deleted-message retention works only after you enable it. Feature limits are listed below and in the [changelog](CHANGELOG.md).
 
@@ -13,7 +17,18 @@ Chat export saves available history and media, but the server has not confirmed 
 
 In Russian, **ВАЛ** stands for «Возможности · Автоматизация · Личный контроль»: capabilities, automation and personal control.
 
-[Русский](README.md)
+## Source layout
+
+The installed client runs on **C++/Qt and Rust**. It needs no separate Python installation, PyInstaller, or local HTTP server.
+
+| Directory | Purpose |
+| --- | --- |
+| [`native/core/`](native/core/) | Rust: local settings and stores, MData, chat export and deleted-message retention. |
+| [`native/qt/`](native/qt/), [`native/media/`](native/media/), [`native/hooks/`](native/hooks/) | C++/Qt: interface, media, client integration and native handlers. |
+| [`native/launcher/`](native/launcher/), [`native/installer/`](native/installer/) | Native Windows launcher and installer. |
+| [`modkit/`](modkit/), [`native/tooling/`](native/tooling/), [`native/tests/`](native/tests/) | Resource generators, build tools, tests and code from the earlier Python client. The native build still uses some of these files; none is installed with 8.9.0. |
+
+GitHub's language chart highlights native client code: Python files from the earlier implementation, build and tests are excluded through [`.gitattributes`](.gitattributes), while their source remains available. Rebuilding requires a prepared MAX baseline and the toolchain described in the [developer guide](docs/DEVELOPMENT.md).
 
 ## Working with customers
 
@@ -40,7 +55,7 @@ In Russian, **ВАЛ** stands for «Возможности · Автоматиз
 
 ## Installation
 
-The ValMAX 8.9.0 Setup, separate Qt and FFmpeg source-material archives, and checksums are listed on the [v8.9.0 release page](https://github.com/govpodi/max-mod-valmax/releases/tag/v8.9.0). Project source is on `main`; the release notes give the exact size, SHA-256, and installed-version verification results.
+The ValMAX 8.9.0 Setup, separate Qt and FFmpeg source-material archives, and checksums are listed on the [v8.9.0 release page](https://github.com/govpodi/max-mod-valmax/releases/tag/v8.9.0). Source for this exact release is at the `v8.9.0` tag; `main` contains later changes. The release notes give the exact size, SHA-256, and installed-version verification results.
 
 1. Download `ValMAX-8.9.0-Setup.exe` and `SHA256SUMS.txt` from the v8.9.0 release page. Verify Setup's SHA-256. The separate Qt and FFmpeg source-material archives are not needed to run the app.
 2. Fully exit ValMAX from its tray menu and preserve a rollback path. `Alt+F4` may only hide the window to the tray.

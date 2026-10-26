@@ -9,3 +9,11 @@ assets/valmax-icons/icons/*.svg -text
 modkit/optimization_qmldir -text
 modkit/ui_privacy.py linguist-generated=true
 modkit/config.defaults.json linguist-vendored=true
+
+# GitHub's language bar focuses on native client code. The tracked Python tree
+# contains legacy implementation, generators, packaging, and tests; no .py
+# ships in the ValMAX 8.9.0 runtime. All files remain visible in the repo.
+modkit/*.py -linguist-detectable
+native/**/*.py -linguist-detectable
+.github/scripts/*.py -linguist-detectable
+assets/valmax-icons/source/*.py -linguist-detectable

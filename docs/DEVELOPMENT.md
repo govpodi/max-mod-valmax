@@ -1,29 +1,55 @@
-# Разработка и сборка
+# Разработка ValMAX 8.9.0
 
-Этот репозиторий содержит исходники модификации и проверок ValMAX. Для готовой установки используйте GitHub Releases. Текущая публичная BETA собирается из `native/`: установленный клиент работает на C++/Qt и Rust без Python и локального HTTP-сервера. Python используется в инструментах сборки и синтетических тестах. Полная пересборка установщика из одного чистого checkout пока требует отдельно подготовленной лабораторной среды.
+В `main` находятся исходники ValMAX 8.9.0. Готовый Windows x64 клиент распространяется через [GitHub Releases](https://github.com/govpodi/max-mod-valmax/releases/tag/v8.9.0): основной клиент выпущен как stable, а экспорт, удержание удалений и другие отдельно отмеченные возможности остаются BETA. Установленная программа работает на C++/Qt и Rust без отдельного Python и локального HTTP-сервера. Python остаётся в генераторах, упаковке и синтетических тестах; это инструменты разработки, а не часть установленного runtime.
 
-## Быстрая проверка исходников
+## Где находится текущий код
 
-Windows, Python 3.13; сторонние Python-пакеты для этих двух команд не нужны:
+| Каталог | Назначение |
+| --- | --- |
+| [`native/core/`](../native/core/) | Rust: состояние клиента, локальные хранилища, API и экспорт. |
+| [`native/qt/`](../native/qt/) и [`native/hooks/`](../native/hooks/) | C++/Qt: интерфейс, интеграция с клиентом и ограниченные обработчики событий. |
+| [`native/launcher/`](../native/launcher/) и [`native/transfer/`](../native/transfer/) | Нативный запуск и перенос собственных сессий. |
+| [`native/installer/`](../native/installer/) | Inno Setup и контракт управляемого обновления. |
+| [`native/tooling/`](../native/tooling/) и [`native/tests/`](../native/tests/) | Подготовка сборки и проверки; здесь допустим Python. |
+| [`modkit/`](../modkit/) | Исходные QML/трансформаторы, синтетические тесты и исторический Python-путь. `modkit/` не является entrypoint установленной 8.9.0. |
+
+Текущий публичный пакет собирается в режиме `public-stable-core`; отдельные BETA-возможности и пределы проверки перечислены в [заметках 8.9.0](releases/v8.9.0.md). Режим полного `user-release` имеет более широкий набор требований. Сборка точного Setup из чистого checkout без закреплённого baseline MAX, Qt/MSVC/Rust, Inno Setup, материалов компонентов и установленного QA не воспроизводится одной командой.
+
+## Проверки из чистого checkout
+
+На Windows с Python 3.13 следующие проверки не требуют сторонних Python-пакетов:
 
 ```powershell
 python -B -X utf8 .github/scripts/check_repository.py
 python -B -X utf8 -m unittest discover -s modkit -p test_client_activation.py -v
+python -B -X utf8 -m unittest discover -s modkit -p test_support_diagnostics.py -v
 ```
 
-Тесты используют подставной Windows API и не открывают реальные профили. Проверка source CI не подтверждает native поведение, работу сервера, UI или пригодность нового установщика.
+Для Rust-части CI использует закреплённый toolchain из [`native/rust-toolchain.toml`](../native/rust-toolchain.toml) и запускает из `native/` синтетические тесты:
+
+```powershell
+cd native
+cargo test --locked -p valmax-core --lib retention_store::tests -- --test-threads=1
+cargo test --locked -p valmax-core --test retention_runtime_selected -- --test-threads=1
+cargo test --locked -p valmax-core --test quick_reply_store_contract --test support_diagnostics_native -- --test-threads=1
+```
+
+Тесты используют отдельные фикстуры и не открывают рабочий профиль. Полный состав заданий и изоляция временных файлов находятся в [workflow](../.github/workflows/source-check.yml). Source CI не собирает установщик и не подтверждает серверную историю, весь UI или работу на чистой машине.
 
 Отдельное задание GitHub Actions запускает синтетические тесты MData после установки версий из `modkit/requirements.txt`. Оно направляет временные файлы и тестовый профиль в каталог runner. Локально эти тесты можно запустить так же, указав отдельный `VALMAX_TEST_TEMP_ROOT` и не используя рабочий MXMOD.
 
-## Нативная разработка
+## Сборка нативного клиента
 
-В подготовленной Windows x64 лаборатории загрузите `native/tooling/native_env.ps1` перед MSVC/CMake или Cargo. Скрипт задаёт текущие пути инструментов и `CARGO_TARGET_DIR` на E:; на другой машине сначала настройте эти пути под свою среду. Исходники и границы публичной упаковки описаны в [документации нативного установщика](../native/installer/README.md). Его режим `user-release` проверяет точный пакет, установленные сценарии и материалы; успешная компиляция отдельного компонента не заменяет эти проверки.
+В подготовленной Windows x64 лаборатории настройте пути MSVC, Qt 6.11.2 и Rust, затем загрузите [`native/tooling/native_env.ps1`](../native/tooling/native_env.ps1) перед CMake/Cargo. Этот файл содержит пути конкретной лаборатории и `CARGO_TARGET_DIR` на E:; на другой машине пути нужно адаптировать. Нативный упаковщик [`package_native_client.py`](../native/tooling/package_native_client.py) принимает подготовленные runtime/QML/launcher proofs, материалы и проверку установленного клиента. [Контракт установщика](../native/installer/README.md) описывает обновление и ограничения; успешная компиляция одного компонента не заменяет проверку точного пакета.
 
 ### Синтетический Qt bootstrap для разработки
 
 [Проверка порядка загрузки](../native/tests/bootstrap/proof.py) запускает только собственный `valmax_bootstrap_harness.exe` и `valmaxbootstrapplugin.dll`, без MAX, учётных записей и рабочего профиля. Переменные `VALMAX_BOOTSTRAP_BUILD_ROOT`, `VALMAX_BOOTSTRAP_QT_ROOT`, `VALMAX_BOOTSTRAP_FIXTURE_ROOT` и `VALMAX_BOOTSTRAP_REPORT` позволяют направить входы, временные файлы и отчёт на отдельный диск. `VALMAX_BOOTSTRAP_CLEAN_FIXTURE=1` удаляет созданную тестовую фикстуру после записи отчёта. Для `Qt6Core.dll` и `Qt6Gui.dll` проверка требует закреплённые SHA-256.
 
 Этот host помогает быстро проверять порядок вызовов Qt. Он не устанавливает защитные фильтры в MAX; его отрицательные сценарии показывают, что отсутствующий или отклонённый плагин позволяет синтетическому приложению продолжить запуск без подтверждения готовности. Раннюю защиту реального клиента нужно доказывать отдельно.
+
+<details>
+<summary>Архив: прежняя сборка Python/PyInstaller</summary>
 
 ## Прежние Python-инструменты
 
@@ -88,6 +114,8 @@ Source default manifest в `helper_command.py` привязан к `D:/CodexLabs
 
 Многие `test_*` и `*_qa.py` требуют локальные извлечённые QML, baseline и фиксированные пути `D:/CodexLabs`/`D:/ValMAX/analysis`. Их нельзя запускать как универсальный полный набор в чистом GitHub runner без подготовки fixtures и параметризации путей. Native, синтетические и серверные проверки следует описывать отдельно.
 
+</details>
+
 ## English
 
-The installed public beta is a native C++/Qt and Rust client. Python is used for build tools and synthetic tests. Source CI uses Python 3.13 on Windows; a separate job runs isolated MData tests. The older `modkit/` commands above document the historical PyInstaller route, not the current native installer. Rebuilding the native release requires a separately prepared, pinned MAX baseline and toolchain, exact installed-client evidence, and complete distribution materials; a clean checkout alone is not a release environment.
+ValMAX 8.9.0 ships a stable native C++/Qt and Rust core; advanced features are marked BETA where their limits remain. Python is used for generators, packaging and synthetic tests, not the installed runtime. Source CI uses Python 3.13 and the pinned Rust toolchain on Windows; a separate job runs isolated MData tests. The collapsed `modkit/` commands above document the historical PyInstaller route. Rebuilding the exact native release requires a pinned MAX baseline, prepared toolchains, installed-client evidence and distribution materials; a clean checkout alone is not a release environment.
