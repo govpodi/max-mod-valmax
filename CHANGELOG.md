@@ -8,6 +8,14 @@
 
 The Windows x64 package is being prepared to use the shared WebView2 Evergreen Runtime instead of bundling a Fixed copy. Setup checks for the Runtime before upgrading. Unused QtWebEngine files are omitted, and corresponding Qt sources are prepared as a separate archive. Chat export remains limited to history and media available from the server; incomplete history and failed attachments are reported. Release date, sizes, checksums and installed-client results will be added only after the exact release package passes verification.
 
+## 8.9.0-native.preview.22 Beta — 2026-10-26
+
+- Исправлена пагинация старых сохранённых удалений без ключа порядка. Курсоры разделены по аккаунту и чату.
+- В установленной preview.22 проверены два аккаунта, отправка и удаление тестового сообщения, пузырь с корзинкой в самом чате и сохранность профилей после штатного перезапуска.
+- Экспорт собственного тестового диалога сохранил 15 сообщений, 4 фото, 1 видео и 1 голосовое. Все шесть медиафайлов прошли проверку формата и SHA-256; два других вложения отмечены как пропущенные. Полнота истории сервером не подтверждена, поэтому функция остаётся БЕТА.
+
+Preview.22 fixes paging of older retained deletions without an order key and keeps account/chat cursors separate. The installed client was checked with two own accounts, a fresh in-chat deleted-message bubble and a graceful restart. A test export saved 15 messages and six verified photo, video and voice files; two other attachments were recorded as omitted. Complete history is not established, so export remains BETA.
+
 ## 8.9.0-native.preview.16 Beta — 2026-10-25
 
 - Обработка уведомлений об удалении в нативном хосте разбивает большие пачки на части. Пачка сверх заданных пределов пропускается без отключения дальнейшего сохранения; некорректные данные аккаунта и маршрута по-прежнему закрывают обработку. Проверено синтетическими нативными тестами и новым удалением между двумя собственными аккаунтами в установленной preview.16.

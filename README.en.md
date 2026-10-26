@@ -40,13 +40,15 @@ In Russian, **ВАЛ** stands for «Возможности · Автоматиз
 
 ## Installation
 
-The latest verified build is [ValMAX Native Beta 3 (preview.20)](https://github.com/govpodi/max-mod-valmax/releases/tag/v8.9.0-native.preview.20). It is a pre-release beta; the project source is on `main`.
+The latest verified build is [ValMAX 8.9.0 BETA (preview.22)](https://github.com/govpodi/max-mod-valmax/releases/tag/v8.9.0-native.preview.22). It is a beta; the project source is on `main`.
 
-1. From the [Beta 3 release](https://github.com/govpodi/max-mod-valmax/releases/tag/v8.9.0-native.preview.20), download `ValMAX-8.9.0-native.preview.20-Setup.exe`, `ValMAX-Qt-6.11.2-sources-native-beta3.zip` and `SHA256SUMS.txt`. Check the SHA-256 of Setup and the Qt archive. The archive contains source materials and is not installed by Setup.
-2. Fully exit ValMAX from its tray menu and preserve a rollback path.
+1. From the [preview.22 release](https://github.com/govpodi/max-mod-valmax/releases/tag/v8.9.0-native.preview.22), download `ValMAX-8.9.0-native.preview.22-Setup.exe`, `ValMAX-Qt-6.11.2-sources-native-beta3.zip`, `ValMAX-FFmpeg-sources-8.9.0-native.preview.22.zip`, and `SHA256SUMS.txt`. Check the SHA-256 of all three files against the list. The source archives are separate assets and are not installed by Setup.
+2. Fully exit ValMAX from its tray menu or with `Alt+F4`, and preserve a rollback path.
 3. Run the installer and open ValMAX through its shortcut. No separate Python installation is needed. The first launch may take up to a minute.
 
-**Compact Beta 3.** The `preview.20` Setup file is 251.58 MiB. The Business tab and mini apps use the system [Microsoft Edge WebView2 Evergreen Runtime](https://developer.microsoft.com/en-us/microsoft-edge/webview2/). Setup checks whether it is present; downloading Microsoft's official component requires a network connection if it is absent. Qt 6.11.2 source materials are a separate ZIP in the same release.
+**Compact Beta.** The Business tab and mini apps use the system [Microsoft Edge WebView2 Evergreen Runtime](https://developer.microsoft.com/en-us/microsoft-edge/webview2/). Setup checks whether it is present; downloading Microsoft's official component requires a network connection if it is absent. The release lists the exact Setup size and checksums.
+
+The installed preview.22 was tested for launch and graceful restart with two preserved accounts, switching between them, sending and deleting a test message, and showing its trash-icon bubble inside the chat. An export of an own test dialog saved 15 messages, 4 photos, 1 video and 1 voice message; 2 other attachments were recorded as omitted. The six downloaded files passed format and SHA-256 checks. These checks do not establish complete chat history or validate every client feature.
 
 <details>
 <summary>About your data and BETA features</summary>
@@ -57,6 +59,7 @@ The latest verified build is [ValMAX Native Beta 3 (preview.20)](https://github.
 - MData excludes conversations, media, cache and the 2FA password. The server may require another sign-in check. Store the MData archive and its password separately.
 - The PIN restricts access locally. It does not encrypt the message database or close previously opened media windows. HTML chat copies are not password-protected; unavailable attachments and incomplete history are noted in the export report.
 - Export downloads available photos, videos and voice messages sequentially, with pacing and a 4 GiB per-file limit. Some attachments may be unavailable. Deleted-message retention covers events observed after the feature was enabled; older retained bubbles may have approximate positions in the timeline.
+- The FFmpeg archives contain reference source materials; an exact match to the distributed DLLs and their build options has not yet been established. Early protection before the first background event also needs a separate check.
 - Privacy settings do not provide full anonymity: the server receives your connection address and data required to operate your account. Ghost mode shows active status after the client confirms its filters.
 - The local ghost-mode unread counter adjustment is BETA and lasts for the current run. After a restart, message deletion or changed read marks from another device, the counter may show the server's remaining unread count again. Full resynchronization still needs validation.
 - ValMAX uses a profile separate from the official MAX client. Updating an older modified build preserves MXMOD data. MAX's built-in updater is disabled; public builds and checksums appear in GitHub Releases after verification.
