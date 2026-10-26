@@ -6,7 +6,7 @@ ValMAX — неофициальный мод MAX (МАКС) для Windows x64. 
 
 **[Скачать ValMAX 8.9.0 для Windows](https://github.com/govpodi/max-mod-valmax/releases/tag/v8.9.0)** · [Сайт ValMAX](https://govpodi.github.io/max-mod-valmax/) · [Как установить](#установка) · [Помощь](#помощь) · [English](README.en.md)
 
-**После закрытия окна чаты не загрузились?** В установщике 8.9.0 при повторном запуске через ярлык иногда остаётся пустой список. Полностью выйдите через значок в трее → «Выход» и запустите ValMAX снова. [Исправление уже в `main`](https://github.com/govpodi/max-mod-valmax/commit/6a156798a1ab7dfdb6396daeeda5e62105b5f0d6); опубликованный Setup 8.9.0 его ещё не содержит.
+**После закрытия окна чаты не загрузились?** В установщике 8.9.0 при повторном запуске через ярлык иногда остаётся пустой список. Полностью выйдите через значок в трее → «Выход» и запустите ValMAX снова. Исправление доступно в [экспериментальной preview.31](https://github.com/govpodi/max-mod-valmax/releases/tag/v8.9.1-native.preview.31); полный набор проверок этой сборки ещё не проводился.
 
 [![Релиз](https://img.shields.io/github/v/release/govpodi/max-mod-valmax?label=release)](https://github.com/govpodi/max-mod-valmax/releases/latest)
 [![Windows x64](https://img.shields.io/badge/Windows-x64-0078D4)](https://github.com/govpodi/max-mod-valmax/releases/latest)

@@ -6,7 +6,7 @@ ValMAX is an unofficial mod for MAX on Windows x64. Use multiple accounts, reply
 
 **[Download ValMAX 8.9.0 for Windows](https://github.com/govpodi/max-mod-valmax/releases/tag/v8.9.0)** · [ValMAX website](https://govpodi.github.io/max-mod-valmax/) · [How to install](#installation) · [Help](#help) · [Русский](README.md)
 
-**Chat list empty after reopening the window?** In Setup 8.9.0, launching the shortcut after closing the window can leave the chat list empty. Exit ValMAX fully from the tray icon → **Exit**, then launch it again. [The fix is already in `main`](https://github.com/govpodi/max-mod-valmax/commit/6a156798a1ab7dfdb6396daeeda5e62105b5f0d6); the published 8.9.0 Setup does not include it yet.
+**Chat list empty after reopening the window?** In Setup 8.9.0, launching the shortcut after closing the window can leave the chat list empty. Exit ValMAX fully from the tray icon → **Exit**, then launch it again. The fix is available in [experimental preview.31](https://github.com/govpodi/max-mod-valmax/releases/tag/v8.9.1-native.preview.31); the complete regression has not been run for that build.
 
 [![Release](https://img.shields.io/github/v/release/govpodi/max-mod-valmax?label=release)](https://github.com/govpodi/max-mod-valmax/releases/latest)
 [![Windows x64](https://img.shields.io/badge/Windows-x64-0078D4)](https://github.com/govpodi/max-mod-valmax/releases/latest)
